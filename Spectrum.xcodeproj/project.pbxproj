@@ -1,0 +1,488 @@
+// !$*UTF8*$!
+{
+	archiveVersion = 1;
+	classes = {
+	};
+	objectVersion = 56;
+	objects = {
+
+/* Begin PBXBuildFile section */
+		8070F3122F43487D0095B967 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8070F3112F43487D0095B967 /* SettingsView.swift */; };
+		80EBB13D2F42434900D5463B /* ThumbnailCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */; };
+		AA000001 /* SpectrumApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000001 /* SpectrumApp.swift */; };
+		AA000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000002 /* ContentView.swift */; };
+		AA000003 /* Photo.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000003 /* Photo.swift */; };
+		AA000005 /* Tag.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000005 /* Tag.swift */; };
+		AA000006 /* ScannedFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000006 /* ScannedFolder.swift */; };
+		AA000007 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000007 /* SidebarView.swift */; };
+		AA000008 /* PhotoGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000008 /* PhotoGridView.swift */; };
+		AA000009 /* PhotoThumbnailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000009 /* PhotoThumbnailView.swift */; };
+		AA00000A /* TimelineSectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000A /* TimelineSectionHeader.swift */; };
+		AA00000B /* PhotoDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000B /* PhotoDetailView.swift */; };
+		AA00000C /* PhotoInfoPanel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000C /* PhotoInfoPanel.swift */; };
+		AA000010 /* FolderScanner.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000010 /* FolderScanner.swift */; };
+		AA000011 /* EXIFService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000011 /* EXIFService.swift */; };
+		AA000012 /* ThumbnailService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000012 /* ThumbnailService.swift */; };
+		AA000013 /* BookmarkService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000013 /* BookmarkService.swift */; };
+		AA000014 /* LibraryViewModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000014 /* LibraryViewModel.swift */; };
+		AA000015 /* URL+ImageTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000015 /* URL+ImageTypes.swift */; };
+		AA000016 /* Date+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000016 /* Date+Formatting.swift */; };
+		AA000017 /* VideoMetadataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000018 /* VideoMetadataService.swift */; };
+		AA000019 /* HDRRenderSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000019 /* HDRRenderSpec.swift */; };
+		AA00001A /* GainMapHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001A /* GainMapHDRSpec.swift */; };
+		AA00001B /* HLGHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001B /* HLGHDRSpec.swift */; };
+		AA00001C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB00001C /* Assets.xcassets */; };
+/* End PBXBuildFile section */
+
+/* Begin PBXFileReference section */
+		8070F3112F43487D0095B967 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
+		80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCacheState.swift; sourceTree = "<group>"; };
+		AB000001 /* SpectrumApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumApp.swift; sourceTree = "<group>"; };
+		AB000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
+		AB000003 /* Photo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photo.swift; sourceTree = "<group>"; };
+		AB000005 /* Tag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tag.swift; sourceTree = "<group>"; };
+		AB000006 /* ScannedFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannedFolder.swift; sourceTree = "<group>"; };
+		AB000007 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		AB000008 /* PhotoGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGridView.swift; sourceTree = "<group>"; };
+		AB000009 /* PhotoThumbnailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoThumbnailView.swift; sourceTree = "<group>"; };
+		AB00000A /* TimelineSectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineSectionHeader.swift; sourceTree = "<group>"; };
+		AB00000B /* PhotoDetailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDetailView.swift; sourceTree = "<group>"; };
+		AB00000C /* PhotoInfoPanel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoInfoPanel.swift; sourceTree = "<group>"; };
+		AB000010 /* FolderScanner.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderScanner.swift; sourceTree = "<group>"; };
+		AB000011 /* EXIFService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EXIFService.swift; sourceTree = "<group>"; };
+		AB000012 /* ThumbnailService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailService.swift; sourceTree = "<group>"; };
+		AB000013 /* BookmarkService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BookmarkService.swift; sourceTree = "<group>"; };
+		AB000014 /* LibraryViewModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LibraryViewModel.swift; sourceTree = "<group>"; };
+		AB000015 /* URL+ImageTypes.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "URL+ImageTypes.swift"; sourceTree = "<group>"; };
+		AB000016 /* Date+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Date+Formatting.swift"; sourceTree = "<group>"; };
+		AB000017 /* Spectrum.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Spectrum.entitlements; sourceTree = "<group>"; };
+		AB000018 /* VideoMetadataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMetadataService.swift; sourceTree = "<group>"; };
+		AB000019 /* HDRRenderSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRRenderSpec.swift; sourceTree = "<group>"; };
+		AB00001A /* GainMapHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GainMapHDRSpec.swift; sourceTree = "<group>"; };
+		AB00001B /* HLGHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLGHDRSpec.swift; sourceTree = "<group>"; };
+		AB00001C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
+/* End PBXFileReference section */
+
+/* Begin PBXFrameworksBuildPhase section */
+		AD000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXFrameworksBuildPhase section */
+
+/* Begin PBXGroup section */
+		AE000001 = {
+			isa = PBXGroup;
+			children = (
+				AE000002 /* Spectrum */,
+				AE000099 /* Products */,
+			);
+			sourceTree = "<group>";
+		};
+		AE000002 /* Spectrum */ = {
+			isa = PBXGroup;
+			children = (
+				AB000001 /* SpectrumApp.swift */,
+				AB000017 /* Spectrum.entitlements */,
+				AB00001C /* Assets.xcassets */,
+				AE000003 /* Models */,
+				AE000004 /* Views */,
+				AE000005 /* Services */,
+				AE000006 /* ViewModels */,
+				AE000007 /* Extensions */,
+				80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */,
+			);
+			path = Spectrum;
+			sourceTree = "<group>";
+		};
+		AE000003 /* Models */ = {
+			isa = PBXGroup;
+			children = (
+				AB000003 /* Photo.swift */,
+				AB000005 /* Tag.swift */,
+				AB000006 /* ScannedFolder.swift */,
+			);
+			path = Models;
+			sourceTree = "<group>";
+		};
+		AE000004 /* Views */ = {
+			isa = PBXGroup;
+			children = (
+				8070F3112F43487D0095B967 /* SettingsView.swift */,
+				AB000002 /* ContentView.swift */,
+				AE000010 /* Sidebar */,
+				AE000011 /* Grid */,
+				AE000012 /* Detail */,
+			);
+			path = Views;
+			sourceTree = "<group>";
+		};
+		AE000005 /* Services */ = {
+			isa = PBXGroup;
+			children = (
+				AB000010 /* FolderScanner.swift */,
+				AB000011 /* EXIFService.swift */,
+				AB000012 /* ThumbnailService.swift */,
+				AB000013 /* BookmarkService.swift */,
+				AB000018 /* VideoMetadataService.swift */,
+				AB000019 /* HDRRenderSpec.swift */,
+				AB00001A /* GainMapHDRSpec.swift */,
+				AB00001B /* HLGHDRSpec.swift */,
+			);
+			path = Services;
+			sourceTree = "<group>";
+		};
+		AE000006 /* ViewModels */ = {
+			isa = PBXGroup;
+			children = (
+				AB000014 /* LibraryViewModel.swift */,
+			);
+			path = ViewModels;
+			sourceTree = "<group>";
+		};
+		AE000007 /* Extensions */ = {
+			isa = PBXGroup;
+			children = (
+				AB000015 /* URL+ImageTypes.swift */,
+				AB000016 /* Date+Formatting.swift */,
+			);
+			path = Extensions;
+			sourceTree = "<group>";
+		};
+		AE000010 /* Sidebar */ = {
+			isa = PBXGroup;
+			children = (
+				AB000007 /* SidebarView.swift */,
+			);
+			path = Sidebar;
+			sourceTree = "<group>";
+		};
+		AE000011 /* Grid */ = {
+			isa = PBXGroup;
+			children = (
+				AB000008 /* PhotoGridView.swift */,
+				AB000009 /* PhotoThumbnailView.swift */,
+				AB00000A /* TimelineSectionHeader.swift */,
+			);
+			path = Grid;
+			sourceTree = "<group>";
+		};
+		AE000012 /* Detail */ = {
+			isa = PBXGroup;
+			children = (
+				AB00000B /* PhotoDetailView.swift */,
+				AB00000C /* PhotoInfoPanel.swift */,
+			);
+			path = Detail;
+			sourceTree = "<group>";
+		};
+		AE000099 /* Products */ = {
+			isa = PBXGroup;
+			children = (
+				AC000001 /* Spectrum.app */,
+			);
+			name = Products;
+			sourceTree = "<group>";
+		};
+/* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AF000001 /* Spectrum */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1000001 /* Build configuration list for PBXNativeTarget "Spectrum" */;
+			buildPhases = (
+				B0000001 /* Sources */,
+				AD000001 /* Frameworks */,
+				B0000002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Spectrum;
+			productName = Spectrum;
+			productReference = AC000001 /* Spectrum.app */;
+			productType = "com.apple.product-type.application";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B2000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					AF000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+				};
+			};
+			buildConfigurationList = B1000002 /* Build configuration list for PBXProject "Spectrum" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AE000001;
+			productRefGroup = AE000099 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AF000001 /* Spectrum */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B0000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00001C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
+
+/* Begin PBXSourcesBuildPhase section */
+		B0000001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA000001 /* SpectrumApp.swift in Sources */,
+				AA000002 /* ContentView.swift in Sources */,
+				AA000003 /* Photo.swift in Sources */,
+				AA000005 /* Tag.swift in Sources */,
+				AA000006 /* ScannedFolder.swift in Sources */,
+				AA000007 /* SidebarView.swift in Sources */,
+				AA000008 /* PhotoGridView.swift in Sources */,
+				AA000009 /* PhotoThumbnailView.swift in Sources */,
+				AA00000A /* TimelineSectionHeader.swift in Sources */,
+				AA00000B /* PhotoDetailView.swift in Sources */,
+				AA00000C /* PhotoInfoPanel.swift in Sources */,
+				AA000010 /* FolderScanner.swift in Sources */,
+				AA000011 /* EXIFService.swift in Sources */,
+				AA000012 /* ThumbnailService.swift in Sources */,
+				80EBB13D2F42434900D5463B /* ThumbnailCacheState.swift in Sources */,
+				AA000013 /* BookmarkService.swift in Sources */,
+				AA000014 /* LibraryViewModel.swift in Sources */,
+				AA000015 /* URL+ImageTypes.swift in Sources */,
+				AA000016 /* Date+Formatting.swift in Sources */,
+				AA000017 /* VideoMetadataService.swift in Sources */,
+				AA000019 /* HDRRenderSpec.swift in Sources */,
+				AA00001A /* GainMapHDRSpec.swift in Sources */,
+				AA00001B /* HLGHDRSpec.swift in Sources */,
+				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXSourcesBuildPhase section */
+
+/* Begin XCBuildConfiguration section */
+		B3000001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = dwarf;
+				EAGER_LINKING = YES;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_TESTABILITY = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_DYNAMIC_NO_PIC = NO;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_OPTIMIZATION_LEVEL = 0;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"DEBUG=1",
+					"$(inherited)",
+				);
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = INCLUDE_SOURCE;
+				MTL_FAST_MATH = YES;
+				ONLY_ACTIVE_ARCH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
+				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+			};
+			name = Debug;
+		};
+		B3000002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ALWAYS_SEARCH_USER_PATHS = NO;
+				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
+				CLANG_ANALYZER_NONNULL = YES;
+				CLANG_ANALYZER_NUMBER_OBJECT_CONVERSION = YES_AGGRESSIVE;
+				CLANG_CXX_LANGUAGE_STANDARD = "gnu++20";
+				CLANG_ENABLE_MODULES = YES;
+				CLANG_ENABLE_OBJC_ARC = YES;
+				CLANG_ENABLE_OBJC_WEAK = YES;
+				CLANG_WARN_BLOCK_CAPTURE_AUTORELEASING = YES;
+				CLANG_WARN_BOOL_CONVERSION = YES;
+				CLANG_WARN_COMMA = YES;
+				CLANG_WARN_CONSTANT_CONVERSION = YES;
+				CLANG_WARN_DEPRECATED_OBJC_IMPLEMENTATIONS = YES;
+				CLANG_WARN_DIRECT_OBJC_ISA_USAGE = YES_ERROR;
+				CLANG_WARN_DOCUMENTATION_COMMENTS = YES;
+				CLANG_WARN_EMPTY_BODY = YES;
+				CLANG_WARN_ENUM_CONVERSION = YES;
+				CLANG_WARN_INFINITE_RECURSION = YES;
+				CLANG_WARN_INT_CONVERSION = YES;
+				CLANG_WARN_NON_LITERAL_NULL_CONVERSION = YES;
+				CLANG_WARN_OBJC_IMPLICIT_RETAIN_SELF = YES;
+				CLANG_WARN_OBJC_LITERAL_CONVERSION = YES;
+				CLANG_WARN_OBJC_ROOT_CLASS = YES_ERROR;
+				CLANG_WARN_QUOTED_INCLUDE_IN_FRAMEWORK_HEADER = YES;
+				CLANG_WARN_RANGE_LOOP_ANALYSIS = YES;
+				CLANG_WARN_STRICT_PROTOTYPES = YES;
+				CLANG_WARN_SUSPICIOUS_MOVE = YES;
+				CLANG_WARN_UNGUARDED_AVAILABILITY = YES_AGGRESSIVE;
+				CLANG_WARN_UNREACHABLE_CODE = YES;
+				CLANG_WARN__DUPLICATE_METHOD_MATCH = YES;
+				COPY_PHASE_STRIP = NO;
+				DEAD_CODE_STRIPPING = YES;
+				DEBUG_INFORMATION_FORMAT = "dwarf-with-dsym";
+				EAGER_LINKING = YES;
+				ENABLE_NS_ASSERTIONS = NO;
+				ENABLE_STRICT_OBJC_MSGSEND = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				GCC_C_LANGUAGE_STANDARD = gnu17;
+				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
+				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_UNDECLARED_SELECTOR = YES;
+				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
+				GCC_WARN_UNUSED_FUNCTION = YES;
+				GCC_WARN_UNUSED_VARIABLE = YES;
+				MACOSX_DEPLOYMENT_TARGET = 14.0;
+				MTL_ENABLE_DEBUG_INFO = NO;
+				MTL_FAST_MATH = YES;
+				SDKROOT = macosx;
+				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SWIFT_COMPILATION_MODE = wholemodule;
+			};
+			name = Release;
+		};
+		B3000003 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Spectrum/Spectrum.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				EAGER_LINKING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Debug;
+		};
+		B3000004 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ENTITLEMENTS = Spectrum/Spectrum.entitlements;
+				CODE_SIGN_STYLE = Automatic;
+				COMBINE_HIDPI_IMAGES = YES;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				DEVELOPMENT_TEAM = "";
+				EAGER_LINKING = YES;
+				ENABLE_APP_SANDBOX = YES;
+				ENABLE_HARDENED_RUNTIME = YES;
+				ENABLE_USER_SELECTED_FILES = readonly;
+				GENERATE_INFOPLIST_FILE = YES;
+				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
+				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+/* End XCBuildConfiguration section */
+
+/* Begin XCConfigurationList section */
+		B1000001 /* Build configuration list for PBXNativeTarget "Spectrum" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B3000003 /* Debug */,
+				B3000004 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1000002 /* Build configuration list for PBXProject "Spectrum" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B3000001 /* Debug */,
+				B3000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+/* End XCConfigurationList section */
+	};
+	rootObject = B2000001 /* Project object */;
+}
