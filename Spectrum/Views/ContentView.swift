@@ -63,6 +63,7 @@ struct ContentView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
+    @State private var preloadCache = ImagePreloadCache()
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -88,8 +89,7 @@ struct ContentView: View {
         Group {
             if isFullScreen, let photo = detailPhoto {
                 // Fullscreen: just the photo, no NavigationSplitView
-                PhotoDetailView(photo: photo, showInspector: .constant(false), isHDR: $isPhotoHDR)
-                    .focusedSceneValue(\.photoNavigation, detailNavigation)
+                photoDetail(photo, showInspector: .constant(false))
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 normalContent
@@ -128,8 +128,7 @@ struct ContentView: View {
         } detail: {
             Group {
                 if let photo = detailPhoto {
-                    PhotoDetailView(photo: photo, showInspector: $showInspector, isHDR: $isPhotoHDR)
-                        .focusedSceneValue(\.photoNavigation, detailNavigation)
+                    photoDetail(photo, showInspector: $showInspector)
                         .toolbar {
                             ToolbarItem(placement: .navigation) {
                                 Button {
@@ -207,6 +206,11 @@ struct ContentView: View {
         } else {
             selectedSidebarItem = .subfolder(folder, parentPath)
         }
+    }
+
+    private func photoDetail(_ photo: Photo, showInspector: Binding<Bool>) -> some View {
+        PhotoDetailView(photo: photo, showInspector: showInspector, isHDR: $isPhotoHDR, viewModel: viewModel, preloadCache: preloadCache)
+            .focusedSceneValue(\.photoNavigation, detailNavigation)
     }
 
     @ViewBuilder

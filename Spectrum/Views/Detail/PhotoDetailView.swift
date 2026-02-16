@@ -55,6 +55,8 @@ struct PhotoDetailView: View {
     let photo: Photo
     @Binding var showInspector: Bool
     @Binding var isHDR: Bool
+    var viewModel: LibraryViewModel?
+    var preloadCache: ImagePreloadCache?
     @Query private var folders: [ScannedFolder]
     @State private var image: NSImage?
     @State private var showHDR: Bool = true
@@ -68,10 +70,7 @@ struct PhotoDetailView: View {
     @State private var screenHeadroom: Float = 1.0
 
     private var bookmarkData: Data? {
-        if let data = photo.folder?.bookmarkData {
-            return data
-        }
-        return folders.first { photo.filePath.hasPrefix($0.path) }?.bookmarkData
+        photo.resolveBookmarkData(from: folders)
     }
 
     var body: some View {
@@ -245,56 +244,26 @@ struct PhotoDetailView: View {
         videoSDRComposition = nil
 
         let path = photo.filePath
+
+        // Check preload cache first
+        if let cached = preloadCache?.getVideo(path) {
+            player = cached.player
+            isHDR = cached.isHDR
+            videoSDRComposition = cached.sdrComposition
+            preloadAdjacent()
+            return
+        }
+
+        // Cache miss — load normally
         let bookmark = bookmarkData
-        let url = URL(fileURLWithPath: path)
-
-        if let bookmark,
-           let folderURL = try? BookmarkService.resolveBookmark(bookmark) {
-            _ = folderURL.startAccessingSecurityScopedResource()
+        if let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) {
+            player = entry.player
+            isHDR = entry.isHDR
+            videoSDRComposition = entry.sdrComposition
+            preloadCache?.setVideo(path, entry: entry)
         }
 
-        let asset = AVURLAsset(url: url)
-
-        if let videoTracks = try? await asset.loadTracks(withMediaType: .video),
-           let track = videoTracks.first {
-            if let descriptions = try? await track.load(.formatDescriptions) {
-                for desc in descriptions {
-                    if let extensions = CMFormatDescriptionGetExtensions(desc) as? [String: Any],
-                       let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String {
-                        if transfer == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) ||
-                           transfer == (kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String) {
-                            isHDR = true
-                        }
-                    }
-                }
-            }
-
-            if isHDR {
-                let size = (try? await track.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
-                let transform = (try? await track.load(.preferredTransform)) ?? .identity
-                let fps = (try? await track.load(.nominalFrameRate)) ?? 30
-                let duration = (try? await asset.load(.duration)) ?? .indefinite
-
-                let transformedSize = size.applying(transform)
-                let composition = AVMutableVideoComposition()
-                composition.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-                composition.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-                composition.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-                composition.renderSize = CGSize(width: abs(transformedSize.width), height: abs(transformedSize.height))
-                composition.frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps > 0 ? fps : 30))
-
-                let instruction = AVMutableVideoCompositionInstruction()
-                instruction.timeRange = CMTimeRange(start: .zero, duration: duration)
-                let layerInstruction = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-                layerInstruction.setTransform(transform, at: .zero)
-                instruction.layerInstructions = [layerInstruction]
-                composition.instructions = [instruction]
-
-                videoSDRComposition = composition
-            }
-        }
-
-        player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+        preloadAdjacent()
     }
 
     private func applyVideoDynamicRange() {
@@ -309,57 +278,92 @@ struct PhotoDetailView: View {
 
     private func loadFullImage() async {
         zoomLevel = 1.0
-        image = nil
-        isHDR = false
         showHDR = true
-        activeSpec = nil
-        hdrImage = nil
-        sdrImage = nil
         let path = photo.filePath
-        let bookmark = bookmarkData
         let headroom = Float(NSScreen.main?.maximumExtendedDynamicRangeColorComponentValue ?? 2.0)
         screenHeadroom = headroom
 
-        let result = await Task.detached { () -> (NSImage?, (any HDRRenderSpec)?, NSImage?) in
-            let url = URL(fileURLWithPath: path)
+        // Check preload cache first
+        if let cached = preloadCache?.get(path) {
+            image = cached.image
+            activeSpec = cached.spec
+            isHDR = cached.spec != nil
+            hdrImage = cached.hdrImage
+            sdrImage = cached.sdrImage
+            preloadAdjacent()
+            return
+        }
 
-            var img: NSImage?
-            var matchedSpec: (any HDRRenderSpec)?
-            var sdr: NSImage?
+        // Cache miss — load normally
+        image = nil
+        isHDR = false
+        activeSpec = nil
+        hdrImage = nil
+        sdrImage = nil
 
-            let load = {
-                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-                    img = NSImage(contentsOfFile: path)
-                    return
-                }
+        let bookmark = bookmarkData
+        let entry = await ImagePreloadCache.loadImageEntry(
+            path: path, bookmarkData: bookmark, screenHeadroom: headroom
+        )
 
-                for spec in hdrRenderSpecs {
-                    if spec.detect(source: source, url: url) {
-                        matchedSpec = spec
-                        let rendered = spec.render(url: url, filePath: path, screenHeadroom: headroom)
-                        img = rendered.hdr
-                        sdr = rendered.sdr
-                        return
+        image = entry.image
+        activeSpec = entry.spec
+        isHDR = entry.spec != nil
+        hdrImage = entry.hdrImage
+        sdrImage = entry.sdrImage
+
+        // Store in cache
+        preloadCache?.set(path, entry: entry)
+
+        // Preload adjacent photos
+        preloadAdjacent()
+    }
+
+    private func preloadAdjacent() {
+        guard let viewModel, let preloadCache else { return }
+
+        let prev = viewModel.navigatePhoto(from: photo, direction: -1)
+        let next = viewModel.navigatePhoto(from: photo, direction: 1)
+
+        // Evict entries that are no longer adjacent
+        var keep: Set<String> = [photo.filePath]
+        if let p = prev { keep.insert(p.filePath) }
+        if let n = next { keep.insert(n.filePath) }
+        preloadCache.evict(keeping: keep)
+
+        let headroom = screenHeadroom
+
+        for adjacent in [prev, next].compactMap({ $0 }) {
+            let adjPath = adjacent.filePath
+            guard adjPath != photo.filePath else { continue }
+            guard !preloadCache.isLoading(adjPath) else { continue }
+
+            let bookmark = bookmarkFor(adjacent)
+
+            if adjacent.isVideo {
+                guard preloadCache.getVideo(adjPath) == nil else { continue }
+                preloadCache.markLoading(adjPath)
+                Task {
+                    if let entry = await ImagePreloadCache.loadVideoEntry(
+                        path: adjPath, bookmarkData: bookmark
+                    ) {
+                        preloadCache.setVideo(adjPath, entry: entry)
                     }
                 }
-
-                img = NSImage(contentsOfFile: path)
-            }
-
-            if let bookmark,
-               let folderURL = try? BookmarkService.resolveBookmark(bookmark) {
-                BookmarkService.withSecurityScope(folderURL, body: load)
             } else {
-                load()
+                guard preloadCache.get(adjPath) == nil else { continue }
+                preloadCache.markLoading(adjPath)
+                Task {
+                    let entry = await ImagePreloadCache.loadImageEntry(
+                        path: adjPath, bookmarkData: bookmark, screenHeadroom: headroom
+                    )
+                    preloadCache.set(adjPath, entry: entry)
+                }
             }
+        }
+    }
 
-            return (img, matchedSpec, sdr)
-        }.value
-
-        image = result.0
-        activeSpec = result.1
-        isHDR = result.1 != nil
-        hdrImage = result.0
-        sdrImage = result.2
+    private func bookmarkFor(_ p: Photo) -> Data? {
+        p.resolveBookmarkData(from: folders)
     }
 }

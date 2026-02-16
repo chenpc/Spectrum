@@ -68,8 +68,7 @@ struct PhotoThumbnailView: View {
 
     private var bookmarkData: Data? {
         if let folderBookmarkData { return folderBookmarkData }
-        if let data = photo.folder?.bookmarkData { return data }
-        return folders.first { photo.filePath.hasPrefix($0.path) }?.bookmarkData
+        return photo.resolveBookmarkData(from: folders)
     }
 
     var body: some View {

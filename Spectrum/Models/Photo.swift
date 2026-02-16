@@ -7,7 +7,6 @@ final class Photo {
     var fileName: String
     var dateTaken: Date
     var dateAdded: Date
-    var isFavorite: Bool
     var fileSize: Int64
     var pixelWidth: Int
     var pixelHeight: Int
@@ -46,11 +45,16 @@ final class Photo {
         self.fileName = fileName
         self.dateTaken = dateTaken
         self.dateAdded = Date()
-        self.isFavorite = false
         self.fileSize = fileSize
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.folder = folder
         self.tags = []
+    }
+
+    /// Resolve bookmark data: try the relationship first, then fall back to path-matching.
+    func resolveBookmarkData(from folders: [ScannedFolder]) -> Data? {
+        if let data = folder?.bookmarkData { return data }
+        return folders.first { filePath.hasPrefix($0.path) }?.bookmarkData
     }
 }

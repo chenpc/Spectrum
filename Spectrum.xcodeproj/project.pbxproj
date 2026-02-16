@@ -32,6 +32,7 @@
 		AA00001A /* GainMapHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001A /* GainMapHDRSpec.swift */; };
 		AA00001B /* HLGHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001B /* HLGHDRSpec.swift */; };
 		AA00001C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB00001C /* Assets.xcassets */; };
+		AA00001D /* ImagePreloadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001D /* ImagePreloadCache.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -61,6 +62,7 @@
 		AB00001A /* GainMapHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GainMapHDRSpec.swift; sourceTree = "<group>"; };
 		AB00001B /* HLGHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLGHDRSpec.swift; sourceTree = "<group>"; };
 		AB00001C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		AB00001D /* ImagePreloadCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCache.swift; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -132,6 +134,7 @@
 				AB000019 /* HDRRenderSpec.swift */,
 				AB00001A /* GainMapHDRSpec.swift */,
 				AB00001B /* HLGHDRSpec.swift */,
+				AB00001D /* ImagePreloadCache.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -280,6 +283,7 @@
 				AA000019 /* HDRRenderSpec.swift in Sources */,
 				AA00001A /* GainMapHDRSpec.swift in Sources */,
 				AA00001B /* HLGHDRSpec.swift in Sources */,
+				AA00001D /* ImagePreloadCache.swift in Sources */,
 				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
