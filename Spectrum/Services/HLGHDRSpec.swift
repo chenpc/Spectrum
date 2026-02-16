@@ -17,7 +17,14 @@ struct HLGHDRSpec: HDRRenderSpec {
 
     func render(url: URL, filePath: String, screenHeadroom: Float) -> (hdr: NSImage?, sdr: NSImage?) {
         // Both HDR and SDR: CIImage → shared pipeline
-        guard let ciImage = CIImage(contentsOf: url) else { return (nil, nil) }
+        guard var ciImage = CIImage(contentsOf: url) else { return (nil, nil) }
+
+        // Apply EXIF orientation
+        if let orientationValue = ciImage.properties[kCGImagePropertyOrientation as String] as? UInt32,
+           let orientation = CGImagePropertyOrientation(rawValue: orientationValue) {
+            ciImage = ciImage.oriented(orientation)
+        }
+
         let hdr = renderHDRCIImage(ciImage, screenHeadroom: screenHeadroom, saturationBoost: saturationBoost, clipToSDR: false)
         let sdr = renderHDRCIImage(ciImage, screenHeadroom: screenHeadroom, saturationBoost: saturationBoost, clipToSDR: true)
         return (hdr, sdr)

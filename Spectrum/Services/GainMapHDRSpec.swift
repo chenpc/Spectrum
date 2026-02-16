@@ -35,6 +35,16 @@ struct GainMapHDRSpec: HDRRenderSpec {
         }
         let sdrBase = CIImage(cgImage: baseCG)
 
+        // Read EXIF orientation for later application
+        let exifOrientation: CGImagePropertyOrientation
+        if let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [String: Any],
+           let rawOrientation = props[kCGImagePropertyOrientation as String] as? UInt32,
+           let parsed = CGImagePropertyOrientation(rawValue: rawOrientation) {
+            exifOrientation = parsed
+        } else {
+            exifOrientation = .up
+        }
+
         // Read gain map auxiliary data
         guard let auxInfo = CGImageSourceCopyAuxiliaryDataInfoAtIndex(
             source, 0, kCGImageAuxiliaryDataTypeHDRGainMap
@@ -86,9 +96,12 @@ struct GainMapHDRSpec: HDRRenderSpec {
         ])
 
         // HDR = SDR + boost
-        let hdrImage = sdrBase.applyingFilter("CIAdditionCompositing", parameters: [
+        let hdrComposited = sdrBase.applyingFilter("CIAdditionCompositing", parameters: [
             "inputBackgroundImage": boost
         ])
+
+        // Apply EXIF orientation after compositing (gain map matches raw pixel layout)
+        let hdrImage = hdrComposited.oriented(exifOrientation)
 
         let ctx = CIContext()
 
