@@ -18,8 +18,9 @@ enum BookmarkService {
             bookmarkDataIsStale: &isStale
         )
         if isStale {
-            // Bookmark needs refreshing — caller should update stored data
-            _ = try createBookmark(for: url)
+            // Bookmark needs refreshing — but don't fail if we can't create a new one yet.
+            // The resolved URL is still valid for this session.
+            _ = try? createBookmark(for: url)
         }
         return url
     }

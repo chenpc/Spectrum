@@ -109,6 +109,35 @@ actor FolderScanner {
                 photo.iso = exif.iso
                 photo.latitude = exif.latitude
                 photo.longitude = exif.longitude
+
+                photo.exposureBias = exif.exposureBias
+                photo.exposureProgram = exif.exposureProgram
+                photo.meteringMode = exif.meteringMode
+                photo.flash = exif.flash
+                photo.whiteBalance = exif.whiteBalance
+                photo.brightnessValue = exif.brightnessValue
+                photo.focalLenIn35mm = exif.focalLenIn35mm
+                photo.sceneCaptureType = exif.sceneCaptureType
+                photo.lightSource = exif.lightSource
+                photo.digitalZoomRatio = exif.digitalZoomRatio
+                photo.contrast = exif.contrast
+                photo.saturation = exif.saturation
+                photo.sharpness = exif.sharpness
+                photo.lensSpecification = exif.lensSpecification
+                photo.offsetTimeOriginal = exif.offsetTimeOriginal
+                photo.subsecTimeOriginal = exif.subsecTimeOriginal
+                photo.exifVersion = exif.exifVersion
+
+                photo.headroom = exif.headroom
+                photo.profileName = exif.profileName
+                photo.colorDepth = exif.colorDepth
+                photo.orientation = exif.orientation
+                photo.dpiWidth = exif.dpiWidth
+                photo.dpiHeight = exif.dpiHeight
+
+                photo.software = exif.software
+                photo.imageStabilization = exif.imageStabilization
+                photo.pictureProfile = exif.pictureProfile
             }
 
             modelContext.insert(photo)

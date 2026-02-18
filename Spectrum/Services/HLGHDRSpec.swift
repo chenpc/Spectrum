@@ -6,16 +6,18 @@ struct HLGHDRSpec: HDRRenderSpec {
     let badgeLabel = "HLG"
     let needsPrerenderedSDR = true
 
-    /// Tunable: BT.2020→P3 gamut mapping loses some punch
-    let saturationBoost: Float = 1.12
-
     func detect(source: CGImageSource, url: URL) -> Bool {
         guard let ciImage = CIImage(contentsOf: url),
               let colorSpace = ciImage.colorSpace else { return false }
         return CGColorSpaceUsesITUR_2100TF(colorSpace)
     }
 
-    func render(url: URL, filePath: String, screenHeadroom: Float) -> (hdr: NSImage?, sdr: NSImage?) {
+    func render(url: URL, filePath: String, screenHeadroom: Float, maxPixelSize: Int? = nil, hlgToneMapMode: HLGToneMapMode = .iccTRC) -> (hdr: NSImage?, sdr: NSImage?) {
+        // ICC TRC mode: bypass Apple's HLG decode, use Sony's exact TRC curve
+        if hlgToneMapMode == .iccTRC {
+            return renderWithICCTRC(url: url, filePath: filePath, screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize)
+        }
+
         // Both HDR and SDR: CIImage → shared pipeline
         guard var ciImage = CIImage(contentsOf: url) else { return (nil, nil) }
 
@@ -25,8 +27,10 @@ struct HLGHDRSpec: HDRRenderSpec {
             ciImage = ciImage.oriented(orientation)
         }
 
-        let hdr = renderHDRCIImage(ciImage, screenHeadroom: screenHeadroom, saturationBoost: saturationBoost, clipToSDR: false)
-        let sdr = renderHDRCIImage(ciImage, screenHeadroom: screenHeadroom, saturationBoost: saturationBoost, clipToSDR: true)
+        ciImage = downsampleIfNeeded(ciImage, maxPixelSize: maxPixelSize)
+
+        let hdr = renderHLGToneMapped(ciImage, mode: hlgToneMapMode, screenHeadroom: screenHeadroom, clipToSDR: false)
+        let sdr = renderHLGToneMapped(ciImage, mode: hlgToneMapMode, screenHeadroom: screenHeadroom, clipToSDR: true)
         return (hdr, sdr)
     }
 

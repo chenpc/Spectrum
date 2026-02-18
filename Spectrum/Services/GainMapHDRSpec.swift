@@ -21,7 +21,7 @@ struct GainMapHDRSpec: HDRRenderSpec {
         return false
     }
 
-    func render(url: URL, filePath: String, screenHeadroom: Float) -> (hdr: NSImage?, sdr: NSImage?) {
+    func render(url: URL, filePath: String, screenHeadroom: Float, maxPixelSize: Int? = nil, hlgToneMapMode: HLGToneMapMode = .iccTRC) -> (hdr: NSImage?, sdr: NSImage?) {
         // Read entire file into memory to avoid lazy I/O after security scope ends
         guard let fileData = try? Data(contentsOf: url),
               let source = CGImageSourceCreateWithData(fileData as CFData, nil)
@@ -101,7 +101,10 @@ struct GainMapHDRSpec: HDRRenderSpec {
         ])
 
         // Apply EXIF orientation after compositing (gain map matches raw pixel layout)
-        let hdrImage = hdrComposited.oriented(exifOrientation)
+        let hdrImage = downsampleIfNeeded(
+            hdrComposited.oriented(exifOrientation),
+            maxPixelSize: maxPixelSize
+        )
 
         let ctx = CIContext()
 

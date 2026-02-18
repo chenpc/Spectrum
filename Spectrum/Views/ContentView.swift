@@ -4,13 +4,11 @@ import SwiftData
 enum SidebarItem: Hashable {
     case folder(ScannedFolder)
     case subfolder(ScannedFolder, String)  // (root folder for bookmark, subfolder path)
-    case tag(Tag)
 
     func hash(into hasher: inout Hasher) {
         switch self {
         case .folder(let f): hasher.combine("folder"); hasher.combine(f.persistentModelID)
         case .subfolder(let f, let path): hasher.combine("subfolder"); hasher.combine(f.persistentModelID); hasher.combine(path)
-        case .tag(let t): hasher.combine("tag"); hasher.combine(t.persistentModelID)
         }
     }
 
@@ -18,7 +16,6 @@ enum SidebarItem: Hashable {
         switch (lhs, rhs) {
         case (.folder(let a), .folder(let b)): return a.persistentModelID == b.persistentModelID
         case (.subfolder(let a, let ap), .subfolder(let b, let bp)): return a.persistentModelID == b.persistentModelID && ap == bp
-        case (.tag(let a), .tag(let b)): return a.persistentModelID == b.persistentModelID
         default: return false
         }
     }
@@ -52,6 +49,27 @@ extension FocusedValues {
     }
 }
 
+/// Bridges NSEvent Escape key presses into SwiftUI via an observable toggle.
+@Observable
+@MainActor
+private final class EscapeKeyMonitor {
+    var escaped = false
+    nonisolated(unsafe) private var monitor: Any?
+
+    func start() {
+        guard monitor == nil else { return }
+        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+            guard event.keyCode == 53 else { return event }
+            self?.escaped.toggle()
+            return nil
+        }
+    }
+
+    deinit {
+        if let monitor { NSEvent.removeMonitor(monitor) }
+    }
+}
+
 struct ContentView: View {
     @State private var selectedSidebarItem: SidebarItem?
     @State private var selectedPhoto: Photo?
@@ -64,6 +82,7 @@ struct ContentView: View {
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
     @State private var preloadCache = ImagePreloadCache()
+    @State private var escapeMonitor = EscapeKeyMonitor()
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -95,17 +114,19 @@ struct ContentView: View {
                 normalContent
             }
         }
-        .onExitCommand {
-            handleEscape()
-        }
-        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { notification in
+        .onAppear { escapeMonitor.start() }
+        .onChange(of: escapeMonitor.escaped) { _, _ in handleEscape() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
             guard isFullScreen else { return }
             // User exited fullscreen via green button or gesture — restore state
+            isFullScreen = false
+            columnVisibility = savedColumnVisibility
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { notification in
+            // Restore toolbar after fullscreen animation completes
             if let window = notification.object as? NSWindow {
                 window.toolbar?.isVisible = true
             }
-            isFullScreen = false
-            columnVisibility = savedColumnVisibility
         }
         .environment(\.thumbnailCacheState, thumbnailCacheState)
         .onChange(of: selectedSidebarItem) { _, _ in
@@ -193,7 +214,6 @@ struct ContentView: View {
         guard let window = NSApp.keyWindow else { return }
         isFullScreen = false
         columnVisibility = savedColumnVisibility
-        window.toolbar?.isVisible = true
         if window.styleMask.contains(.fullScreen) {
             window.toggleFullScreen(nil)
         }
@@ -236,13 +256,6 @@ struct ContentView: View {
                 },
                 folder: folder,
                 folderPath: subPath
-            )
-        case .tag(let tag):
-            PhotoGridView(
-                viewModel: viewModel,
-                selectedPhoto: $selectedPhoto,
-                onDoubleClick: { detailPhoto = $0 },
-                tagFilter: tag
             )
         case nil:
             ContentUnavailableView(

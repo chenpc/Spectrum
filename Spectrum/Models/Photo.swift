@@ -22,6 +22,42 @@ final class Photo {
     var latitude: Double?
     var longitude: Double?
 
+    // EXIF extras
+    var exposureBias: Double?
+    var exposureProgram: Int?
+    var meteringMode: Int?
+    var flash: Int?
+    var whiteBalance: Int?
+    var brightnessValue: Double?
+    var focalLenIn35mm: Int?
+    var sceneCaptureType: Int?
+    var lightSource: Int?
+    var digitalZoomRatio: Double?
+    var contrast: Int?
+    var saturation: Int?
+    var sharpness: Int?
+    var lensSpecification: [Double]?
+    var offsetTimeOriginal: String?
+    var subsecTimeOriginal: String?
+    var exifVersion: String?
+
+    // Top-level metadata
+    var headroom: Double?
+    var profileName: String?
+    var colorDepth: Int?
+    var orientation: Int?
+    var dpiWidth: Double?
+    var dpiHeight: Double?
+
+    // TIFF
+    var software: String?
+
+    // ExifAux
+    var imageStabilization: Int?
+
+    // Sony MakerNote
+    var pictureProfile: String?
+
     // Video fields
     var isVideo: Bool = false
     var duration: Double?
@@ -30,7 +66,6 @@ final class Photo {
 
     // Relationships
     var folder: ScannedFolder?
-    @Relationship(inverse: \Tag.photos) var tags: [Tag] = []
 
     init(
         filePath: String,
@@ -49,7 +84,6 @@ final class Photo {
         self.pixelWidth = pixelWidth
         self.pixelHeight = pixelHeight
         self.folder = folder
-        self.tags = []
     }
 
     /// Resolve bookmark data: try the relationship first, then fall back to path-matching.

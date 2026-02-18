@@ -12,7 +12,6 @@
 		AA000001 /* SpectrumApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000001 /* SpectrumApp.swift */; };
 		AA000002 /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000002 /* ContentView.swift */; };
 		AA000003 /* Photo.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000003 /* Photo.swift */; };
-		AA000005 /* Tag.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000005 /* Tag.swift */; };
 		AA000006 /* ScannedFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000006 /* ScannedFolder.swift */; };
 		AA000007 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000007 /* SidebarView.swift */; };
 		AA000008 /* PhotoGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000008 /* PhotoGridView.swift */; };
@@ -33,6 +32,10 @@
 		AA00001B /* HLGHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001B /* HLGHDRSpec.swift */; };
 		AA00001C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB00001C /* Assets.xcassets */; };
 		AA00001D /* ImagePreloadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001D /* ImagePreloadCache.swift */; };
+		AA00001E /* SonyMakerNoteParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001E /* SonyMakerNoteParser.swift */; };
+		AA00001F /* ColorSpaceConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001F /* ColorSpaceConverter.swift */; };
+		AA000020 /* SonyPPRenderSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000020 /* SonyPPRenderSpec.swift */; };
+		AA000021 /* sony_HLG.icc in Resources */ = {isa = PBXBuildFile; fileRef = AB000021 /* sony_HLG.icc */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -41,7 +44,6 @@
 		AB000001 /* SpectrumApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumApp.swift; sourceTree = "<group>"; };
 		AB000002 /* ContentView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ContentView.swift; sourceTree = "<group>"; };
 		AB000003 /* Photo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photo.swift; sourceTree = "<group>"; };
-		AB000005 /* Tag.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Tag.swift; sourceTree = "<group>"; };
 		AB000006 /* ScannedFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannedFolder.swift; sourceTree = "<group>"; };
 		AB000007 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
 		AB000008 /* PhotoGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGridView.swift; sourceTree = "<group>"; };
@@ -63,6 +65,10 @@
 		AB00001B /* HLGHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLGHDRSpec.swift; sourceTree = "<group>"; };
 		AB00001C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AB00001D /* ImagePreloadCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCache.swift; sourceTree = "<group>"; };
+		AB00001E /* SonyMakerNoteParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonyMakerNoteParser.swift; sourceTree = "<group>"; };
+		AB00001F /* ColorSpaceConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorSpaceConverter.swift; sourceTree = "<group>"; };
+		AB000020 /* SonyPPRenderSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonyPPRenderSpec.swift; sourceTree = "<group>"; };
+		AB000021 /* sony_HLG.icc */ = {isa = PBXFileReference; lastKnownFileType = file; path = sony_HLG.icc; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -96,6 +102,7 @@
 				AE000005 /* Services */,
 				AE000006 /* ViewModels */,
 				AE000007 /* Extensions */,
+				AE000013 /* Resources */,
 				80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */,
 			);
 			path = Spectrum;
@@ -105,7 +112,6 @@
 			isa = PBXGroup;
 			children = (
 				AB000003 /* Photo.swift */,
-				AB000005 /* Tag.swift */,
 				AB000006 /* ScannedFolder.swift */,
 			);
 			path = Models;
@@ -135,6 +141,9 @@
 				AB00001A /* GainMapHDRSpec.swift */,
 				AB00001B /* HLGHDRSpec.swift */,
 				AB00001D /* ImagePreloadCache.swift */,
+				AB00001E /* SonyMakerNoteParser.swift */,
+				AB00001F /* ColorSpaceConverter.swift */,
+				AB000020 /* SonyPPRenderSpec.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -183,6 +192,14 @@
 			path = Detail;
 			sourceTree = "<group>";
 		};
+		AE000013 /* Resources */ = {
+			isa = PBXGroup;
+			children = (
+				AB000021 /* sony_HLG.icc */,
+			);
+			path = Resources;
+			sourceTree = "<group>";
+		};
 		AE000099 /* Products */ = {
 			isa = PBXGroup;
 			children = (
@@ -193,11 +210,35 @@
 		};
 /* End PBXGroup section */
 
+/* Begin PBXShellScriptBuildPhase section */
+		CC000001 /* Generate App Icon */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/Spectrum/Resources/AppIcon.svg",
+			);
+			name = "Generate App Icon";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+				"$(SRCROOT)/Spectrum/Assets.xcassets/AppIcon.appiconset/icon_1024x1024.png",
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\nSVG=\"${SRCROOT}/Spectrum/Resources/AppIcon.svg\"\nOUT=\"${SRCROOT}/Spectrum/Assets.xcassets/AppIcon.appiconset\"\nTMP=\"${DERIVED_FILE_DIR}/icon-gen\"\nmkdir -p \"$TMP\"\nqlmanage -t -s 1024 -o \"$TMP\" \"$SVG\" 2>/dev/null\ncp \"$TMP/AppIcon.svg.png\" \"$OUT/icon_1024x1024.png\"\nfor S in 512 256 128 64 32 16; do\n  sips -z $S $S \"$TMP/AppIcon.svg.png\" --out \"$OUT/icon_${S}x${S}.png\" 2>/dev/null\ndone\nrm -rf \"$TMP\"\n";
+		};
+/* End PBXShellScriptBuildPhase section */
+
 /* Begin PBXNativeTarget section */
 		AF000001 /* Spectrum */ = {
 			isa = PBXNativeTarget;
 			buildConfigurationList = B1000001 /* Build configuration list for PBXNativeTarget "Spectrum" */;
 			buildPhases = (
+				CC000001 /* Generate App Icon */,
 				B0000001 /* Sources */,
 				AD000001 /* Frameworks */,
 				B0000002 /* Resources */,
@@ -250,6 +291,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA00001C /* Assets.xcassets in Resources */,
+				AA000021 /* sony_HLG.icc in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -263,7 +305,6 @@
 				AA000001 /* SpectrumApp.swift in Sources */,
 				AA000002 /* ContentView.swift in Sources */,
 				AA000003 /* Photo.swift in Sources */,
-				AA000005 /* Tag.swift in Sources */,
 				AA000006 /* ScannedFolder.swift in Sources */,
 				AA000007 /* SidebarView.swift in Sources */,
 				AA000008 /* PhotoGridView.swift in Sources */,
@@ -284,6 +325,9 @@
 				AA00001A /* GainMapHDRSpec.swift in Sources */,
 				AA00001B /* HLGHDRSpec.swift in Sources */,
 				AA00001D /* ImagePreloadCache.swift in Sources */,
+				AA00001E /* SonyMakerNoteParser.swift in Sources */,
+				AA00001F /* ColorSpaceConverter.swift in Sources */,
+				AA000020 /* SonyPPRenderSpec.swift in Sources */,
 				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -330,7 +374,7 @@
 				EAGER_LINKING = YES;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
 				ENABLE_TESTABILITY = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_NO_COMMON_BLOCKS = YES;
@@ -395,7 +439,7 @@
 				EAGER_LINKING = YES;
 				ENABLE_NS_ASSERTIONS = NO;
 				ENABLE_STRICT_OBJC_MSGSEND = YES;
-				ENABLE_USER_SCRIPT_SANDBOXING = YES;
+				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;

@@ -44,7 +44,6 @@ private struct SubfolderSidebarRow: View {
 
 struct SidebarView: View {
     @Binding var selection: SidebarItem?
-    @Query(sort: \Tag.name) private var tags: [Tag]
     @Query(sort: \ScannedFolder.sortOrder) private var folders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -62,19 +61,6 @@ struct SidebarView: View {
                 .onMove(perform: moveFolder)
             }
 
-            if !tags.isEmpty {
-                Section("Tags") {
-                    ForEach(tags) { tag in
-                        Label("\(tag.name) (\(tag.photos.count))", systemImage: "tag")
-                            .tag(SidebarItem.tag(tag))
-                            .contextMenu {
-                                Button("Delete", role: .destructive) {
-                                    modelContext.delete(tag)
-                                }
-                            }
-                    }
-                }
-            }
         }
         .listStyle(.sidebar)
         .frame(minWidth: 200)

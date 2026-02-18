@@ -7,7 +7,7 @@ struct SpectrumApp: App {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [Photo.self, Tag.self, ScannedFolder.self])
+        .modelContainer(for: [Photo.self, ScannedFolder.self])
         .windowStyle(.automatic)
         .defaultSize(width: 1200, height: 800)
         .commands {

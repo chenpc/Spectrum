@@ -23,3 +23,6 @@ Package.resolved
 *.swp
 *~
 *.dmg
+
+# Generated app icon PNGs (built from SVG in Build Phase)
+Spectrum/Assets.xcassets/AppIcon.appiconset/icon_*.png

@@ -15,7 +15,6 @@ struct PhotoGridView: View {
     var onNavigateToSubfolder: ((String) -> Void)? = nil
     var folder: ScannedFolder? = nil
     var folderPath: String? = nil
-    var tagFilter: Tag? = nil
 
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Photo.dateTaken, order: .reverse) private var allPhotos: [Photo]
@@ -30,24 +29,13 @@ struct PhotoGridView: View {
 
     /// Photos directly in the current folder (one level only)
     private var directPhotos: [Photo] {
-        guard let path = effectivePath else {
-            // Tag mode — no folder path, use all matching
-            var result = allPhotos
-            if let tag = tagFilter {
-                result = result.filter { $0.tags.contains { $0.persistentModelID == tag.persistentModelID } }
-            }
-            return result
-        }
+        guard let path = effectivePath else { return [] }
         let prefix = path.hasSuffix("/") ? path : path + "/"
-        var result = allPhotos.filter { photo in
+        return allPhotos.filter { photo in
             guard photo.filePath.hasPrefix(prefix) else { return false }
             let relative = String(photo.filePath.dropFirst(prefix.count))
             return !relative.contains("/")
         }
-        if let tag = tagFilter {
-            result = result.filter { $0.tags.contains { $0.persistentModelID == tag.persistentModelID } }
-        }
-        return result
     }
 
     private let columns = [
