@@ -2,6 +2,8 @@
 
 A native macOS photo viewer built for **HDR photography** — specifically designed to correctly render Sony HLG (Hybrid Log-Gamma) HDR photos and videos that macOS Photos cannot properly display.
 
+<img src="Spectrum/Resources/AppIcon.svg" width="250">
+
 ## Why Spectrum?
 
 Apple's Photos app does not correctly tone-map Sony's HLG HDR images, resulting in washed-out or incorrectly exposed photos. Spectrum solves this by implementing a dedicated HDR rendering pipeline that properly handles:
@@ -36,6 +38,7 @@ Apple's Photos app does not correctly tone-map Sony's HLG HDR images, resulting 
 # Clone
 git clone https://github.com/chenpc/Spectrum.git
 cd Spectrum
+![AppIcon](https://github.com/user-attachments/assets/fc2fbc33-b3b6-4f85-9a3d-a64e2cd4ec5c)
 
 # Build Release
 ./release.sh
