@@ -49,24 +49,34 @@ extension FocusedValues {
     }
 }
 
+/// Untracked box for storing the opaque NSEvent monitor token outside of
+/// `@Observable` synthesis and off the main actor.
+private final class MonitorBox: @unchecked Sendable {
+    var value: Any?
+}
+
 /// Bridges NSEvent Escape key presses into SwiftUI via an observable toggle.
 @Observable
 @MainActor
 private final class EscapeKeyMonitor {
     var escaped = false
-    nonisolated(unsafe) private var monitor: Any?
+    // Stored as a nonisolated-safe wrapper to avoid @Observable macro conflicts
+    // with @MainActor on mutable stored properties.
+    private let monitorBox = MonitorBox()
 
     func start() {
-        guard monitor == nil else { return }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+        guard monitorBox.value == nil else { return }
+        monitorBox.value = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
-            self?.escaped.toggle()
+            Task { @MainActor [weak self] in
+                self?.escaped.toggle()
+            }
             return nil
         }
     }
 
     deinit {
-        if let monitor { NSEvent.removeMonitor(monitor) }
+        if let monitor = monitorBox.value { NSEvent.removeMonitor(monitor) }
     }
 }
 
@@ -81,7 +91,7 @@ struct ContentView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
-    @State private var preloadCache = ImagePreloadCache()
+    private var preloadCache: ImagePreloadCache { ImagePreloadCache.shared }
     @State private var escapeMonitor = EscapeKeyMonitor()
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
@@ -134,10 +144,11 @@ struct ContentView: View {
             selectedPhoto = nil
         }
         .task {
-            // On app launch: clear all photos and rescan root level of each folder
+            // On app launch: delta scan — keep cached data for instant display,
+            // add new files and remove deleted files in the background.
             let scanner = FolderScanner(modelContainer: modelContext.container)
             for folder in allFolders {
-                try? await scanner.scanFolder(id: folder.persistentModelID, clearAll: true)
+                try? await scanner.scanFolder(id: folder.persistentModelID, clearAll: false)
             }
         }
     }

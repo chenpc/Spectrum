@@ -61,6 +61,12 @@ struct SidebarView: View {
                 .onMove(perform: moveFolder)
             }
 
+            Section {
+                CacheSidebarFooter()
+                    .listRowInsets(EdgeInsets())
+                    .listRowBackground(Color.clear)
+                    .listRowSeparator(.hidden)
+            }
         }
         .listStyle(.sidebar)
         .frame(minWidth: 200)

@@ -14,6 +14,7 @@
 		AA000003 /* Photo.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000003 /* Photo.swift */; };
 		AA000006 /* ScannedFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000006 /* ScannedFolder.swift */; };
 		AA000007 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000007 /* SidebarView.swift */; };
+		AA000028 /* CacheSidebarFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000028 /* CacheSidebarFooter.swift */; };
 		AA000008 /* PhotoGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000008 /* PhotoGridView.swift */; };
 		AA000009 /* PhotoThumbnailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000009 /* PhotoThumbnailView.swift */; };
 		AA00000A /* TimelineSectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000A /* TimelineSectionHeader.swift */; };
@@ -35,7 +36,8 @@
 		AA00001E /* SonyMakerNoteParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001E /* SonyMakerNoteParser.swift */; };
 		AA00001F /* ColorSpaceConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001F /* ColorSpaceConverter.swift */; };
 		AA000020 /* SonyPPRenderSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000020 /* SonyPPRenderSpec.swift */; };
-		AA000021 /* sony_HLG.icc in Resources */ = {isa = PBXBuildFile; fileRef = AB000021 /* sony_HLG.icc */; };
+		AA000022 /* AppleToneMapRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000022 /* AppleToneMapRender.swift */; };
+		AA000024 /* RenderedImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000024 /* RenderedImageCache.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -46,6 +48,7 @@
 		AB000003 /* Photo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photo.swift; sourceTree = "<group>"; };
 		AB000006 /* ScannedFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannedFolder.swift; sourceTree = "<group>"; };
 		AB000007 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
+		AB000028 /* CacheSidebarFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheSidebarFooter.swift; sourceTree = "<group>"; };
 		AB000008 /* PhotoGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGridView.swift; sourceTree = "<group>"; };
 		AB000009 /* PhotoThumbnailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoThumbnailView.swift; sourceTree = "<group>"; };
 		AB00000A /* TimelineSectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineSectionHeader.swift; sourceTree = "<group>"; };
@@ -68,7 +71,8 @@
 		AB00001E /* SonyMakerNoteParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonyMakerNoteParser.swift; sourceTree = "<group>"; };
 		AB00001F /* ColorSpaceConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorSpaceConverter.swift; sourceTree = "<group>"; };
 		AB000020 /* SonyPPRenderSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonyPPRenderSpec.swift; sourceTree = "<group>"; };
-		AB000021 /* sony_HLG.icc */ = {isa = PBXFileReference; lastKnownFileType = file; path = sony_HLG.icc; sourceTree = "<group>"; };
+		AB000022 /* AppleToneMapRender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleToneMapRender.swift; sourceTree = "<group>"; };
+		AB000024 /* RenderedImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderedImageCache.swift; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -138,6 +142,8 @@
 				AB000013 /* BookmarkService.swift */,
 				AB000018 /* VideoMetadataService.swift */,
 				AB000019 /* HDRRenderSpec.swift */,
+				AB000022 /* AppleToneMapRender.swift */,
+				AB000024 /* RenderedImageCache.swift */,
 				AB00001A /* GainMapHDRSpec.swift */,
 				AB00001B /* HLGHDRSpec.swift */,
 				AB00001D /* ImagePreloadCache.swift */,
@@ -169,6 +175,7 @@
 			isa = PBXGroup;
 			children = (
 				AB000007 /* SidebarView.swift */,
+				AB000028 /* CacheSidebarFooter.swift */,
 			);
 			path = Sidebar;
 			sourceTree = "<group>";
@@ -195,7 +202,6 @@
 		AE000013 /* Resources */ = {
 			isa = PBXGroup;
 			children = (
-				AB000021 /* sony_HLG.icc */,
 			);
 			path = Resources;
 			sourceTree = "<group>";
@@ -291,7 +297,6 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA00001C /* Assets.xcassets in Resources */,
-				AA000021 /* sony_HLG.icc in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -307,6 +312,7 @@
 				AA000003 /* Photo.swift in Sources */,
 				AA000006 /* ScannedFolder.swift in Sources */,
 				AA000007 /* SidebarView.swift in Sources */,
+				AA000028 /* CacheSidebarFooter.swift in Sources */,
 				AA000008 /* PhotoGridView.swift in Sources */,
 				AA000009 /* PhotoThumbnailView.swift in Sources */,
 				AA00000A /* TimelineSectionHeader.swift in Sources */,
@@ -322,6 +328,8 @@
 				AA000016 /* Date+Formatting.swift in Sources */,
 				AA000017 /* VideoMetadataService.swift in Sources */,
 				AA000019 /* HDRRenderSpec.swift in Sources */,
+				AA000022 /* AppleToneMapRender.swift in Sources */,
+				AA000024 /* RenderedImageCache.swift in Sources */,
 				AA00001A /* GainMapHDRSpec.swift in Sources */,
 				AA00001B /* HLGHDRSpec.swift in Sources */,
 				AA00001D /* ImagePreloadCache.swift in Sources */,

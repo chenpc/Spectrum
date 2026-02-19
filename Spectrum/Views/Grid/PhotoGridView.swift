@@ -19,9 +19,32 @@ struct PhotoGridView: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Photo.dateTaken, order: .reverse) private var allPhotos: [Photo]
 
-    @State private var subfolders: [SubfolderInfo] = []
+    /// Live subfolders from filesystem scan (nil = not yet scanned).
+    @State private var scannedSubfolders: [SubfolderInfo]? = nil
     @State private var isScanning = true
     @State private var selectedItemId: String?
+
+    /// Subfolders inferred from existing Photo records — available instantly without scanning.
+    private var inferredSubfolders: [SubfolderInfo] {
+        guard let path = effectivePath else { return [] }
+        let prefix = path.hasSuffix("/") ? path : path + "/"
+        var seen = [String: String]()  // subfolder name → cover photo path
+        for photo in allPhotos {
+            guard photo.filePath.hasPrefix(prefix) else { continue }
+            let relative = String(photo.filePath.dropFirst(prefix.count))
+            if let slashIndex = relative.firstIndex(of: "/") {
+                let name = String(relative[..<slashIndex])
+                if seen[name] == nil { seen[name] = photo.filePath }
+            }
+        }
+        return seen.map { SubfolderInfo(name: $0, path: prefix + $0, coverPath: $1) }
+                   .sorted { $0.name < $1.name }
+    }
+
+    /// Subfolders to display: live scan results when available, otherwise infer from DB.
+    private var subfolders: [SubfolderInfo] {
+        scannedSubfolders ?? inferredSubfolders
+    }
 
     private var effectivePath: String? {
         folderPath ?? folder?.path
@@ -137,7 +160,7 @@ struct PhotoGridView: View {
         }
         .frame(minWidth: 400)
         .overlay {
-            if isScanning {
+            if isScanning && directPhotos.isEmpty && subfolders.isEmpty {
                 ProgressView("Scanning...")
                     .padding()
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -148,6 +171,9 @@ struct PhotoGridView: View {
         }
         .onChange(of: effectivePath) { _, _ in
             selectedItemId = nil
+            // Reset scan results so inferredSubfolders shows immediately for the new path.
+            scannedSubfolders = nil
+            isScanning = true
         }
     }
 
@@ -195,11 +221,12 @@ struct PhotoGridView: View {
         let scanner = FolderScanner(modelContainer: modelContext.container)
 
         isScanning = true
-        // Scan one level of the current path
+
+        // Delta scan: adds new files and removes deleted ones.
         try? await scanner.scanFolder(id: folder.persistentModelID, subPath: folderPath)
-        // List filesystem subdirectories
+        // List live filesystem subdirectories (may include folders with no scanned photos yet).
         let dirs = await scanner.listSubfolders(id: folder.persistentModelID, path: effectivePath)
-        subfolders = dirs.map { SubfolderInfo(name: $0.name, path: $0.path, coverPath: $0.coverPath) }
+        scannedSubfolders = dirs.map { SubfolderInfo(name: $0.name, path: $0.path, coverPath: $0.coverPath) }
         isScanning = false
     }
 }

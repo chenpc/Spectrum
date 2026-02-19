@@ -107,7 +107,6 @@ struct PhotoDetailView: View {
     @State private var screenHeadroom: Float = 1.0
     @State private var originalImage: NSImage?
     @State private var selectedColorSpace: ColorSpaceOption = .original
-    @State private var hlgToneMapMode: HLGToneMapMode = .iccTRC
     @AppStorage("developerMode") private var developerMode: Bool = false
     @AppStorage("prefetchCount") private var prefetchCount: Int = 2
     @AppStorage("cacheHistoryCount") private var cacheHistoryCount: Int = 10
@@ -138,10 +137,6 @@ struct PhotoDetailView: View {
         }
         .onChange(of: selectedColorSpace) { _, _ in
             applyColorSpaceConversion()
-        }
-        .onChange(of: hlgToneMapMode) { _, _ in
-            guard isHLGImage else { return }
-            Task { await loadFullImage(skipCache: true) }
         }
         .toolbar {
             ToolbarItemGroup {
@@ -198,24 +193,6 @@ struct PhotoDetailView: View {
                         }
                         .help("Color Space")
 
-                        if isHLGImage {
-                            Menu {
-                                ForEach(HLGToneMapMode.allCases) { mode in
-                                    Button {
-                                        hlgToneMapMode = mode
-                                    } label: {
-                                        if hlgToneMapMode == mode {
-                                            Label(mode.rawValue, systemImage: "checkmark")
-                                        } else {
-                                            Text(mode.rawValue)
-                                        }
-                                    }
-                                }
-                            } label: {
-                                Image(systemName: "wand.and.rays")
-                            }
-                            .help("HLG Tone Map: \(hlgToneMapMode.rawValue)")
-                        }
                     }
 
                 }
@@ -411,7 +388,7 @@ struct PhotoDetailView: View {
 
         // Check preload cache first
         if let cached = preloadCache?.getVideo(path) {
-            logger.info("CACHE HIT video: \(fileName)")
+            logger.info("[Memory] HIT: \(fileName)")
             player = cached.player
             videoHDRType = cached.hdrType
             isHDR = cached.hdrType != nil
@@ -423,7 +400,7 @@ struct PhotoDetailView: View {
         }
 
         // Cache miss — load normally
-        logger.info("CACHE MISS video: \(fileName)")
+        logger.info("[Memory] MISS: \(fileName)")
         let loadStart = CFAbsoluteTimeGetCurrent()
         let bookmark = bookmarkData
         if let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) {
@@ -467,7 +444,19 @@ struct PhotoDetailView: View {
 
         // Check preload cache first
         if !skipCache, let cached = preloadCache?.get(path) {
-            logger.info("CACHE HIT image: \(fileName)")
+            // If this HDR entry was freshly rendered (not from disk cache), ensure
+            // it gets persisted — the original background write may still be pending.
+            if !cached.fromDiskCache, let hdr = cached.hdrImage {
+                let isHDR = cached.spec != nil
+                Task.detached(priority: .background) {
+                    if RenderedImageCache.shared.lookupCacheFile(for: path) == nil {
+                        RenderedImageCache.shared.store(filePath: path, image: hdr, isHDR: isHDR)
+                        logger.info("[Memory] HIT → wrote to disk: \(fileName)")
+                    }
+                }
+            }
+            let hitSource = cached.isPrefetch ? "prefetch" : "history"
+            logger.info("[Memory] HIT (\(hitSource)): \(fileName)")
             image = cached.image
             originalImage = cached.image
             activeSpec = cached.spec
@@ -479,7 +468,6 @@ struct PhotoDetailView: View {
         }
 
         // Cache miss — load normally
-        logger.info("CACHE MISS image: \(fileName)")
         image = nil
         isHDR = false
         activeSpec = nil
@@ -489,13 +477,21 @@ struct PhotoDetailView: View {
         let loadStart = CFAbsoluteTimeGetCurrent()
         let bookmark = bookmarkData
         let maxPx = renderMaxPixelSize
-        let toneMode = hlgToneMapMode
         let entry = await ImagePreloadCache.loadImageEntry(
             path: path, bookmarkData: bookmark, screenHeadroom: headroom,
-            maxPixelSize: maxPx, hlgToneMapMode: toneMode
+            maxPixelSize: maxPx
         )
         let ms = (CFAbsoluteTimeGetCurrent() - loadStart) * 1000
-        logger.info("Loaded image: \(fileName) (HDR: \(entry.spec != nil), \(ms, format: .fixed(precision: 0))ms, maxPx: \(maxPx))")
+        let diskStatus = entry.fromDiskCache ? "[Disk] HIT" : "[Disk] MISS"
+        logger.info("[Memory] MISS → \(diskStatus): \(fileName) (HDR: \(entry.spec != nil), \(ms, format: .fixed(precision: 0))ms)")
+
+        // Persist HDR renders to disk cache (callers own this responsibility).
+        if !entry.fromDiskCache, let hdr = entry.hdrImage {
+            let isHDR = entry.spec != nil
+            Task.detached(priority: .utility) {
+                RenderedImageCache.shared.store(filePath: path, image: hdr, isHDR: isHDR)
+            }
+        }
 
         image = entry.image
         originalImage = entry.image
@@ -524,30 +520,41 @@ struct PhotoDetailView: View {
         }
 
         let count = prefetchCount
+
+        // Build the keep set (current photo + adjacent prefetch window).
+        var keep: Set<String> = [photo.filePath]
+        if count > 0 {
+            var cursor: Photo? = photo
+            for _ in 0..<count {
+                cursor = viewModel.navigatePhoto(from: cursor, direction: -1)
+                if let p = cursor, p.filePath != photo.filePath { keep.insert(p.filePath) }
+            }
+            cursor = photo
+            for _ in 0..<count {
+                cursor = viewModel.navigatePhoto(from: cursor, direction: 1)
+                if let n = cursor, n.filePath != photo.filePath { keep.insert(n.filePath) }
+            }
+        }
+
+        // Always evict — even when prefetch is off — so history limits are enforced.
+        preloadCache.evict(keeping: keep, historyCount: cacheHistoryCount, historyMemoryLimitMB: cacheHistoryMemoryMB)
+
         guard count > 0 else { return }
 
-        // Collect prev N and next N
+        // Collect photos to prefetch (those not already in cache).
         var adjacents: [Photo] = []
-        var keep: Set<String> = [photo.filePath]
         var cursor: Photo? = photo
         for _ in 0..<count {
             cursor = viewModel.navigatePhoto(from: cursor, direction: -1)
-            if let p = cursor, p.filePath != photo.filePath {
-                adjacents.append(p)
-                keep.insert(p.filePath)
-            }
+            if let p = cursor, p.filePath != photo.filePath { adjacents.append(p) }
         }
         cursor = photo
         for _ in 0..<count {
             cursor = viewModel.navigatePhoto(from: cursor, direction: 1)
-            if let n = cursor, n.filePath != photo.filePath {
-                adjacents.append(n)
-                keep.insert(n.filePath)
-            }
+            if let n = cursor, n.filePath != photo.filePath { adjacents.append(n) }
         }
 
         logger.info("Preloading \(adjacents.count) adjacent: \(adjacents.map { URL(fileURLWithPath: $0.filePath).lastPathComponent }.joined(separator: ", "))")
-        preloadCache.evict(keeping: keep, historyCount: cacheHistoryCount, historyMemoryLimitMB: cacheHistoryMemoryMB)
 
         let headroom = screenHeadroom
 
@@ -581,7 +588,6 @@ struct PhotoDetailView: View {
                     continue
                 }
                 preloadCache.markLoading(adjPath)
-                logger.info("Prefetching image: \(adjName)")
                 Task {
                     let start = CFAbsoluteTimeGetCurrent()
                     let entry = await ImagePreloadCache.loadImageEntry(
@@ -589,8 +595,17 @@ struct PhotoDetailView: View {
                         maxPixelSize: self.renderMaxPixelSize
                     )
                     let ms = (CFAbsoluteTimeGetCurrent() - start) * 1000
-                    logger.info("Prefetched image: \(adjName) (HDR: \(entry.spec != nil), \(ms, format: .fixed(precision: 0))ms)")
-                    preloadCache.set(adjPath, entry: entry)
+                    let diskStatus = entry.fromDiskCache ? "[Disk] HIT" : "[Disk] MISS"
+                    logger.info("[Prefetch] \(diskStatus): \(adjName) (HDR: \(entry.spec != nil), \(ms, format: .fixed(precision: 0))ms)")
+                    if !entry.fromDiskCache, let hdr = entry.hdrImage {
+                        let isHDR = entry.spec != nil
+                        Task.detached(priority: .utility) {
+                            RenderedImageCache.shared.store(filePath: adjPath, image: hdr, isHDR: isHDR)
+                        }
+                    }
+                    var tagged = entry
+                    tagged.isPrefetch = true
+                    preloadCache.set(adjPath, entry: tagged)
                 }
             }
         }

@@ -8,11 +8,15 @@ enum VideoHDRType: String {
     case hdr10 = "HDR10"
 }
 
-struct CachedImageEntry {
+struct CachedImageEntry: @unchecked Sendable {
     let image: NSImage?
     let spec: (any HDRRenderSpec)?
     let hdrImage: NSImage?
     let sdrImage: NSImage?
+    /// True when the entry was served from the on-disk rendered image cache.
+    var fromDiskCache: Bool = false
+    /// True when this entry was loaded by background prefetch (not a direct user navigation).
+    var isPrefetch: Bool = false
 }
 
 struct CachedVideoEntry {
@@ -25,12 +29,21 @@ struct CachedVideoEntry {
 @Observable
 @MainActor
 final class ImagePreloadCache {
+    static let shared = ImagePreloadCache()
+
     private var imageCache: [String: CachedImageEntry] = [:]
     private var videoCache: [String: CachedVideoEntry] = [:]
     private var loading: Set<String> = []
 
     /// Recently viewed paths (most recent last), for history retention.
     private var viewHistory: [String] = []
+
+    /// Total estimated memory usage of all cached image entries (bytes).
+    var totalMemoryUsage: Int64 {
+        imageCache.values.reduce(0) { sum, entry in
+            sum + Self.estimatedImageBytes(entry.hdrImage) + Self.estimatedImageBytes(entry.sdrImage)
+        }
+    }
 
     func get(_ path: String) -> CachedImageEntry? {
         imageCache[path]
@@ -231,57 +244,89 @@ final class ImagePreloadCache {
         path: String,
         bookmarkData: Data?,
         screenHeadroom: Float,
-        maxPixelSize: Int? = nil,
-        hlgToneMapMode: HLGToneMapMode = .iccTRC
+        maxPixelSize: Int? = nil
     ) async -> CachedImageEntry {
         await Task.detached {
             let url = URL(fileURLWithPath: path)
 
+            // Start security scope manually so disk-cache check and rendering
+            // both run inside the same scope window.
+            var scopeURL: URL?
+            var didStart = false
+            if let bookmarkData,
+               let folderURL = try? BookmarkService.resolveBookmark(bookmarkData) {
+                scopeURL = folderURL
+                didStart = folderURL.startAccessingSecurityScopedResource()
+            }
+            defer { if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() } }
+
+            // ── Disk cache hit path ────────────────────────────────────────
+            if let cacheURL = RenderedImageCache.shared.lookupCacheFile(for: path),
+               let img = NSImage(contentsOf: cacheURL) {
+                // Re-detect spec quickly (metadata-only read) for badge/toggle.
+                var spec: (any HDRRenderSpec)? = nil
+                if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
+                    for s in hdrRenderSpecs where s.detect(source: source, url: url) {
+                        spec = s; break
+                    }
+                    if spec == nil { spec = SonyPPDetector.detect(url: url) }
+                }
+                return CachedImageEntry(image: img, spec: spec, hdrImage: img, sdrImage: nil, fromDiskCache: true)
+            }
+
+            // ── Cache miss: render ─────────────────────────────────────────
             var img: NSImage?
             var matchedSpec: (any HDRRenderSpec)?
             var sdr: NSImage?
 
-            let load = {
-                guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-                    img = NSImage(contentsOfFile: path)
-                    return
-                }
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
+                img = NSImage(contentsOfFile: path)
+                return CachedImageEntry(
+                    image: Self.forceDecoded(img),
+                    spec: nil,
+                    hdrImage: Self.forceDecoded(img),
+                    sdrImage: nil
+                )
+            }
 
-                for spec in hdrRenderSpecs {
-                    if spec.detect(source: source, url: url) {
-                        matchedSpec = spec
-                        let rendered = spec.render(url: url, filePath: path, screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize, hlgToneMapMode: hlgToneMapMode)
-                        img = rendered.hdr
-                        sdr = rendered.sdr
-                        return
-                    }
-                }
-
-                // Sony PP files (HLG1-3, S-Log3, S-Log2) — container mislabeled as BT.709
-                if let ppSpec = SonyPPDetector.detect(url: url) {
-                    matchedSpec = ppSpec
-                    let rendered = ppSpec.render(url: url, filePath: path, screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize, hlgToneMapMode: hlgToneMapMode)
+            for spec in hdrRenderSpecs {
+                if spec.detect(source: source, url: url) {
+                    matchedSpec = spec
+                    let rendered = spec.render(url: url, filePath: path,
+                                               screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize)
                     img = rendered.hdr
                     sdr = rendered.sdr
-                    return
+                    break
                 }
+            }
 
+            // Sony PP files (HLG1-3, S-Log3, S-Log2) — container mislabeled as BT.709
+            if matchedSpec == nil, let ppSpec = SonyPPDetector.detect(url: url) {
+                matchedSpec = ppSpec
+                let rendered = ppSpec.render(url: url, filePath: path,
+                                             screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize)
+                img = rendered.hdr
+                sdr = rendered.sdr
+            }
+
+            if matchedSpec == nil {
                 img = NSImage(contentsOfFile: path)
             }
 
-            if let bookmarkData,
-               let folderURL = try? BookmarkService.resolveBookmark(bookmarkData) {
-                BookmarkService.withSecurityScope(folderURL, body: load)
+            // Spec-rendered images (HDR pipeline via CIContext) already have pixel
+            // data in memory — force-decoding via TIFF round-trip clips RGBAh float
+            // values > 1.0, destroying EDR content. Only force-decode plain loads.
+            // Callers are responsible for persisting HDR renders to the disk cache.
+            if matchedSpec != nil {
+                return CachedImageEntry(image: img, spec: matchedSpec, hdrImage: img, sdrImage: sdr)
             } else {
-                load()
+                return CachedImageEntry(
+                    image: Self.forceDecoded(img),
+                    spec: nil,
+                    hdrImage: Self.forceDecoded(img),
+                    sdrImage: nil
+                )
             }
-
-            return CachedImageEntry(
-                image: Self.forceDecoded(img),
-                spec: matchedSpec,
-                hdrImage: Self.forceDecoded(img),
-                sdrImage: Self.forceDecoded(sdr)
-            )
         }.value
     }
 
