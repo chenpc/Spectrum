@@ -38,7 +38,6 @@ Apple's Photos app does not correctly tone-map Sony's HLG HDR images, resulting 
 # Clone
 git clone https://github.com/chenpc/Spectrum.git
 cd Spectrum
-![AppIcon](https://github.com/user-attachments/assets/fc2fbc33-b3b6-4f85-9a3d-a64e2cd4ec5c)
 
 # Build Release
 ./release.sh
