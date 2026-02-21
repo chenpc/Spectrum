@@ -3,7 +3,7 @@ import Foundation
 enum BookmarkService {
     static func createBookmark(for url: URL) throws -> Data {
         try url.bookmarkData(
-            options: [.withSecurityScope, .securityScopeAllowOnlyReadAccess],
+            options: .withSecurityScope,
             includingResourceValuesForKeys: nil,
             relativeTo: nil
         )
@@ -23,6 +23,13 @@ enum BookmarkService {
             _ = try? createBookmark(for: url)
         }
         return url
+    }
+
+    /// Returns the network remount URL (e.g. smb://server/share) for a URL on a network volume, or nil.
+    static func remountURL(for url: URL) -> URL? {
+        let started = url.startAccessingSecurityScopedResource()
+        defer { if started { url.stopAccessingSecurityScopedResource() } }
+        return (try? url.resourceValues(forKeys: [.volumeURLForRemountingKey]))?.volumeURLForRemounting
     }
 
     @discardableResult

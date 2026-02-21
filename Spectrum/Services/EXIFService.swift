@@ -49,8 +49,6 @@ struct EXIFData {
     // {ExifAux}
     var imageStabilization: Int?
 
-    // Sony MakerNote
-    var pictureProfile: String?
 }
 
 enum EXIFService {
@@ -167,9 +165,6 @@ enum EXIFService {
                 result.longitude = lonRef == "W" ? -lon : lon
             }
         }
-
-        // Sony MakerNote
-        result.pictureProfile = SonyMakerNoteParser.extractPictureProfile(from: url)
 
         return result
     }

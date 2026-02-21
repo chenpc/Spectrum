@@ -3,13 +3,13 @@ import Foundation
 extension Date {
     var timelineLabel: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "MMMM yyyy"
+        formatter.dateFormat = "yyyy/MM/dd"
         return formatter.string(from: self)
     }
 
     var monthYearKey: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy-MM"
+        formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: self)
     }
 

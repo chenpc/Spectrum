@@ -1,5 +1,6 @@
 import SwiftData
 import Foundation
+import ImageIO
 
 @ModelActor
 actor FolderScanner {
@@ -49,7 +50,10 @@ actor FolderScanner {
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
         ) else { return }
 
-        // Skip duplicates
+        // All media paths at this level (used for delta removal later)
+        let allDiskMediaPaths = Set(contents.filter { $0.isMediaFile }.map(\.path))
+
+        // Skip duplicates already in DB
         let existingPaths: Set<String> = {
             let descriptor = FetchDescriptor<Photo>()
             let photos = (try? modelContext.fetch(descriptor)) ?? []
@@ -137,7 +141,6 @@ actor FolderScanner {
 
                 photo.software = exif.software
                 photo.imageStabilization = exif.imageStabilization
-                photo.pictureProfile = exif.pictureProfile
             }
 
             modelContext.insert(photo)
@@ -152,17 +155,39 @@ actor FolderScanner {
         if !batch.isEmpty {
             try? modelContext.save()
         }
+
+        // Delta removal: when not doing a full clear, remove DB entries for files
+        // that existed at this level in the previous scan but are no longer on disk.
+        if !clearAll {
+            let levelPrefix = targetURL.path + "/"
+            let allDbPhotos = (try? modelContext.fetch(FetchDescriptor<Photo>())) ?? []
+            var deletedAny = false
+            for photo in allDbPhotos {
+                guard photo.filePath.hasPrefix(levelPrefix) else { continue }
+                let relative = String(photo.filePath.dropFirst(levelPrefix.count))
+                guard !relative.contains("/") else { continue }   // direct children only
+                guard !allDiskMediaPaths.contains(photo.filePath) else { continue }
+                modelContext.delete(photo)
+                deletedAny = true
+            }
+            if deletedAny {
+                try? modelContext.save()
+            }
+        }
     }
 
     /// List immediate subdirectories at a path within a scanned folder.
-    /// Returns name, path, and the first media file path (for cover thumbnail).
-    func listSubfolders(id: PersistentIdentifier, path: String? = nil) -> [(name: String, path: String, coverPath: String?)] {
+    /// Uses FolderListCache to skip the inner contentsOfDirectory on cache hits.
+    /// Always performs the outer directory listing to detect added/removed folders.
+    func listSubfolders(id: PersistentIdentifier, path: String? = nil) -> [(name: String, path: String, coverPath: String?, coverDate: Date?)] {
         guard let folder = modelContext.model(for: id) as? ScannedFolder else { return [] }
         guard let bookmarkData = folder.bookmarkData,
               let rootURL = try? BookmarkService.resolveBookmark(bookmarkData) else { return [] }
 
         let rootPath = rootURL.path
         let targetURL = path.map { childURL(rootURL: rootURL, rootPath: rootPath, childPath: $0) } ?? rootURL
+        let targetPath = targetURL.path
+        let cache = FolderListCache.shared
 
         return BookmarkService.withSecurityScope(rootURL) {
             let fm = FileManager.default
@@ -174,20 +199,62 @@ actor FolderScanner {
 
             let dirs = contents
                 .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
-                .sorted { $0.lastPathComponent < $1.lastPathComponent }
 
-            return dirs.map { dirURL in
-                // Find first media file in this subdirectory (one level only)
-                let coverPath: String? = {
-                    guard let subContents = try? fm.contentsOfDirectory(
-                        at: dirURL,
-                        includingPropertiesForKeys: [.isRegularFileKey],
-                        options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                    ) else { return nil }
-                    return subContents.first { $0.isMediaFile }?.path
-                }()
-                return (name: dirURL.lastPathComponent, path: dirURL.path, coverPath: coverPath)
+            let results = dirs.map { dirURL -> (name: String, path: String, coverPath: String?, coverDate: Date?) in
+                // Cache hit: skip inner contentsOfDirectory entirely
+                if let cached = cache.entry(forChildPath: dirURL.path, underParent: targetPath) {
+                    return (name: cached.name, path: cached.path,
+                            coverPath: cached.coverPath, coverDate: cached.coverDate)
+                }
+
+                // Cache miss: read inner directory to find cover file
+                let subContents = (try? fm.contentsOfDirectory(
+                    at: dirURL,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )) ?? []
+                let imageFiles = subContents.filter { $0.isImageFile }
+                let coverURL: URL? = imageFiles.first ?? subContents.first { $0.isMediaFile }
+                let coverPath = coverURL?.path
+
+                // Read EXIF date from cover image
+                var coverDate: Date?
+                if let cp = coverPath,
+                   let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: cp) as CFURL, nil),
+                   let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
+                    let df = DateFormatter()
+                    df.dateFormat = "yyyy:MM:dd HH:mm:ss"
+                    df.locale = Locale(identifier: "en_US_POSIX")
+                    let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
+                    let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
+                    let candidates: [String?] = [
+                        exif?[kCGImagePropertyExifDateTimeOriginal] as? String,
+                        exif?[kCGImagePropertyExifDateTimeDigitized] as? String,
+                        tiff?[kCGImagePropertyTIFFDateTime] as? String,
+                    ]
+                    for str in candidates.compactMap({ $0 }) {
+                        if let d = df.date(from: str) { coverDate = d; break }
+                    }
+                }
+                // Fallback: use cover file modification time
+                if coverDate == nil, let cp = coverPath {
+                    coverDate = try? URL(fileURLWithPath: cp)
+                        .resourceValues(forKeys: [.contentModificationDateKey])
+                        .contentModificationDate
+                }
+
+                return (name: dirURL.lastPathComponent, path: dirURL.path,
+                        coverPath: coverPath, coverDate: coverDate)
             }
+
+            // Update cache with full results for this parent
+            let entries = results.map {
+                FolderListEntry(name: $0.name, path: $0.path,
+                                coverPath: $0.coverPath, coverDate: $0.coverDate)
+            }
+            cache.setEntries(entries, for: targetPath)
+
+            return results
         }
     }
 }

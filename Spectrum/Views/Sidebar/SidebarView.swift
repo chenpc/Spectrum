@@ -2,31 +2,31 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
-/// A sidebar row for a subfolder that lazily loads its children from the filesystem.
+/// A sidebar row for a subfolder that lazily loads its children only when expanded.
 private struct SubfolderSidebarRow: View {
     let folder: ScannedFolder
     let path: String
     let name: String
     @Environment(\.modelContext) private var modelContext
-    @State private var children: [(name: String, path: String, coverPath: String?)] = []
+    @State private var children: [(name: String, path: String, coverPath: String?, coverDate: Date?)] = []
     @State private var loaded = false
+    @State private var isExpanded = false
 
     var body: some View {
-        Group {
-            if !loaded {
-                label
-                    .task { await loadChildren() }
-            } else if children.isEmpty {
-                label
-            } else {
-                DisclosureGroup {
-                    ForEach(children, id: \.path) { child in
-                        SubfolderSidebarRow(folder: folder, path: child.path, name: child.name)
-                    }
-                } label: {
-                    label
+        DisclosureGroup(isExpanded: $isExpanded) {
+            if loaded {
+                ForEach(children, id: \.path) { child in
+                    SubfolderSidebarRow(folder: folder, path: child.path, name: child.name)
                 }
+            } else {
+                ProgressView().scaleEffect(0.6)
             }
+        } label: {
+            label
+        }
+        .onChange(of: isExpanded) { _, expanded in
+            guard expanded, !loaded else { return }
+            Task { await loadChildren() }
         }
     }
 
@@ -44,29 +44,47 @@ private struct SubfolderSidebarRow: View {
 
 struct SidebarView: View {
     @Binding var selection: SidebarItem?
-    @Query(sort: \ScannedFolder.sortOrder) private var folders: [ScannedFolder]
+    @Query private var folders: [ScannedFolder]
+    @Query(sort: \Photo.dateTaken, order: .reverse) private var allPhotos: [Photo]
     @Environment(\.modelContext) private var modelContext
 
     @State private var isScanning = false
     /// folder.persistentModelID -> immediate subfolders
-    @State private var folderChildren: [String: [(name: String, path: String, coverPath: String?)]] = [:]
+    @State private var folderChildren: [String: [(name: String, path: String, coverPath: String?, coverDate: Date?)]] = [:]
     @State private var dropTargeted = false
+
+    /// Folders sorted by latest photo dateTaken (most recent first).
+    /// Falls back to folder path alphabetically when no photos are indexed yet.
+    private var sortedFolders: [ScannedFolder] {
+        // Build a map of folder.path -> latest dateTaken using one pass over sorted allPhotos.
+        var latestDate: [String: Date] = [:]
+        let paths = Set(folders.map(\.path))
+        for photo in allPhotos {
+            for path in paths {
+                if photo.filePath.hasPrefix(path.hasSuffix("/") ? path : path + "/") || photo.filePath == path {
+                    if latestDate[path] == nil { latestDate[path] = photo.dateTaken }
+                }
+            }
+            if latestDate.count == paths.count { break }
+        }
+        return folders.sorted { a, b in
+            switch (latestDate[a.path], latestDate[b.path]) {
+            case let (ad?, bd?): return ad > bd
+            case (nil, _?):     return false
+            case (_?, nil):     return true
+            case (nil, nil):    return a.path < b.path
+            }
+        }
+    }
 
     var body: some View {
         List(selection: $selection) {
             Section("Folders") {
-                ForEach(folders) { folder in
+                ForEach(sortedFolders) { folder in
                     folderRow(folder)
                 }
-                .onMove(perform: moveFolder)
             }
 
-            Section {
-                CacheSidebarFooter()
-                    .listRowInsets(EdgeInsets())
-                    .listRowBackground(Color.clear)
-                    .listRowSeparator(.hidden)
-            }
         }
         .listStyle(.sidebar)
         .frame(minWidth: 200)
@@ -97,6 +115,16 @@ struct SidebarView: View {
     }
 
     private func loadAllFolderChildren() async {
+        // Show cached children immediately (no filesystem I/O)
+        for folder in folders {
+            if let cached = FolderListCache.shared.entries(for: folder.path) {
+                folderChildren[folder.path] = cached.map {
+                    (name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate)
+                }
+            }
+        }
+
+        // Async refresh from filesystem — updates if folders were added/removed
         let scanner = FolderScanner(modelContainer: modelContext.container)
         for folder in folders {
             let children = await scanner.listSubfolders(id: folder.persistentModelID)
@@ -158,22 +186,14 @@ struct SidebarView: View {
         }
     }
 
-    private func moveFolder(from source: IndexSet, to destination: Int) {
-        var reordered = Array(folders)
-        reordered.move(fromOffsets: source, toOffset: destination)
-        for (index, folder) in reordered.enumerated() {
-            folder.sortOrder = index
-        }
-        try? modelContext.save()
-    }
-
     private func addFolderURL(_ url: URL) {
         // Skip if already added
         guard !folders.contains(where: { $0.path == url.path }) else { return }
 
         do {
             let bookmarkData = try BookmarkService.createBookmark(for: url)
-            let folder = ScannedFolder(path: url.path, bookmarkData: bookmarkData, sortOrder: folders.count)
+            let remountURL = BookmarkService.remountURL(for: url)?.absoluteString
+            let folder = ScannedFolder(path: url.path, bookmarkData: bookmarkData, remountURL: remountURL, sortOrder: folders.count)
             modelContext.insert(folder)
             try modelContext.save()
 

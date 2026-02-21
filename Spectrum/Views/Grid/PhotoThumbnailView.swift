@@ -115,10 +115,12 @@ struct PhotoThumbnailView: View {
                 .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
         )
         .task(id: photo.filePath + "\(cacheState.generation)") {
-            thumbnail = nil
-            if let image = await ThumbnailService.shared.thumbnail(for: photo.filePath, bookmarkData: bookmarkData) {
-                thumbnail = image
+            if let cached = ThumbnailService.shared.cachedThumbnail(for: photo.filePath) {
+                thumbnail = cached
+                return
             }
+            thumbnail = nil
+            thumbnail = await ThumbnailService.shared.thumbnail(for: photo.filePath, bookmarkData: bookmarkData)
         }
     }
 }

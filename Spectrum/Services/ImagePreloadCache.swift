@@ -1,6 +1,19 @@
 import AppKit
 import AVFoundation
 import CoreMedia
+import ImageIO
+
+// MARK: - HDR Format
+
+enum HDRFormat {
+    case gainMap
+    case hlg
+    var badgeLabel: String {
+        switch self { case .gainMap: return "HDR"; case .hlg: return "HLG" }
+    }
+}
+
+// MARK: - Cache entry types
 
 enum VideoHDRType: String {
     case dolbyVision = "Dolby Vision"
@@ -10,13 +23,8 @@ enum VideoHDRType: String {
 
 struct CachedImageEntry: @unchecked Sendable {
     let image: NSImage?
-    let spec: (any HDRRenderSpec)?
-    let hdrImage: NSImage?
-    let sdrImage: NSImage?
-    /// True when the entry was served from the on-disk rendered image cache.
-    var fromDiskCache: Bool = false
-    /// True when this entry was loaded by background prefetch (not a direct user navigation).
-    var isPrefetch: Bool = false
+    let hlgCGImage: CGImage?    // non-nil for HLG: raw CGImage for CALayer direct rendering
+    let hdrFormat: HDRFormat?   // nil = SDR
 }
 
 struct CachedVideoEntry {
@@ -26,117 +34,11 @@ struct CachedVideoEntry {
     let sdrComposition: AVVideoComposition?
 }
 
-@Observable
-@MainActor
-final class ImagePreloadCache {
-    static let shared = ImagePreloadCache()
+enum ImagePreloadCache {
 
-    private var imageCache: [String: CachedImageEntry] = [:]
-    private var videoCache: [String: CachedVideoEntry] = [:]
-    private var loading: Set<String> = []
+    // MARK: - Video loading
 
-    /// Recently viewed paths (most recent last), for history retention.
-    private var viewHistory: [String] = []
-
-    /// Total estimated memory usage of all cached image entries (bytes).
-    var totalMemoryUsage: Int64 {
-        imageCache.values.reduce(0) { sum, entry in
-            sum + Self.estimatedImageBytes(entry.hdrImage) + Self.estimatedImageBytes(entry.sdrImage)
-        }
-    }
-
-    func get(_ path: String) -> CachedImageEntry? {
-        imageCache[path]
-    }
-
-    func set(_ path: String, entry: CachedImageEntry) {
-        imageCache[path] = entry
-        loading.remove(path)
-    }
-
-    func getVideo(_ path: String) -> CachedVideoEntry? {
-        videoCache[path]
-    }
-
-    func setVideo(_ path: String, entry: CachedVideoEntry) {
-        videoCache[path] = entry
-        loading.remove(path)
-    }
-
-    func isLoading(_ path: String) -> Bool {
-        loading.contains(path)
-    }
-
-    func markLoading(_ path: String) {
-        loading.insert(path)
-    }
-
-    /// Record a photo as viewed (for history-based cache retention).
-    func recordView(_ path: String) {
-        viewHistory.removeAll { $0 == path }
-        viewHistory.append(path)
-    }
-
-    /// Evict cache entries that are not in the keep set and exceed history limits.
-    /// - `keeping`: paths that must stay (current + prefetch adjacent)
-    /// - `historyCount`: max number of history entries to keep
-    /// - `historyMemoryLimitMB`: max memory for history entries (0 = unlimited)
-    func evict(keeping paths: Set<String>, historyCount: Int, historyMemoryLimitMB: Int) {
-        // Determine which history entries to keep (most recent first, within limits)
-        var historyKeep = Set<String>()
-        var historyBytes: Int64 = 0
-        let memoryLimit = Int64(historyMemoryLimitMB) * 1024 * 1024
-
-        for path in viewHistory.reversed() {
-            guard !paths.contains(path) else { continue } // already kept by adjacency
-            guard historyKeep.count < historyCount else { break }
-
-            let entryBytes = estimatedBytes(for: path)
-            if memoryLimit > 0 && historyBytes + entryBytes > memoryLimit {
-                break
-            }
-
-            historyKeep.insert(path)
-            historyBytes += entryBytes
-        }
-
-        let allKeep = paths.union(historyKeep)
-
-        for (key, entry) in videoCache where !allKeep.contains(key) {
-            entry.player.pause()
-        }
-        imageCache = imageCache.filter { allKeep.contains($0.key) }
-        videoCache = videoCache.filter { allKeep.contains($0.key) }
-        loading = loading.filter { allKeep.contains($0) }
-
-        // Trim history list to avoid unbounded growth
-        if viewHistory.count > max(historyCount * 2, 50) {
-            viewHistory = Array(viewHistory.suffix(max(historyCount, 20)))
-        }
-    }
-
-    /// Estimate memory usage of a cached path (image + video).
-    private func estimatedBytes(for path: String) -> Int64 {
-        var bytes: Int64 = 0
-        if let entry = imageCache[path] {
-            bytes += Self.estimatedImageBytes(entry.hdrImage)
-            bytes += Self.estimatedImageBytes(entry.sdrImage)
-        }
-        // Video entries are relatively small (AVPlayer buffers are managed by system)
-        return bytes
-    }
-
-    /// Estimate memory footprint of an NSImage from its pixel dimensions.
-    private static func estimatedImageBytes(_ image: NSImage?) -> Int64 {
-        guard let image else { return 0 }
-        let w = Int64(image.size.width)
-        let h = Int64(image.size.height)
-        return w * h * 8 // assume RGBAh (16-bit per channel)
-    }
-
-    // MARK: - Standalone video loading (no UI state)
-
-    nonisolated static func loadVideoEntry(
+    static func loadVideoEntry(
         path: String,
         bookmarkData: Data?
     ) async -> CachedVideoEntry? {
@@ -164,7 +66,6 @@ final class ImagePreloadCache {
            let track = videoTracks.first {
             if let descriptions = try? await track.load(.formatDescriptions) {
                 for desc in descriptions {
-                    // 1. Codec FourCC 'dvh1' → Dolby Vision (dedicated DV codec)
                     let codecType = CMFormatDescriptionGetMediaSubType(desc)
                     if codecType == kCMVideoCodecType_DolbyVisionHEVC {
                         hdrType = .dolbyVision
@@ -173,14 +74,12 @@ final class ImagePreloadCache {
 
                     guard let extensions = CMFormatDescriptionGetExtensions(desc) as? [String: Any] else { continue }
 
-                    // 2. DV Profile 8 (cross-compatible): standard HEVC with dvcC/dvvC config box
                     if let atoms = extensions[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] as? [String: Any],
                        atoms["dvcC"] != nil || atoms["dvvC"] != nil {
                         hdrType = .dolbyVision
                         break
                     }
 
-                    // 3. Transfer function: HLG or PQ (HDR10)
                     if let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String {
                         if transfer == (kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String) {
                             hdrType = .hlg
@@ -210,7 +109,6 @@ final class ImagePreloadCache {
                     return inst
                 }
 
-                // HDR composition: explicit BT.2020 + correct transfer function
                 let hdrComp = AVMutableVideoComposition()
                 hdrComp.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
                 hdrComp.colorTransferFunction = (hdrType == .hlg || hdrType == .dolbyVision)
@@ -222,7 +120,6 @@ final class ImagePreloadCache {
                 hdrComp.instructions = [makeInstruction()]
                 hdrComposition = hdrComp
 
-                // SDR composition: force BT.709
                 let sdrComp = AVMutableVideoComposition()
                 sdrComp.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
                 sdrComp.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
@@ -238,19 +135,15 @@ final class ImagePreloadCache {
         return CachedVideoEntry(player: player, hdrType: hdrType, hdrComposition: hdrComposition, sdrComposition: sdrComposition)
     }
 
-    // MARK: - Standalone image loading (no UI state)
+    // MARK: - Image loading
 
-    nonisolated static func loadImageEntry(
+    static func loadImageEntry(
         path: String,
-        bookmarkData: Data?,
-        screenHeadroom: Float,
-        maxPixelSize: Int? = nil
+        bookmarkData: Data?
     ) async -> CachedImageEntry {
         await Task.detached {
             let url = URL(fileURLWithPath: path)
 
-            // Start security scope manually so disk-cache check and rendering
-            // both run inside the same scope window.
             var scopeURL: URL?
             var didStart = false
             if let bookmarkData,
@@ -260,85 +153,71 @@ final class ImagePreloadCache {
             }
             defer { if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() } }
 
-            // ── Disk cache hit path ────────────────────────────────────────
-            if let cacheURL = RenderedImageCache.shared.lookupCacheFile(for: path),
-               let img = NSImage(contentsOf: cacheURL) {
-                // Re-detect spec quickly (metadata-only read) for badge/toggle.
-                var spec: (any HDRRenderSpec)? = nil
-                if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
-                    for s in hdrRenderSpecs where s.detect(source: source, url: url) {
-                        spec = s; break
-                    }
-                    if spec == nil { spec = SonyPPDetector.detect(url: url) }
-                }
-                return CachedImageEntry(image: img, spec: spec, hdrImage: img, sdrImage: nil, fromDiskCache: true)
-            }
-
-            // ── Cache miss: render ─────────────────────────────────────────
-            var img: NSImage?
-            var matchedSpec: (any HDRRenderSpec)?
-            var sdr: NSImage?
-
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
-                img = NSImage(contentsOfFile: path)
-                return CachedImageEntry(
-                    image: Self.forceDecoded(img),
-                    spec: nil,
-                    hdrImage: Self.forceDecoded(img),
-                    sdrImage: nil
-                )
+                let img = NSImage(contentsOfFile: path)
+                return CachedImageEntry(image: img, hlgCGImage: nil, hdrFormat: nil)
             }
 
-            for spec in hdrRenderSpecs {
-                if spec.detect(source: source, url: url) {
-                    matchedSpec = spec
-                    let rendered = spec.render(url: url, filePath: path,
-                                               screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize)
-                    img = rendered.hdr
-                    sdr = rendered.sdr
-                    break
-                }
-            }
+            let hdrFormat = detectHDR(source: source)
 
-            // Sony PP files (HLG1-3, S-Log3, S-Log2) — container mislabeled as BT.709
-            if matchedSpec == nil, let ppSpec = SonyPPDetector.detect(url: url) {
-                matchedSpec = ppSpec
-                let rendered = ppSpec.render(url: url, filePath: path,
-                                             screenHeadroom: screenHeadroom, maxPixelSize: maxPixelSize)
-                img = rendered.hdr
-                sdr = rendered.sdr
-            }
-
-            if matchedSpec == nil {
-                img = NSImage(contentsOfFile: path)
-            }
-
-            // Spec-rendered images (HDR pipeline via CIContext) already have pixel
-            // data in memory — force-decoding via TIFF round-trip clips RGBAh float
-            // values > 1.0, destroying EDR content. Only force-decode plain loads.
-            // Callers are responsible for persisting HDR renders to the disk cache.
-            if matchedSpec != nil {
-                return CachedImageEntry(image: img, spec: matchedSpec, hdrImage: img, sdrImage: sdr)
+            let img: NSImage?
+            var hlgCGImage: CGImage?
+            if url.isCameraRawFile {
+                img = loadCameraRaw(source: source, path: path)
+            } else if hdrFormat == .hlg {
+                // Load raw CGImage for direct CALayer rendering (mpv-style explicit colorspace)
+                let cgImg = CGImageSourceCreateImageAtIndex(source, 0, nil)
+                hlgCGImage = cgImg
+                img = cgImg.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
             } else {
-                return CachedImageEntry(
-                    image: Self.forceDecoded(img),
-                    spec: nil,
-                    hdrImage: Self.forceDecoded(img),
-                    sdrImage: nil
-                )
+                img = NSImage(contentsOf: url)
             }
+
+            return CachedImageEntry(image: img, hlgCGImage: hlgCGImage, hdrFormat: hdrFormat)
         }.value
     }
 
-    /// Force-decode an NSImage so JPEG/HEIC decode happens here (background thread),
-    /// not lazily on the main thread when NSImageView displays it.
-    private nonisolated static func forceDecoded(_ image: NSImage?) -> NSImage? {
-        guard let image,
-              let tiff = image.tiffRepresentation,
-              let bitmap = NSBitmapImageRep(data: tiff)
-        else { return image }
-        let result = NSImage(size: image.size)
-        result.addRepresentation(bitmap)
-        return result
+    // MARK: - Private helpers
+
+    private static func detectHDR(source: CGImageSource) -> HDRFormat? {
+        // 1. Gain Map auxiliary data
+        if CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil {
+            return .gainMap
+        }
+        // 2. Gain Map via EXIF CustomRendered = 3 (older iPhone)
+        if let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
+           let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any],
+           exif[kCGImagePropertyExifCustomRendered] as? Int == 3 {
+            return .gainMap
+        }
+        // 3. HLG: color space uses ITU-R 2100 transfer function
+        if let cg = CGImageSourceCreateImageAtIndex(source, 0, nil),
+           let cs = cg.colorSpace,
+           CGColorSpaceUsesITUR_2100TF(cs) {
+            return .hlg
+        }
+        return nil
+    }
+
+    private static func loadCameraRaw(source: CGImageSource, path: String) -> NSImage? {
+        let subCount = CGImageSourceGetCount(source)
+        if subCount > 1 {
+            for i in 1..<subCount {
+                if let cgImg = CGImageSourceCreateImageAtIndex(source, i, nil),
+                   cgImg.width > 1000 {
+                    return NSImage(cgImage: cgImg, size: NSSize(width: cgImg.width, height: cgImg.height))
+                }
+            }
+        }
+
+        let opts: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: 4096,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+        ]
+        if let cgImg = CGImageSourceCreateThumbnailAtIndex(source, 0, opts as CFDictionary) {
+            return NSImage(cgImage: cgImg, size: NSSize(width: cgImg.width, height: cgImg.height))
+        }
+        return nil
     }
 }

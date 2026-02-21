@@ -3,6 +3,11 @@ import SwiftData
 
 @main
 struct SpectrumApp: App {
+    init() {
+        // Pre-initialize LibMPV so the singleton is ready before any video loads
+        _ = LibMPV.shared
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
@@ -13,6 +18,8 @@ struct SpectrumApp: App {
         .commands {
             FileCommands()
             PhotoNavigationCommands()
+            FolderEditCommands()
+            MpvPlaybackCommands()
         }
 
         Settings {
@@ -31,6 +38,29 @@ struct FileCommands: Commands {
             }
             .keyboardShortcut("o", modifiers: [.command, .shift])
             .disabled(addFolder == nil)
+        }
+    }
+}
+
+struct FolderEditCommands: Commands {
+    @FocusedValue(\.folderEditAction) var folderEdit
+
+    var body: some Commands {
+        // Replace the system Cut/Copy/Paste entries in the Edit menu.
+        // When our actions are nil (disabled), macOS lets the first-responder
+        // (e.g. a focused text field) handle the same shortcuts normally.
+        CommandGroup(replacing: .pasteboard) {
+            Button("Cut") { folderEdit?.cut?() }
+                .keyboardShortcut("x", modifiers: .command)
+                .disabled(folderEdit?.cut == nil)
+
+            Button("Copy") { folderEdit?.copy?() }
+                .keyboardShortcut("c", modifiers: .command)
+                .disabled(folderEdit?.copy == nil)
+
+            Button("Paste") { folderEdit?.paste?() }
+                .keyboardShortcut("v", modifiers: .command)
+                .disabled(folderEdit?.paste == nil)
         }
     }
 }
@@ -71,6 +101,19 @@ struct PhotoNavigationCommands: Commands {
             }
             .keyboardShortcut(.return, modifiers: [])
             .disabled(navigation == nil)
+        }
+    }
+}
+
+struct MpvPlaybackCommands: Commands {
+    @FocusedValue(\.mpvPlayPause) var playPause
+
+    var body: some Commands {
+        CommandMenu("Playback") {
+            Button("Play / Pause") {
+                playPause?()
+            }
+            .disabled(playPause == nil)
         }
     }
 }

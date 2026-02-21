@@ -7,7 +7,7 @@ import CryptoKit
 actor ThumbnailService {
     static let shared = ThumbnailService()
 
-    private let memoryCache = NSCache<NSString, NSImage>()
+    private nonisolated(unsafe) let memoryCache = NSCache<NSString, NSImage>()
     private let cacheDirectory: URL
     private let thumbnailSize: Int = 300
 
@@ -24,6 +24,10 @@ actor ThumbnailService {
         if mb == 0 { return Int64.max }  // unlimited
         let limit = mb > 0 ? mb : 500   // default 500 MB
         return Int64(limit) * 1024 * 1024
+    }
+
+    nonisolated func cachedThumbnail(for filePath: String) -> NSImage? {
+        memoryCache.object(forKey: filePath as NSString)
     }
 
     func thumbnail(for filePath: String, bookmarkData: Data? = nil) async -> NSImage? {
@@ -138,6 +142,16 @@ actor ThumbnailService {
             return await generateAndCacheVideoThumbnail(from: url, to: diskURL)
         }
 
+        // SVG: CGImageSource doesn't support vector formats; render via NSImage
+        if url.pathExtension.lowercased() == "svg" {
+            return generateAndCacheSVGThumbnail(from: url, to: diskURL)
+        }
+        // Image path continues synchronously below (no inner Task needed —
+        // the actor executor is already a background thread).
+
+        // Run synchronously on the actor's executor — already a background thread.
+        // Wrapping in Task { } would create an unstructured task that doesn't inherit
+        // the caller's QoS, causing a priority inversion.
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
 
         let options: [CFString: Any] = [
@@ -181,6 +195,41 @@ actor ThumbnailService {
             ?? NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
     }
 
+    private func generateAndCacheSVGThumbnail(from url: URL, to diskURL: URL) -> NSImage? {
+        guard let svgImage = NSImage(contentsOf: url) else { return nil }
+        let size = svgImage.size
+        guard size.width > 0, size.height > 0 else { return nil }
+
+        let scale = CGFloat(thumbnailSize) / max(size.width, size.height)
+        let newSize = NSSize(width: size.width * scale, height: size.height * scale)
+
+        guard let outputSpace = CGColorSpace(name: CGColorSpace.sRGB),
+              let ctx = CGContext(
+                  data: nil,
+                  width: Int(newSize.width), height: Int(newSize.height),
+                  bitsPerComponent: 8, bytesPerRow: 0,
+                  space: outputSpace,
+                  bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+              )
+        else { return svgImage }
+
+        let nsCtx = NSGraphicsContext(cgContext: ctx, flipped: false)
+        NSGraphicsContext.saveGraphicsState()
+        NSGraphicsContext.current = nsCtx
+        svgImage.draw(in: NSRect(origin: .zero, size: newSize))
+        NSGraphicsContext.restoreGraphicsState()
+
+        guard let cgImg = ctx.makeImage() else { return svgImage }
+
+        if let destination = CGImageDestinationCreateWithURL(diskURL as CFURL, "public.heic" as CFString, 1, nil) {
+            CGImageDestinationAddImage(destination, cgImg, nil)
+            CGImageDestinationFinalize(destination)
+        }
+
+        return NSImage(contentsOf: diskURL)
+            ?? NSImage(cgImage: cgImg, size: newSize)
+    }
+
     private func generateAndCacheVideoThumbnail(from url: URL, to diskURL: URL) async -> NSImage? {
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
@@ -204,8 +253,14 @@ actor ThumbnailService {
     }
 
     private func diskCacheURL(for filePath: String) -> URL {
-        let data = Data(filePath.utf8)
-        let hash = SHA256.hash(data: data)
+        // Include mtime in the key so cache is automatically invalidated when file changes.
+        // resourceValues works without security scope for most local/mounted files.
+        let mtime = (try? URL(fileURLWithPath: filePath)
+            .resourceValues(forKeys: [.contentModificationDateKey])
+            .contentModificationDate)
+            .map { Int($0.timeIntervalSince1970) }
+        let key = mtime.map { "\(filePath)_\($0)" } ?? filePath
+        let hash = SHA256.hash(data: Data(key.utf8))
         let hashString = hash.compactMap { String(format: "%02x", $0) }.joined()
         return cacheDirectory.appendingPathComponent("\(hashString).heic")
     }

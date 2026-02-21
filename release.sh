@@ -7,23 +7,43 @@ BUILD_DIR="$SCRIPT_DIR/build"
 DMG_STAGING="$BUILD_DIR/dmg-staging"
 APP_NAME="Spectrum"
 DMG_OUTPUT="$SCRIPT_DIR/$APP_NAME.dmg"
+LOG="$BUILD_DIR/build.log"
 
 echo "==> Cleaning previous build..."
 rm -rf "$BUILD_DIR"
 rm -f "$DMG_OUTPUT"
+mkdir -p "$BUILD_DIR"
 
-echo "==> Building Release..."
+echo "==> Building Release (incremental, $(sysctl -n hw.logicalcpu) jobs)..."
 xcodebuild -project "$PROJECT" \
     -scheme "$APP_NAME" \
     -configuration Release \
     -derivedDataPath "$BUILD_DIR/DerivedData" \
-    build | tail -5
+    SWIFT_COMPILATION_MODE=incremental \
+    2>&1 | tee "$LOG" | grep -E "^(error:|warning: |note: Bundled|note: Added|Build succeeded|Build FAILED|\*\* BUILD)" || true
+
+# Verify build succeeded
+if ! grep -q "BUILD SUCCEEDED" "$LOG"; then
+    echo ""
+    echo "ERROR: Build failed. Full log: $LOG"
+    grep "error:" "$LOG" | head -20
+    exit 1
+fi
 
 APP_PATH="$BUILD_DIR/DerivedData/Build/Products/Release/$APP_NAME.app"
 
 if [ ! -d "$APP_PATH" ]; then
-    echo "ERROR: Build failed, $APP_NAME.app not found"
+    echo "ERROR: $APP_NAME.app not found at expected path"
     exit 1
+fi
+
+# Verify libmpv was bundled
+LIBMPV="$APP_PATH/Contents/Resources/lib/libmpv.dylib"
+if [ -f "$LIBMPV" ]; then
+    RPATH=$(otool -l "$LIBMPV" 2>/dev/null | grep -A2 "LC_RPATH" | grep "path" | awk '{print $2}' | head -1)
+    echo "==> libmpv bundled: Resources/lib/libmpv.dylib (rpath: $RPATH)"
+else
+    echo "WARNING: libmpv.dylib not found in bundle — mpv player will be unavailable"
 fi
 
 echo "==> Creating DMG..."

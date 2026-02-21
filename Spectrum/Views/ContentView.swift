@@ -38,6 +38,22 @@ struct AddFolderActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
+/// Actions for keyboard-driven folder clipboard (Cmd+C / Cmd+X / Cmd+V).
+/// Each closure is nil when the action is not currently applicable.
+struct FolderEditAction {
+    var copy: (() -> Void)?
+    var cut: (() -> Void)?
+    var paste: (() -> Void)?
+}
+
+struct FolderEditActionKey: FocusedValueKey {
+    typealias Value = FolderEditAction
+}
+
+struct MpvPlayPauseKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
 extension FocusedValues {
     var photoNavigation: PhotoNavigationAction? {
         get { self[PhotoNavigationKey.self] }
@@ -46,6 +62,14 @@ extension FocusedValues {
     var addFolderAction: (() -> Void)? {
         get { self[AddFolderActionKey.self] }
         set { self[AddFolderActionKey.self] = newValue }
+    }
+    var folderEditAction: FolderEditAction? {
+        get { self[FolderEditActionKey.self] }
+        set { self[FolderEditActionKey.self] = newValue }
+    }
+    var mpvPlayPause: (() -> Void)? {
+        get { self[MpvPlayPauseKey.self] }
+        set { self[MpvPlayPauseKey.self] = newValue }
     }
 }
 
@@ -91,7 +115,6 @@ struct ContentView: View {
     @State private var columnVisibility = NavigationSplitViewVisibility.all
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
-    private var preloadCache: ImagePreloadCache { ImagePreloadCache.shared }
     @State private var escapeMonitor = EscapeKeyMonitor()
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
@@ -240,7 +263,7 @@ struct ContentView: View {
     }
 
     private func photoDetail(_ photo: Photo, showInspector: Binding<Bool>) -> some View {
-        PhotoDetailView(photo: photo, showInspector: showInspector, isHDR: $isPhotoHDR, viewModel: viewModel, preloadCache: preloadCache)
+        PhotoDetailView(photo: photo, showInspector: showInspector, isHDR: $isPhotoHDR, viewModel: viewModel)
             .focusedSceneValue(\.photoNavigation, detailNavigation)
     }
 

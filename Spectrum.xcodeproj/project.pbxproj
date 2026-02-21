@@ -7,6 +7,9 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
+		AA000050 /* MPVLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000050 /* MPVLib.swift */; };
+		AA000051 /* MPVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* MPVPlayerView.swift */; };
+		AA000052 /* AVPlayerControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000052 /* AVPlayerControlBar.swift */; };
 		8070F3122F43487D0095B967 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8070F3112F43487D0095B967 /* SettingsView.swift */; };
 		80EBB13D2F42434900D5463B /* ThumbnailCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */; };
 		AA000001 /* SpectrumApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000001 /* SpectrumApp.swift */; };
@@ -28,19 +31,17 @@
 		AA000015 /* URL+ImageTypes.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000015 /* URL+ImageTypes.swift */; };
 		AA000016 /* Date+Formatting.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000016 /* Date+Formatting.swift */; };
 		AA000017 /* VideoMetadataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000018 /* VideoMetadataService.swift */; };
-		AA000019 /* HDRRenderSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000019 /* HDRRenderSpec.swift */; };
-		AA00001A /* GainMapHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001A /* GainMapHDRSpec.swift */; };
-		AA00001B /* HLGHDRSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001B /* HLGHDRSpec.swift */; };
 		AA00001C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB00001C /* Assets.xcassets */; };
 		AA00001D /* ImagePreloadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001D /* ImagePreloadCache.swift */; };
-		AA00001E /* SonyMakerNoteParser.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001E /* SonyMakerNoteParser.swift */; };
-		AA00001F /* ColorSpaceConverter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001F /* ColorSpaceConverter.swift */; };
-		AA000020 /* SonyPPRenderSpec.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000020 /* SonyPPRenderSpec.swift */; };
-		AA000022 /* AppleToneMapRender.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000022 /* AppleToneMapRender.swift */; };
-		AA000024 /* RenderedImageCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000024 /* RenderedImageCache.swift */; };
+		AA000029 /* FolderClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000029 /* FolderClipboard.swift */; };
+		AA000031 /* NetworkVolumeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000031 /* NetworkVolumeService.swift */; };
+		AA000032 /* FolderListCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000032 /* FolderListCache.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
+		AB000050 /* MPVLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVLib.swift; sourceTree = "<group>"; };
+		AB000051 /* MPVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVPlayerView.swift; sourceTree = "<group>"; };
+		AB000052 /* AVPlayerControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerControlBar.swift; sourceTree = "<group>"; };
 		8070F3112F43487D0095B967 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCacheState.swift; sourceTree = "<group>"; };
 		AB000001 /* SpectrumApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumApp.swift; sourceTree = "<group>"; };
@@ -63,16 +64,11 @@
 		AB000016 /* Date+Formatting.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = "Date+Formatting.swift"; sourceTree = "<group>"; };
 		AB000017 /* Spectrum.entitlements */ = {isa = PBXFileReference; lastKnownFileType = text.plist.entitlements; path = Spectrum.entitlements; sourceTree = "<group>"; };
 		AB000018 /* VideoMetadataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMetadataService.swift; sourceTree = "<group>"; };
-		AB000019 /* HDRRenderSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRRenderSpec.swift; sourceTree = "<group>"; };
-		AB00001A /* GainMapHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GainMapHDRSpec.swift; sourceTree = "<group>"; };
-		AB00001B /* HLGHDRSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HLGHDRSpec.swift; sourceTree = "<group>"; };
 		AB00001C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AB00001D /* ImagePreloadCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCache.swift; sourceTree = "<group>"; };
-		AB00001E /* SonyMakerNoteParser.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonyMakerNoteParser.swift; sourceTree = "<group>"; };
-		AB00001F /* ColorSpaceConverter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ColorSpaceConverter.swift; sourceTree = "<group>"; };
-		AB000020 /* SonyPPRenderSpec.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SonyPPRenderSpec.swift; sourceTree = "<group>"; };
-		AB000022 /* AppleToneMapRender.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppleToneMapRender.swift; sourceTree = "<group>"; };
-		AB000024 /* RenderedImageCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = RenderedImageCache.swift; sourceTree = "<group>"; };
+		AB000029 /* FolderClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderClipboard.swift; sourceTree = "<group>"; };
+		AB000032 /* FolderListCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderListCache.swift; sourceTree = "<group>"; };
+		AB000031 /* NetworkVolumeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkVolumeService.swift; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
@@ -107,7 +103,7 @@
 				AE000006 /* ViewModels */,
 				AE000007 /* Extensions */,
 				AE000013 /* Resources */,
-				80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */,
+					80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */,
 			);
 			path = Spectrum;
 			sourceTree = "<group>";
@@ -136,20 +132,16 @@
 		AE000005 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				AB000050 /* MPVLib.swift */,
 				AB000010 /* FolderScanner.swift */,
 				AB000011 /* EXIFService.swift */,
 				AB000012 /* ThumbnailService.swift */,
 				AB000013 /* BookmarkService.swift */,
 				AB000018 /* VideoMetadataService.swift */,
-				AB000019 /* HDRRenderSpec.swift */,
-				AB000022 /* AppleToneMapRender.swift */,
-				AB000024 /* RenderedImageCache.swift */,
-				AB00001A /* GainMapHDRSpec.swift */,
-				AB00001B /* HLGHDRSpec.swift */,
 				AB00001D /* ImagePreloadCache.swift */,
-				AB00001E /* SonyMakerNoteParser.swift */,
-				AB00001F /* ColorSpaceConverter.swift */,
-				AB000020 /* SonyPPRenderSpec.swift */,
+				AB000029 /* FolderClipboard.swift */,
+				AB000032 /* FolderListCache.swift */,
+				AB000031 /* NetworkVolumeService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -195,6 +187,8 @@
 			children = (
 				AB00000B /* PhotoDetailView.swift */,
 				AB00000C /* PhotoInfoPanel.swift */,
+				AB000051 /* MPVPlayerView.swift */,
+				AB000052 /* AVPlayerControlBar.swift */,
 			);
 			path = Detail;
 			sourceTree = "<group>";
@@ -237,6 +231,24 @@
 			shellPath = /bin/bash;
 			shellScript = "set -e\nSVG=\"${SRCROOT}/Spectrum/Resources/AppIcon.svg\"\nOUT=\"${SRCROOT}/Spectrum/Assets.xcassets/AppIcon.appiconset\"\nTMP=\"${DERIVED_FILE_DIR}/icon-gen\"\nmkdir -p \"$TMP\"\nqlmanage -t -s 1024 -o \"$TMP\" \"$SVG\" 2>/dev/null\ncp \"$TMP/AppIcon.svg.png\" \"$OUT/icon_1024x1024.png\"\nfor S in 512 256 128 64 32 16; do\n  sips -z $S $S \"$TMP/AppIcon.svg.png\" --out \"$OUT/icon_${S}x${S}.png\" 2>/dev/null\ndone\nrm -rf \"$TMP\"\n";
 		};
+		DC000001 /* Bundle libmpv */ = {
+			isa = PBXShellScriptBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle libmpv";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\n\nLIB_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nDEST=\"$LIB_DIR/libmpv.dylib\"\n\nmkdir -p \"$LIB_DIR\"\n\n# Copy libmpv if not already present\nif [ ! -f \"$DEST\" ]; then\n  # 1. Source tree Spectrum/Resources/lib/\n  SOURCE=\"${SRCROOT}/Spectrum/Resources/lib/libmpv.dylib\"\n  if [ -f \"$SOURCE\" ]; then\n    cp \"$SOURCE\" \"$DEST\"\n    echo \"note: Bundled libmpv from source tree\"\n  else\n    # 2. IINA.app\n    IINA_DIR=\"/Applications/IINA.app/Contents/Frameworks\"\n    COPIED=0\n    for NAME in libmpv.dylib libmpv.2.dylib; do\n      if [ -f \"$IINA_DIR/$NAME\" ]; then\n        cp \"$IINA_DIR/$NAME\" \"$DEST\"\n        echo \"note: Bundled $NAME from IINA.app\"\n        COPIED=1\n        break\n      fi\n    done\n    if [ \"$COPIED\" -eq 0 ]; then\n      echo \"warning: libmpv.dylib not found. Place it in Spectrum/Resources/lib/ or install IINA. mpv player will be unavailable.\"\n      exit 0\n    fi\n  fi\nfi\n\n# Add IINA Frameworks as LC_RPATH so @rpath deps (libass, libavcodec, etc.) resolve at runtime\nIINA_FW=\"/Applications/IINA.app/Contents/Frameworks\"\nif [ -d \"$IINA_FW\" ]; then\n  if ! otool -l \"$DEST\" 2>/dev/null | grep -q \"path $IINA_FW \"; then\n    install_name_tool -add_rpath \"$IINA_FW\" \"$DEST\" 2>/dev/null || true\n    echo \"note: Added IINA Frameworks rpath to bundled libmpv\"\n  fi\nfi\n\n# Re-sign ad-hoc after any modification (disable-library-validation entitlement in effect)\ncodesign --force --sign - \"$DEST\" 2>/dev/null || true\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXNativeTarget section */
@@ -248,7 +260,8 @@
 				B0000001 /* Sources */,
 				AD000001 /* Frameworks */,
 				B0000002 /* Resources */,
-			);
+				DC000001 /* Bundle libmpv */,
+				);
 			buildRules = (
 			);
 			dependencies = (
@@ -327,15 +340,13 @@
 				AA000015 /* URL+ImageTypes.swift in Sources */,
 				AA000016 /* Date+Formatting.swift in Sources */,
 				AA000017 /* VideoMetadataService.swift in Sources */,
-				AA000019 /* HDRRenderSpec.swift in Sources */,
-				AA000022 /* AppleToneMapRender.swift in Sources */,
-				AA000024 /* RenderedImageCache.swift in Sources */,
-				AA00001A /* GainMapHDRSpec.swift in Sources */,
-				AA00001B /* HLGHDRSpec.swift in Sources */,
+				AA000050 /* MPVLib.swift in Sources */,
+				AA000051 /* MPVPlayerView.swift in Sources */,
+				AA000052 /* AVPlayerControlBar.swift in Sources */,
 				AA00001D /* ImagePreloadCache.swift in Sources */,
-				AA00001E /* SonyMakerNoteParser.swift in Sources */,
-				AA00001F /* ColorSpaceConverter.swift in Sources */,
-				AA000020 /* SonyPPRenderSpec.swift in Sources */,
+				AA000029 /* FolderClipboard.swift in Sources */,
+				AA000032 /* FolderListCache.swift in Sources */,
+				AA000031 /* NetworkVolumeService.swift in Sources */,
 				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
@@ -476,12 +487,13 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				EAGER_LINKING = YES;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -502,12 +514,13 @@
 				DEAD_CODE_STRIPPING = YES;
 				DEVELOPMENT_TEAM = "";
 				EAGER_LINKING = YES;
-				ENABLE_APP_SANDBOX = YES;
+				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
-				ENABLE_USER_SELECTED_FILES = readonly;
+				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
+				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
 				PRODUCT_NAME = "$(TARGET_NAME)";

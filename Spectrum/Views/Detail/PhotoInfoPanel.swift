@@ -13,7 +13,6 @@ struct PhotoInfoPanel: View {
                 cameraSection
                 exposureSection
                 lensSpecSection
-                pictureProfileSection
                 technicalSection
             }
             locationSection
@@ -157,15 +156,6 @@ struct PhotoInfoPanel: View {
                         LabeledContent("Max Aperture", value: String(format: "f/%.1f–%.1f", spec[2], spec[3]))
                     }
                 }
-            }
-        }
-    }
-
-    @ViewBuilder
-    private var pictureProfileSection: some View {
-        if let pp = photo.pictureProfile {
-            Section("Picture Profile") {
-                LabeledContent("Profile", value: pp)
             }
         }
     }

@@ -55,9 +55,6 @@ final class Photo {
     // ExifAux
     var imageStabilization: Int?
 
-    // Sony MakerNote
-    var pictureProfile: String?
-
     // Video fields
     var isVideo: Bool = false
     var duration: Double?
