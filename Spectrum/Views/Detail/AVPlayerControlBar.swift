@@ -1,5 +1,5 @@
 import SwiftUI
-import AVFoundation
+@preconcurrency import AVFoundation
 import CoreMedia
 import CoreVideo
 
@@ -10,7 +10,7 @@ import CoreVideo
 /// Frame timing uses CVDisplayLink + AVPlayerItemVideoOutput — same measurement methodology
 /// as MPVOpenGLLayer so the CV/FPS numbers are directly comparable.
 @Observable
-final class AVPlayerController {
+final class AVPlayerController: @unchecked Sendable {
     var isPlaying: Bool = false
     var currentTime: Double = 0
     var duration: Double = 0
@@ -73,15 +73,13 @@ final class AVPlayerController {
 
         // Async codec name + video FPS from the asset track
         if let item = player.currentItem {
-            Task { [weak self] in
+            Task { @MainActor [weak self] in
                 async let codec = Self.loadCodecInfo(item: item)
                 async let fps   = Self.loadVideoFPS(item: item)
                 let (c, f) = await (codec, fps)
-                await MainActor.run {
-                    guard self?.isAttached == true else { return }
-                    self?.codecInfo = c
-                    self?.videoFPS  = f
-                }
+                guard let self, self.isAttached else { return }
+                self.codecInfo = c
+                self.videoFPS  = f
             }
         }
     }

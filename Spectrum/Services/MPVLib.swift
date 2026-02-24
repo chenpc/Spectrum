@@ -45,7 +45,7 @@ struct MPVEvent {
 
 // MARK: - GL proc address helper
 
-let mpvGLLibHandle: UnsafeMutableRawPointer? =
+nonisolated(unsafe) let mpvGLLibHandle: UnsafeMutableRawPointer? =
     dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY)
 
 func mpvGLProcAddr(_ ctx: UnsafeMutableRawPointer?,
@@ -66,7 +66,7 @@ func mpvGLProcAddr(_ ctx: UnsafeMutableRawPointer?,
 ///
 /// The "Bundle libmpv" Xcode build phase automatically copies libmpv from IINA.app,
 /// so sandbox mode works without any manual steps when IINA is installed.
-class LibMPV {
+class LibMPV: @unchecked Sendable {
     static let shared = LibMPV()
 
     private(set) var ok = false
@@ -91,6 +91,7 @@ class LibMPV {
     var create:     FCreate?
     var initialize: FInit?
     var setStr:     FSetStr?
+    var setProp:    FSetStr?     // mpv_set_property_string (runtime, after init)
     var getStr:     FGetStr?
     var command:    FCmd?
     var waitEvent:  FWait?
@@ -124,6 +125,7 @@ class LibMPV {
         create     = dlsym(h, "mpv_create")                              .map { unsafeBitCast($0, to: FCreate.self)   }
         initialize = dlsym(h, "mpv_initialize")                          .map { unsafeBitCast($0, to: FInit.self)     }
         setStr     = dlsym(h, "mpv_set_option_string")                   .map { unsafeBitCast($0, to: FSetStr.self)   }
+        setProp    = dlsym(h, "mpv_set_property_string")                 .map { unsafeBitCast($0, to: FSetStr.self)   }
         getStr     = dlsym(h, "mpv_get_property_string")                 .map { unsafeBitCast($0, to: FGetStr.self)   }
         command    = dlsym(h, "mpv_command")                             .map { unsafeBitCast($0, to: FCmd.self)      }
         waitEvent  = dlsym(h, "mpv_wait_event")                          .map { unsafeBitCast($0, to: FWait.self)     }
@@ -141,6 +143,13 @@ class LibMPV {
     @discardableResult
     func set(_ ctx: OpaquePointer, _ key: String, _ val: String) -> Int32 {
         guard let fn = setStr else { return -1 }
+        return key.withCString { k in val.withCString { v in fn(ctx, k, v) } }
+    }
+
+    /// Set property at runtime (after mpv_initialize).
+    @discardableResult
+    func setProperty(_ ctx: OpaquePointer, _ key: String, _ val: String) -> Int32 {
+        guard let fn = setProp else { return -1 }
         return key.withCString { k in val.withCString { v in fn(ctx, k, v) } }
     }
 }

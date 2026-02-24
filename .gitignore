@@ -26,3 +26,6 @@ Package.resolved
 
 # Generated app icon PNGs (built from SVG in Build Phase)
 Spectrum/Assets.xcassets/AppIcon.appiconset/icon_*.png
+
+# Rust build artifacts
+gyro-wrapper/target/

@@ -26,6 +26,7 @@ struct PhotoGridView: View {
     @State private var isMounting = false
     @State private var pendingPaths: [String] = []
     @State private var selectedItemId: String?
+    @State private var currentSections: [TimelineSection] = []
 
     // Folder clipboard and edit state
     private let clipboard = FolderClipboard.shared
@@ -88,12 +89,22 @@ struct PhotoGridView: View {
         }
     }
 
+    /// Stable hash of directPhotos date values — used to trigger section recomputation
+    /// outside of body to avoid mutating @Observable during view evaluation.
+    private var sectionTaskId: Int {
+        var hasher = Hasher()
+        for p in directPhotos {
+            hasher.combine(p.dateTaken.timeIntervalSinceReferenceDate)
+        }
+        return hasher.finalize()
+    }
+
     private let columns = [
         GridItem(.adaptive(minimum: 150, maximum: 200), spacing: 2)
     ]
 
     var body: some View {
-        let sections = viewModel.timelineSections(from: directPhotos)
+        let sections = currentSections
         let flatItems = buildFlatItems(sections: sections)
 
         GeometryReader { geo in
@@ -114,9 +125,9 @@ struct PhotoGridView: View {
                                             isSelected: selectedItemId == info.path
                                         )
                                         .id(info.path)
-                                        .onTapGesture(count: 2) {
+                                        .simultaneousGesture(TapGesture(count: 2).onEnded {
                                             onNavigateToSubfolder?(info.path)
-                                        }
+                                        })
                                         .onTapGesture {
                                             selectedItemId = info.path
                                             selectedPhoto = nil
@@ -187,9 +198,9 @@ struct PhotoGridView: View {
                                             folderBookmarkData: folder?.bookmarkData
                                         )
                                         .id(photo.filePath)
-                                        .onTapGesture(count: 2) {
+                                        .simultaneousGesture(TapGesture(count: 2).onEnded {
                                             onDoubleClick?(photo)
-                                        }
+                                        })
                                         .onTapGesture {
                                             selectedItemId = photo.filePath
                                             selectedPhoto = photo
@@ -247,6 +258,9 @@ struct PhotoGridView: View {
         }
         .task(id: effectivePath) {
             await scanCurrentLevel()
+        }
+        .task(id: sectionTaskId) {
+            currentSections = viewModel.timelineSections(from: directPhotos)
         }
         .onChange(of: effectivePath) { _, newPath in
             selectedItemId = nil

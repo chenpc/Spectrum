@@ -46,6 +46,14 @@ else
     echo "WARNING: libmpv.dylib not found in bundle — mpv player will be unavailable"
 fi
 
+# Verify libgyrocore was bundled
+LIBGYRO="$APP_PATH/Contents/Resources/lib/libgyrocore_c.dylib"
+if [ -f "$LIBGYRO" ]; then
+    echo "==> libgyrocore bundled: Resources/lib/libgyrocore_c.dylib ($(ls -lh "$LIBGYRO" | awk '{print $5}'))"
+else
+    echo "WARNING: libgyrocore_c.dylib not found in bundle — gyro stabilization will be unavailable"
+fi
+
 echo "==> Creating DMG..."
 mkdir -p "$DMG_STAGING"
 cp -R "$APP_PATH" "$DMG_STAGING/"

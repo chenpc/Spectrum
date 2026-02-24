@@ -15,7 +15,7 @@ import Darwin
 ///
 /// Dolby Vision (Apple Profile 8.4) decoded by VideoToolbox as HLG, not PQ.
 /// DV is handled by AVPlayer (see PhotoDetailView.loadVideo).
-class MPVOpenGLLayer: CAOpenGLLayer {
+class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
 
     private var mpvCtx:    OpaquePointer?
     fileprivate var renderCtx: OpaquePointer?   // accessed by CVDisplayLink callback
@@ -42,8 +42,58 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     /// arm64 Bool store/load is a single instruction — safe without a lock.
     private var pendingFrame: Bool = false
 
+    /// Set when bounds change — forces one redraw even if paused, preventing
+    /// macOS from stretching stale backing store to the new aspect ratio.
+    private var lastDrawnSize: CGSize = .zero
+
+    /// Monotonic guard: prevents audio clock jitter from causing frame index oscillation.
+    /// nil = not yet initialized (first frame after load/seek). Reset on gyro reload.
+    private var lastGyroFrameIdx: Int? = nil
+
+    /// When true, suppress rendering until gyroCore is ready.
+    /// Prevents the visual flash of an unstabilized first frame.
+    fileprivate var waitingForGyro: Bool = false
+
+    /// Video native resolution — read from mpv once, used for letterboxing.
+    /// Simple blit shader for non-gyro letterbox pass.
+    private var blitProg: GLuint = 0
+    private var uBlitTex: GLint = -1
+    /// Frame counter for AR debug logging (log first 5 frames + on resize).
+
     // Keeps "opengl" string alive during render context creation
     private let apiTypeStr = "opengl" as NSString
+
+    // MARK: - Gyroflow warp pipeline
+
+    /// Set from main thread (MPVPlayerNSView.loadGyroCore); read in draw().
+    fileprivate var gyroCore: GyroCore?
+
+    // Intermediate FBO — mpv renders here; warp pass reads this and writes to displayFBO
+    private var stabFBO:  GLuint = 0
+    private var stabTex:  GLuint = 0
+    private var stabW:    GLsizei = 0
+    private var stabH:    GLsizei = 0
+    // Warp shader program + VBO
+    private var warpProg: GLuint = 0
+    private var warpVBO:  GLuint = 0
+    // Per-row matrix texture (width=4, height=videoH, RGBA32F)
+    private var matTexId: GLuint = 0
+    private var matTexH:  Int    = 0
+    // Uniform locations
+    private var uTex:       GLint = -1
+    private var uMatTex:    GLint = -1
+    private var uVideoSize: GLint = -1
+    private var uMatCount:  GLint = -1
+    private var uFIn:       GLint = -1
+    private var uCIn:       GLint = -1
+
+    // Pre-allocated draw() buffers — zero heap allocation per frame
+    private var sysViewport = (GLint(0), GLint(0), GLint(0), GLint(0))
+    private var fboParam    = MPVOpenGLFBO(fbo: 0, w: 0, h: 0, internal_format: 0)
+    private var flipYParam: Int32 = 1
+    private var depthParam: Int32 = 8
+    private var renderParams = (MPVRenderParam(), MPVRenderParam(),
+                                MPVRenderParam(), MPVRenderParam())
 
     override init() {
         super.init()
@@ -88,6 +138,7 @@ class MPVOpenGLLayer: CAOpenGLLayer {
         if let pf = cglPF {
             CGLCreateContext(pf, nil, &cglCtx)
         }
+        setupWarpPipeline()
     }
 
     // MARK: - mpv setup
@@ -98,9 +149,21 @@ class MPVOpenGLLayer: CAOpenGLLayer {
         mpvCtx = ctx
 
         lib.set(ctx, "vo", "libmpv")
-        lib.set(ctx, "hwdec", "auto")
+        let hwdec = UserDefaults.standard.string(forKey: "mpvHwdec") ?? "auto"
+        lib.set(ctx, "hwdec", hwdec)
         lib.set(ctx, "keep-open", "yes")       // pause at end of file, don't terminate
         lib.set(ctx, "pause", "yes")           // start paused; user presses Space to play
+        lib.set(ctx, "keepaspect", "yes")      // letterbox within FBO to preserve AR
+        lib.set(ctx, "background", "color")    // black bars for letterbox
+
+        // Sync & frame-drop settings (from Settings > Playback)
+        let avSync    = UserDefaults.standard.object(forKey: "mpvAVSync") as? Bool ?? true
+        let frameDrop = UserDefaults.standard.object(forKey: "mpvFrameDrop") as? Bool ?? true
+        let syncMode = avSync ? "display-resample" : "display-desync"
+        let dropMode = frameDrop ? "vo" : "no"
+        lib.set(ctx, "video-sync", syncMode)
+        lib.set(ctx, "framedrop", dropMode)
+        print("[mpv] init: video-sync=\(syncMode)  framedrop=\(dropMode)  hwdec=\(hwdec)")
         // HDR/colorspace options are set dynamically in prepareForContent(isHLG:)
 
         guard lib.initialize?(ctx) == 0 else { return }
@@ -115,12 +178,15 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     /// Called on new file load (showHDR=true) and on user HDR/SDR toggle.
     func applyHDRSettings(showHDR: Bool, hdrType: VideoHDRType?) {
         let isHLG = hdrType == .hlg
-        let isPQ  = hdrType == .hdr10   // DV handled by AVPlayer, won't reach here
+        let isPQ  = hdrType == .hdr10
+        // DV P8.4: base layer is HLG but signal levels are calibrated for the DV RPU.
+        // Without RPU, HLG playback over-brightens highlights. Force SDR tone-map instead.
+        let isDV  = hdrType == .dolbyVision
 
         // --- CALayer colorspace ---
-        // Tell macOS compositor the correct transfer function for mpv's output.
-        // mpv with target-trc=auto will output in the source TRC, so colorspace must match.
-        if showHDR && isHLG {
+        // HLG/DV: itur_2100_HLG so macOS compositor applies HLG EOTF for HDR display.
+        // HDR10: itur_2100_PQ. SDR / HDR-toggle-off: sRGB.
+        if showHDR && (isHLG || isDV) {
             colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
         } else if showHDR && isPQ {
             colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
@@ -133,13 +199,21 @@ class MPVOpenGLLayer: CAOpenGLLayer {
 
         // --- mpv rendering options ---
         if !showHDR && hdrType != nil {
-            // SDR toggle: explicitly force bt.709 so mpv tone-maps HDR → SDR output
+            // SDR toggle: force bt.709 so mpv tone-maps HDR → SDR output
             lib.set(ctx, "target-trc",  "bt.709")
             lib.set(ctx, "target-prim", "bt.709")
             lib.set(ctx, "target-peak", "auto")
             lib.set(ctx, "hdr-compute-peak", "auto")
+        } else if isDV {
+            // DV P8.4: HLG base layer with signal calibrated for DV RPU.
+            // Without RPU, hdr-compute-peak=auto over-measures peak → over-bright.
+            // Lock to 1000-nit HLG reference so macOS compositor gets correct EDR mapping.
+            lib.set(ctx, "target-trc",  "pq")
+            lib.set(ctx, "target-prim", "bt.2020")
+            lib.set(ctx, "target-peak", "1000")
+            lib.set(ctx, "hdr-compute-peak", "no")
         } else {
-            // HDR on or SDR content: let mpv auto-detect everything
+            // HLG / HDR10 / SDR content: let mpv auto-detect everything
             lib.set(ctx, "target-trc",  "auto")
             lib.set(ctx, "target-prim", "auto")
             lib.set(ctx, "target-peak", "auto")
@@ -193,10 +267,208 @@ class MPVOpenGLLayer: CAOpenGLLayer {
             rcSetCb(rc, { ptr in
                 guard let ptr else { return }
                 let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(ptr).takeUnretainedValue()
+                // ⚠️ callback 中禁止呼叫任何 mpv API（會死鎖）。
                 layer.pendingFrame = true
                 layer.setNeedsDisplay()
             }, selfRef)
         }}
+    }
+
+    // MARK: - Gyroflow warp pipeline setup
+
+    private func setupWarpPipeline() {
+        guard let cglCtx else { return }
+        CGLSetCurrentContext(cglCtx)
+
+        let vsSrc = """
+#version 120
+attribute vec2 pos;
+varying vec2 uv;
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+"""
+        // Fragment shader: gyroflow-core pipeline with IBIS/OIS + two-pass RS row indexing.
+        // matTex layout (width=4, RGBA32F):
+        //   texel(0,y) = [m00, m01, m02, sx]   (matrix row 0 + IBIS shift x)
+        //   texel(1,y) = [m10, m11, m12, sy]   (matrix row 1 + IBIS shift y)
+        //   texel(2,y) = [m20, m21, m22, ra]   (matrix row 2 + IBIS rotation angle)
+        //   texel(3,y) = [ox,  oy,  0,   0]   (OIS offset)
+        let fsSrc = """
+#version 120
+varying vec2 uv;
+uniform sampler2D tex;
+uniform sampler2D matTex;
+uniform vec2  videoSize;
+uniform float matCount;
+uniform vec2  fIn;
+uniform vec2  cIn;
+// rotate_and_distort: mat3 × out_px → perspective divide → fIn × → IBIS → + cIn
+vec2 rotate_and_distort(vec2 out_px, float texY) {
+    vec4 m0 = texture2D(matTex, vec2(0.125, texY));
+    vec4 m1 = texture2D(matTex, vec2(0.375, texY));
+    vec4 m2 = texture2D(matTex, vec2(0.625, texY));
+    vec4 m3 = texture2D(matTex, vec2(0.875, texY));
+    float _x = m0.r*out_px.x + m0.g*out_px.y + m0.b;
+    float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
+    float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
+    if (_w <= 0.0) return vec2(-99999.0);
+    vec2 pt = fIn * vec2(_x / _w, _y / _w);
+    // IBIS correction (matches gyroflow rotate_and_distort)
+    float sx = m0.a; float sy = m1.a; float ra = m2.a;
+    float ox = m3.r; float oy = m3.g;
+    if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
+        float cos_a = cos(-ra);
+        float sin_a = sin(-ra);
+        pt = vec2(cos_a * pt.x - sin_a * pt.y - sx + ox,
+                  sin_a * pt.x + cos_a * pt.y - sy + oy);
+    }
+    return pt + cIn;
+}
+void main() {
+    vec2 out_px = vec2(uv.x * videoSize.x, (1.0 - uv.y) * videoSize.y);
+    // Two-pass RS row indexing (matches gyroflow undistort_coord):
+    // Pass 1: use middle matrix to estimate source row
+    float sy = clamp(out_px.y, 0.0, matCount - 1.0);
+    if (matCount > 1.0) {
+        float midTexY = (floor(matCount * 0.5) + 0.5) / matCount;
+        vec2 midPt = rotate_and_distort(out_px, midTexY);
+        if (midPt.x > -99998.0) {
+            sy = clamp(floor(0.5 + midPt.y), 0.0, matCount - 1.0);
+        }
+    }
+    // Pass 2: use source-row matrix for final transform
+    float texY = (sy + 0.5) / matCount;
+    vec2 src_px = rotate_and_distort(out_px, texY);
+    if (src_px.x < -99998.0) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }
+    vec2 src = vec2(src_px.x / videoSize.x, 1.0 - src_px.y / videoSize.y);
+    if (any(lessThan(src, vec2(0.0))) || any(greaterThan(src, vec2(1.0)))) {
+        gl_FragColor = vec4(0.0,0.0,0.0,1.0);
+    } else {
+        gl_FragColor = texture2D(tex, src);
+    }
+}
+"""
+        let vs = compileShader(GLenum(GL_VERTEX_SHADER),   vsSrc)
+        let fs = compileShader(GLenum(GL_FRAGMENT_SHADER), fsSrc)
+        guard vs != 0, fs != 0 else { return }
+
+        warpProg = glCreateProgram()
+        glAttachShader(warpProg, vs)
+        glAttachShader(warpProg, fs)
+        glBindAttribLocation(warpProg, 0, "pos")
+        glLinkProgram(warpProg)
+        glDeleteShader(vs); glDeleteShader(fs)
+
+        var status = GLint(0)
+        glGetProgramiv(warpProg, GLenum(GL_LINK_STATUS), &status)
+        guard status == GLint(GL_TRUE) else {
+            print("[Warp] ❌ Shader link failed"); warpProg = 0; return
+        }
+
+        uTex       = glGetUniformLocation(warpProg, "tex")
+        uMatTex    = glGetUniformLocation(warpProg, "matTex")
+        uVideoSize = glGetUniformLocation(warpProg, "videoSize")
+        uMatCount  = glGetUniformLocation(warpProg, "matCount")
+        uFIn       = glGetUniformLocation(warpProg, "fIn")
+        uCIn       = glGetUniformLocation(warpProg, "cIn")
+        print("[Warp] ✅ shader compiled")
+
+        // Fullscreen quad VBO
+        var verts: [Float] = [-1,-1, 1,-1, -1,1, 1,1]
+        glGenBuffers(1, &warpVBO)
+        glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
+        verts.withUnsafeMutableBytes { ptr in
+            glBufferData(GLenum(GL_ARRAY_BUFFER), GLsizeiptr(ptr.count),
+                         ptr.baseAddress, GLenum(GL_STATIC_DRAW))
+        }
+        glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
+
+        // Per-row matrix texture (RGBA32F, width=4, height set dynamically)
+        glGenTextures(1, &matTexId)
+        glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_MIN_FILTER), GLint(GL_NEAREST))
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_MAG_FILTER), GLint(GL_NEAREST))
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_WRAP_S), GLint(GL_CLAMP_TO_EDGE))
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_WRAP_T), GLint(GL_CLAMP_TO_EDGE))
+        glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+
+        // Intermediate FBO (size set dynamically in draw())
+        glGenFramebuffers(1, &stabFBO)
+        glGenTextures(1, &stabTex)
+        glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_MIN_FILTER), GLint(GL_LINEAR))
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_MAG_FILTER), GLint(GL_LINEAR))
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_WRAP_S), GLint(GL_CLAMP_TO_EDGE))
+        glTexParameteri(GLenum(GL_TEXTURE_2D), GLenum(GL_TEXTURE_WRAP_T), GLint(GL_CLAMP_TO_EDGE))
+        glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+
+        // Blit shader (simple texture pass-through for non-gyro letterbox)
+        let blitFsSrc = """
+#version 120
+varying vec2 uv;
+uniform sampler2D tex;
+void main() {
+    gl_FragColor = texture2D(tex, uv);
+}
+"""
+        let blitVs = compileShader(GLenum(GL_VERTEX_SHADER), vsSrc)
+        let blitFs = compileShader(GLenum(GL_FRAGMENT_SHADER), blitFsSrc)
+        if blitVs != 0 && blitFs != 0 {
+            blitProg = glCreateProgram()
+            glAttachShader(blitProg, blitVs)
+            glAttachShader(blitProg, blitFs)
+            glBindAttribLocation(blitProg, 0, "pos")
+            glLinkProgram(blitProg)
+            glDeleteShader(blitVs); glDeleteShader(blitFs)
+
+            var blitStatus = GLint(0)
+            glGetProgramiv(blitProg, GLenum(GL_LINK_STATUS), &blitStatus)
+            if blitStatus == GLint(GL_TRUE) {
+                uBlitTex = glGetUniformLocation(blitProg, "tex")
+                print("[Blit] ✅ shader compiled")
+            } else {
+                print("[Blit] ❌ Shader link failed"); blitProg = 0
+            }
+        }
+    }
+
+    private func compileShader(_ type: GLenum, _ source: String) -> GLuint {
+        let shader = glCreateShader(type)
+        source.withCString { ptr in
+            var p: UnsafePointer<GLchar>? = ptr
+            glShaderSource(shader, 1, &p, nil)
+        }
+        glCompileShader(shader)
+        var status = GLint(0)
+        glGetShaderiv(shader, GLenum(GL_COMPILE_STATUS), &status)
+        if status == GLint(GL_FALSE) {
+            var log = [GLchar](repeating: 0, count: 512)
+            glGetShaderInfoLog(shader, 512, nil, &log)
+            print("[Warp] ❌ Shader compile error: \(String(cString: log))")
+            glDeleteShader(shader); return 0
+        }
+        return shader
+    }
+
+    /// Call from main thread to attach/detach gyro stabilization.
+    func loadGyroCore(_ core: GyroCore?) {
+        gyroCore = core
+        lastGyroFrameIdx = nil   // 重置單調保護
+        waitingForGyro = false   // gyro ready（或 detach）→ 允許渲染
+        // Apply user's Sync & Drop settings (from Settings → Playback).
+        if let ctx = mpvCtx {
+            let avSync    = UserDefaults.standard.object(forKey: "mpvAVSync") as? Bool ?? true
+            let frameDrop = UserDefaults.standard.object(forKey: "mpvFrameDrop") as? Bool ?? true
+            let sync     = avSync ? "display-resample" : "display-desync"
+            let dropMode = frameDrop ? "vo" : "no"
+            LibMPV.shared.setProperty(ctx, "video-sync", sync)
+            LibMPV.shared.setProperty(ctx, "framedrop", dropMode)
+            print("[mpv] loadGyroCore: video-sync=\(sync)  framedrop=\(dropMode)  gyro=\(core != nil)")
+        }
+        pendingFrame = true
+        setNeedsDisplay()
     }
 
     // MARK: - CVDisplayLink (swap report)
@@ -319,10 +591,18 @@ class MPVOpenGLLayer: CAOpenGLLayer {
         return Double(String(cString: val)) ?? 0
     }
 
-    /// Cumulative frames dropped by the renderer since playback started.
+    /// Cumulative VO-level frame drops (render API: frame replaced before draw).
     var droppedFrames: Int {
         guard let ctx = mpvCtx, let fn = LibMPV.shared.getStr else { return 0 }
         guard let val = "frame-drop-count".withCString({ fn(ctx, $0) }) else { return 0 }
+        defer { LibMPV.shared.free?(UnsafeMutableRawPointer(val)) }
+        return Int(String(cString: val)) ?? 0
+    }
+
+    /// Cumulative decoder-level frame drops (B-frame skip etc.).
+    var decoderDroppedFrames: Int {
+        guard let ctx = mpvCtx, let fn = LibMPV.shared.getStr else { return 0 }
+        guard let val = "decoder-frame-drop-count".withCString({ fn(ctx, $0) }) else { return 0 }
         defer { LibMPV.shared.free?(UnsafeMutableRawPointer(val)) }
         return Int(String(cString: val)) ?? 0
     }
@@ -341,58 +621,246 @@ class MPVOpenGLLayer: CAOpenGLLayer {
                           pixelFormat pf: CGLPixelFormatObj,
                           forLayerTime t: CFTimeInterval,
                           displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
+        // Suppress rendering until gyro is ready — avoids flashing unstabilized first frame.
+        if waitingForGyro { return false }
+        guard renderCtx != nil else { return false }
+        // Redraw when bounds changed (e.g. fullscreen/inspector toggle) to avoid
+        // macOS stretching the stale backing store to a new aspect ratio.
+        if bounds.size != lastDrawnSize { return true }
         // Only render when mpv has signalled a new frame — avoids busy-rendering
         // static content (e.g. paused video) at 120 Hz.
-        renderCtx != nil && pendingFrame
+        return pendingFrame
     }
 
     override func draw(inCGLContext ctx: CGLContextObj,
                        pixelFormat pf: CGLPixelFormatObj,
                        forLayerTime t: CFTimeInterval,
                        displayTime ts: UnsafePointer<CVTimeStamp>?) {
-        pendingFrame = false   // consume the pending-frame flag before rendering
+        pendingFrame = false
         let lib = LibMPV.shared
         guard let rc = renderCtx,
-              let renderFn = lib.rcRender,
-              let swapFn   = lib.rcSwap else { return }
+              let renderFn = lib.rcRender else { return }
 
         CGLLockContext(ctx)
         defer { CGLUnlockContext(ctx) }
 
-        var dims = [GLint](repeating: 0, count: 4)
-        glGetIntegerv(GLenum(GL_VIEWPORT), &dims)
-        let w = dims[2] > 0 ? dims[2] : 1
-        let h = dims[3] > 0 ? dims[3] : 1
-
-        var fboID = GLint(0)
-        glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &fboID)
-
-        var fbo   = MPVOpenGLFBO(fbo: fboID, w: w, h: h, internal_format: 0)
-        var flipY = Int32(1)
-        var depth = Int32(isFloat ? 16 : 8)
-
-        withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
-        withUnsafeMutablePointer(to: &flipY) { flipPtr in
-        withUnsafeMutablePointer(to: &depth) { depthPtr in
-            var params: [MPVRenderParam] = [
-                MPVRenderParam(MPV_RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
-                MPVRenderParam(MPV_RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
-                MPVRenderParam(MPV_RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
-                MPVRenderParam()
-            ]
-            params.withUnsafeMutableBufferPointer { buf in
-                _ = renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
+        // ── Display FBO: system-managed triple-buffer ────────────────────────
+        // GL_VIEWPORT gives the ACTUAL display FBO pixel dimensions.
+        // bounds gives the LOGICAL layer size (may differ during resize).
+        // Strategy: always render mpv to our own intermediate FBO at bounds
+        // dimensions (correct AR via keepaspect), then blit/warp to fill the
+        // entire display FBO. System composites FBO→bounds, stretches cancel out.
+        withUnsafeMutablePointer(to: &sysViewport) {
+            $0.withMemoryRebound(to: GLint.self, capacity: 4) {
+                glGetIntegerv(GLenum(GL_VIEWPORT), $0)
             }
-            // report_swap is called by CVDisplayLink at the actual vsync moment,
-            // which is more accurate than calling it here right after render().
-        }}}
+        }
+        let fboW = sysViewport.2 > 0 ? sysViewport.2 : GLsizei(max(1, bounds.size.width))
+        let fboH = sysViewport.3 > 0 ? sysViewport.3 : GLsizei(max(1, bounds.size.height))
+        let w = GLsizei(max(1, bounds.size.width))
+        let h = GLsizei(max(1, bounds.size.height))
+
+        var displayFBO = GLint(0)
+        glGetIntegerv(GLenum(GL_FRAMEBUFFER_BINDING), &displayFBO)
+
+        // ── Gyro matrix（同步 ~0.5ms，cache hit 時 ~0）────────────────────────
+        var gyroResult: (UnsafeBufferPointer<Float>, Bool)? = nil
+        var gyroFrameRepeated = false   // true → same video frame, skip mpv_render + gyro
+        if let core = gyroCore, core.isReady,
+           let ctx = mpvCtx, let getFn = lib.getStr {
+            let timeSec: Double
+            if let val = "time-pos".withCString({ getFn(ctx, $0) }) {
+                timeSec = strtod(val, nil)   // zero-alloc: parse C string directly
+                lib.free?(UnsafeMutableRawPointer(val))
+            } else { timeSec = 0 }
+            // Fixed half-frame offset: centres floor(t × fps) in each frame
+            // interval, far from boundaries. Without it, 120 Hz draw on 60 fps
+            // content lands every other sample at a frame edge → jitter.
+            let halfFrame = 0.5 / core.gyroFps
+            let adjustedTime = max(0, timeSec - halfFrame)
+            var fi = max(0, min(Int(adjustedTime * core.gyroFps),
+                                core.frameCount - 1))
+            let prevFi = lastGyroFrameIdx
+            if let lastFi = prevFi {
+                let delta = fi - lastFi
+                if delta < 0 && delta >= -2 { fi = lastFi }
+            }
+
+            if fi == lastGyroFrameIdx {
+                // Same video frame as last draw — reuse existing stabFBO + matTex.
+                // Skip mpv_render + computeMatrix; only the cheap warp pass runs.
+                // This guarantees identical gyro data for both 120 Hz draws of each
+                // 60 fps frame (no jitter from slightly different time-pos values).
+                gyroFrameRepeated = true
+            } else {
+                lastGyroFrameIdx = fi
+                gyroResult = core.computeMatrix(frameIdx: fi)
+            }
+        }
+
+        let hasStab = (gyroResult != nil || gyroFrameRepeated) && warpProg != 0
+
+        // ── Intermediate FBO sizing ──────────────────────────────────────────
+        // Always use intermediate FBO so we control exact pixel dimensions.
+        // Gyro: render at gyrocore video resolution for warp shader.
+        // Non-gyro: render at bounds size; mpv keepaspect handles AR.
+        let vidW: GLsizei, vidH: GLsizei
+        if hasStab {
+            vidW = GLsizei(gyroCore!.gyroVideoW)
+            vidH = GLsizei(gyroCore!.gyroVideoH)
+        } else {
+            vidW = w; vidH = h
+        }
+
+        if stabW != vidW || stabH != vidH {
+            stabW = vidW; stabH = vidH
+            glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
+            glTexImage2D(GLenum(GL_TEXTURE_2D), 0, isFloat ? 0x881A : GLint(GL_RGBA),
+                         vidW, vidH, 0, GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), nil)
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), stabFBO)
+            glFramebufferTexture2D(GLenum(GL_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0),
+                                   GLenum(GL_TEXTURE_2D), stabTex, 0)
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(displayFBO))
+            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+        }
+
+        lastDrawnSize = bounds.size
+
+        // ── Pass 1：mpv renders to intermediate FBO ──────────────────────────
+        // Skip when the video frame hasn't changed (gyroFrameRepeated) —
+        // stabFBO already contains this frame from the previous draw().
+        if !gyroFrameRepeated {
+            // Pre-allocated params — no heap allocation per frame
+            fboParam = MPVOpenGLFBO(fbo: GLint(stabFBO), w: vidW, h: vidH, internal_format: 0)
+            depthParam = isFloat ? 16 : 8
+
+            withUnsafeMutablePointer(to: &fboParam)   { fboPtr  in
+            withUnsafeMutablePointer(to: &flipYParam) { flipPtr in
+            withUnsafeMutablePointer(to: &depthParam) { depthPtr in
+                renderParams.0 = MPVRenderParam(MPV_RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr))
+                renderParams.1 = MPVRenderParam(MPV_RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr))
+                renderParams.2 = MPVRenderParam(MPV_RC_DEPTH,   UnsafeMutableRawPointer(depthPtr))
+                renderParams.3 = MPVRenderParam()
+                withUnsafeMutablePointer(to: &renderParams) {
+                    $0.withMemoryRebound(to: MPVRenderParam.self, capacity: 4) { buf in
+                        _ = renderFn(rc, UnsafeMutableRawPointer(buf))
+                    }
+                }
+            }}}
+        }
+
+        // ── Pass 2：gyroflow per-row warp（stabTex → displayFBO）─────────────
+        if hasStab, let core = gyroCore {
+            let vH = Int(core.gyroVideoH)
+            let vW = core.gyroVideoW
+
+            // Upload new gyro matrices only for new frames (not repeated).
+            // For repeated frames stabFBO + matTex are both unchanged from last draw.
+            if let (matrices, matChanged) = gyroResult {
+                // 更新 matTex 尺寸（width=4：mat3×3 + IBIS sx/sy/ra + OIS ox/oy）
+                if matTexH != vH {
+                    matTexH = vH
+                    glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
+                    glTexImage2D(GLenum(GL_TEXTURE_2D), 0,
+                                 0x8814,   // GL_RGBA32F
+                                 4, GLsizei(vH), 0,
+                                 GLenum(GL_RGBA), GLenum(GL_FLOAT), nil)
+                    glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+                }
+
+                // 只在矩陣變更時上傳（cache hit 跳過 ~0.1ms texture upload）
+                if matChanged {
+                    glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
+                    glTexSubImage2D(GLenum(GL_TEXTURE_2D), 0,
+                                    0, 0, 4, GLsizei(vH),
+                                    GLenum(GL_RGBA), GLenum(GL_FLOAT),
+                                    matrices.baseAddress)
+                    glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+                }
+            }
+
+            // Warp pass → display FBO.
+            // Letterbox uses bounds (w×h) for AR, then pre-compensate for
+            // the system's FBO→bounds compositing stretch.
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(displayFBO))
+            glViewport(0, 0, fboW, fboH)
+            glClearColor(0, 0, 0, 1)
+            glClear(GLbitfield(GL_COLOR_BUFFER_BIT))
+
+            // Compute letterbox in bounds space, then map to FBO space
+            let videoAspect = Float(vidW) / Float(vidH)
+            let viewAspect  = Float(w) / Float(h)
+            let sX = Float(fboW) / Float(w)   // FBO→bounds stretch factor
+            let sY = Float(fboH) / Float(h)
+            var vpX: GLint = 0, vpY: GLint = 0, vpW2 = fboW, vpH2 = fboH
+            if viewAspect > videoAspect {
+                let fitW = Float(h) * videoAspect  // in bounds space
+                vpW2 = GLsizei(fitW * sX)
+                vpX = (fboW - vpW2) / 2
+            } else if viewAspect < videoAspect {
+                let fitH = Float(w) / videoAspect
+                vpH2 = GLsizei(fitH * sY)
+                vpY = (fboH - vpH2) / 2
+            }
+            glViewport(vpX, vpY, vpW2, vpH2)
+
+            glUseProgram(warpProg)
+
+            glActiveTexture(GLenum(GL_TEXTURE0))
+            glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
+            glUniform1i(uTex, 0)
+
+            glActiveTexture(GLenum(GL_TEXTURE1))
+            glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
+            glUniform1i(uMatTex, 1)
+
+            glUniform2f(uVideoSize, vW, core.gyroVideoH)
+            glUniform1f(uMatCount,  Float(vH))
+            glUniform2f(uFIn, core.gyroFx, core.gyroFy)
+            glUniform2f(uCIn, core.gyroCx, core.gyroCy)
+
+            glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
+            glEnableVertexAttribArray(0)
+            glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+            glDrawArrays(GLenum(GL_TRIANGLE_STRIP), 0, 4)
+            glDisableVertexAttribArray(0)
+            glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
+
+            glActiveTexture(GLenum(GL_TEXTURE1))
+            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+            glActiveTexture(GLenum(GL_TEXTURE0))
+            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+            glUseProgram(0)
+        } else if blitProg != 0 {
+            // ── Non-gyro: blit intermediate → display FBO (stretch-to-fill) ──
+            // mpv rendered at bounds dimensions with keepaspect (correct AR).
+            // Fill the entire display FBO; system compositing FBO→bounds
+            // applies the inverse stretch, preserving AR.
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(displayFBO))
+            glViewport(0, 0, fboW, fboH)
+
+            glUseProgram(blitProg)
+            glActiveTexture(GLenum(GL_TEXTURE0))
+            glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
+            glUniform1i(uBlitTex, 0)
+
+            glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
+            glEnableVertexAttribArray(0)
+            glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+            glDrawArrays(GLenum(GL_TRIANGLE_STRIP), 0, 4)
+            glDisableVertexAttribArray(0)
+            glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
+
+            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+            glUseProgram(0)
+        }
 
         // ── Frame timing measurement (skipped when diagnostics are disabled) ──
         guard diagnosticsEnabled else { return }
         let now = CACurrentMediaTime()
         if lastFrameTime > 0 {
             let dt = now - lastFrameTime
-            if dt < 2.0 {                           // ignore paused gaps
+            if dt < 2.0 {
                 frameIntervals.append(dt)
                 if frameIntervals.count > 60 { frameIntervals.removeFirst() }
 
@@ -400,7 +868,6 @@ class MPVOpenGLLayer: CAOpenGLLayer {
                     let mean = frameIntervals.reduce(0, +) / Double(frameIntervals.count)
                     renderFPS = mean > 0 ? 1.0 / mean : 0
 
-                    // CV (coefficient of variation): lower = more stable
                     let variance = frameIntervals.map { ($0 - mean) * ($0 - mean) }
                                                  .reduce(0, +) / Double(frameIntervals.count)
                     let cv = mean > 0 ? variance.squareRoot() / mean : 1
@@ -417,6 +884,13 @@ class MPVOpenGLLayer: CAOpenGLLayer {
         let lib = LibMPV.shared
         if let rc  = renderCtx { lib.rcFree?(rc) }
         if let ctx = mpvCtx    { lib.destroy?(ctx) }
+        // Warp pipeline cleanup (must be called on GL context thread; best-effort here)
+        if warpProg != 0 { glDeleteProgram(warpProg) }
+        if blitProg != 0 { glDeleteProgram(blitProg) }
+        if warpVBO  != 0 { glDeleteBuffers(1, &warpVBO) }
+        if matTexId != 0 { glDeleteTextures(1, &matTexId) }
+        if stabTex  != 0 { glDeleteTextures(1, &stabTex) }
+        if stabFBO  != 0 { glDeleteFramebuffers(1, &stabFBO) }
     }
 }
 
@@ -432,7 +906,6 @@ class MPVPlayerNSView: NSView {
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
-        wantsExtendedDynamicRangeOpenGLSurface = true
         layer = mpvLayer
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -452,6 +925,7 @@ class MPVPlayerNSView: NSView {
         stopScope()
         currentPath = path
         startScope(bookmarkData: bookmarkData)
+        mpvLayer.setPause(true)    // Ensure paused before loading new file
         mpvLayer.prepareForContent(hdrType: hdrType)
         mpvLayer.loadFile(path)
     }
@@ -463,30 +937,41 @@ class MPVPlayerNSView: NSView {
         currentPath = nil
     }
 
+    // Gyro stabilization pass-through
+    nonisolated func loadGyroCore(_ core: GyroCore?) {
+        mpvLayer.loadGyroCore(core)
+    }
+    /// Suppress rendering until gyro is ready — prevents unstabilized first-frame flash.
+    nonisolated func setWaitingForGyro(_ waiting: Bool) {
+        mpvLayer.waitingForGyro = waiting
+    }
+
     // HDR toggle pass-through
     func applyHDR(showHDR: Bool, hdrType: VideoHDRType?) {
         mpvLayer.applyHDRSettings(showHDR: showHDR, hdrType: hdrType)
     }
 
     // Diagnostics pass-through
-    var diagnosticsEnabled: Bool {
+    nonisolated var diagnosticsEnabled: Bool {
         get { mpvLayer.diagnosticsEnabled }
         set { mpvLayer.diagnosticsEnabled = newValue }
     }
 
-    // Playback pass-throughs
-    var isPaused: Bool { mpvLayer.isPaused }
-    var isEOFReached: Bool { mpvLayer.isEOFReached }
-    var currentTime: Double { mpvLayer.currentTime }
-    var videoDuration: Double { mpvLayer.videoDuration }
-    var hwdecCurrent: String { mpvLayer.hwdecCurrent }
-    var renderFPS: Double { mpvLayer.renderFPS }
-    var renderCV: Double { mpvLayer.renderCV }
-    var renderStability: Double { mpvLayer.renderStability }
-    var videoFPS: Double { mpvLayer.videoFPS }
-    var droppedFrames: Int { mpvLayer.droppedFrames }
-    func setPause(_ paused: Bool) { mpvLayer.setPause(paused) }
-    func seek(to seconds: Double) { mpvLayer.seek(to: seconds) }
+    // Playback pass-throughs — nonisolated because the underlying mpv C API
+    // is thread-safe.  The poll queue reads these off the main thread.
+    nonisolated var isPaused: Bool { mpvLayer.isPaused }
+    nonisolated var isEOFReached: Bool { mpvLayer.isEOFReached }
+    nonisolated var currentTime: Double { mpvLayer.currentTime }
+    nonisolated var videoDuration: Double { mpvLayer.videoDuration }
+    nonisolated var hwdecCurrent: String { mpvLayer.hwdecCurrent }
+    nonisolated var renderFPS: Double { mpvLayer.renderFPS }
+    nonisolated var renderCV: Double { mpvLayer.renderCV }
+    nonisolated var renderStability: Double { mpvLayer.renderStability }
+    nonisolated var videoFPS: Double { mpvLayer.videoFPS }
+    nonisolated var droppedFrames: Int { mpvLayer.droppedFrames }
+    nonisolated var decoderDroppedFrames: Int { mpvLayer.decoderDroppedFrames }
+    nonisolated func setPause(_ paused: Bool) { mpvLayer.setPause(paused) }
+    nonisolated func seek(to seconds: Double) { mpvLayer.seek(to: seconds) }
 
     private func startScope(bookmarkData: Data?) {
         guard let data = bookmarkData,
@@ -503,152 +988,7 @@ class MPVPlayerNSView: NSView {
         scopeStarted = false
     }
 
-    deinit { stop() }
-}
-
-// MARK: - MPVController
-
-/// Observable state for mpv playback; polled via background queue at ~4 Hz.
-///
-/// Property reads (mpv C API calls) happen on `pollQueue` (background) to keep the
-/// main thread free for `layer.display()` calls — this is the primary fix for high CV.
-/// Only the lightweight @Observable setter assignments are dispatched back to main.
-@Observable
-final class MPVController {
-    var isPlaying: Bool = false
-    var currentTime: Double = 0
-    var duration: Double = 0
-    /// Actual render FPS measured in draw() — updated ~every frame.
-    private(set) var renderFPS: Double = 0
-    /// Coefficient of variation of frame intervals (stddev/mean).
-    private(set) var renderCV: Double = 0
-    /// 0 = jittery, 1 = perfectly stable.
-    private(set) var renderStability: Double = 1
-    /// Declared FPS of the video file.
-    private(set) var videoFPS: Double = 0
-    /// Cumulative dropped frames reported by mpv.
-    private(set) var droppedFrames: Int = 0
-    /// Reflects the actual hardware decoder in use after file load (e.g. "videotoolbox").
-    private(set) var hwdecInfo: String = "-"
-
-    private weak var nsView: MPVPlayerNSView?
-    /// Serial background queue: reads mpv properties off the main thread.
-    private let pollQueue = DispatchQueue(label: "com.spectrum.mpv.poll", qos: .utility)
-    private var isPolling = false
-    private var hwdecCheckTask: Task<Void, Never>?
-
-    /// When false, all diagnostic reads (FPS, CV, hwdec) are skipped — zero overhead.
-    var diagnosticsEnabled: Bool = true {
-        didSet {
-            nsView?.diagnosticsEnabled = diagnosticsEnabled
-            if !diagnosticsEnabled {
-                hwdecCheckTask?.cancel()
-                hwdecCheckTask = nil
-            }
-        }
-    }
-
-    /// Call before loading a new file to clear stale state.
-    func reset() {
-        currentTime = 0
-        duration = 0
-        isPlaying = false
-        renderFPS = 0
-        renderCV = 0
-        renderStability = 1
-        videoFPS = 0
-        droppedFrames = 0
-        hwdecInfo = "-"
-        hwdecCheckTask?.cancel()
-    }
-
-    func startPolling(view: MPVPlayerNSView) {
-        guard nsView !== view else { return }   // already polling this view
-        nsView = view
-        // After 1 s the file should be open; read the actual decoder for diagnostics.
-        hwdecCheckTask?.cancel()
-        if diagnosticsEnabled {
-            hwdecCheckTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let self, let v = self.nsView else { return }
-                self.hwdecInfo = v.hwdecCurrent
-            }
-        }
-        isPolling = true
-        schedulePoll()
-    }
-
-    private func schedulePoll() {
-        pollQueue.asyncAfter(deadline: .now() + 0.25) { [weak self] in
-            self?.doPoll()
-        }
-    }
-
-    /// Runs on `pollQueue` (background). Reads all mpv properties off the main thread,
-    /// then dispatches only the fast @Observable property assignments back to main.
-    private func doPoll() {
-        guard isPolling, let v = nsView else {
-            isPolling = false
-            return
-        }
-        // mpv C API (mpv_get_property_string) is thread-safe per mpv documentation.
-        // Playback state (always needed for control bar)
-        let d       = v.videoDuration
-        let eof     = v.isEOFReached
-        let ct      = eof ? 0.0 : v.currentTime
-        let playing = eof ? false : !v.isPaused
-
-        // Diagnostics (only read when badge is enabled — zero overhead otherwise)
-        let diag = diagnosticsEnabled
-        let fps     = diag ? v.renderFPS     : 0
-        let cv      = diag ? v.renderCV      : 0
-        let stab    = diag ? v.renderStability : 1
-        let vfps    = diag ? v.videoFPS      : 0
-        let dropped = diag ? v.droppedFrames : 0
-
-        // Main thread only does fast property assignments — no mpv API calls here.
-        DispatchQueue.main.async { [weak self] in
-            guard let self else { return }
-            if d > 0 { self.duration = d }
-            if eof {
-                self.currentTime = 0
-                self.isPlaying = false
-            } else {
-                self.currentTime = ct
-                self.isPlaying = playing
-            }
-            if diag {
-                self.renderFPS = fps
-                self.renderCV = cv
-                self.renderStability = stab
-                if vfps > 0 { self.videoFPS = vfps }
-                self.droppedFrames = dropped
-            }
-        }
-
-        schedulePoll()
-    }
-
-    func stopPolling() {
-        hwdecCheckTask?.cancel()
-        hwdecCheckTask = nil
-        isPolling = false
-        nsView = nil
-    }
-
-    func togglePlayPause() {
-        if !isPlaying, let v = nsView, v.isEOFReached {
-            // Replay from beginning
-            v.seek(to: 0)
-        }
-        isPlaying.toggle()
-        nsView?.setPause(!isPlaying)
-    }
-
-    func seek(to seconds: Double) {
-        currentTime = seconds
-        nsView?.seek(to: seconds)
-    }
+    deinit { MainActor.assumeIsolated { stop() } }
 }
 
 // MARK: - MPVPlayerView (SwiftUI)
@@ -677,79 +1017,5 @@ struct MPVPlayerView: NSViewRepresentable {
 
     static func dismantleNSView(_ nsView: MPVPlayerNSView, coordinator: ()) {
         nsView.stop()
-    }
-}
-
-// MARK: - MPVControlBar
-
-struct MPVControlBar: View {
-    let controller: MPVController
-    @State private var isScrubbing = false
-    @State private var scrubPosition: Double = 0   // normalised 0…1
-
-    var body: some View {
-        HStack(spacing: 8) {
-            // Play / Pause — matches AVPlayerView button weight & size
-            Button {
-                controller.togglePlayPause()
-            } label: {
-                Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
-                    .font(.system(size: 13, weight: .semibold))
-                    .frame(width: 28, height: 28)
-                    .contentShape(Rectangle())
-            }
-            .buttonStyle(.plain)
-            .foregroundStyle(.primary)
-
-            // Elapsed time
-            Text(formatTime(displaySeconds))
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .trailing)
-
-            // Scrubber
-            Slider(
-                value: Binding(
-                    get: {
-                        isScrubbing ? scrubPosition
-                            : (controller.duration > 0
-                               ? controller.currentTime / controller.duration
-                               : 0)
-                    },
-                    set: { scrubPosition = $0 }
-                ),
-                in: 0...1,
-                onEditingChanged: { editing in
-                    isScrubbing = editing
-                    if !editing {
-                        controller.seek(to: scrubPosition * controller.duration)
-                    }
-                }
-            )
-            .controlSize(.small)
-
-            // Remaining / total
-            Text(formatTime(controller.duration))
-                .font(.system(size: 11).monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 40, alignment: .leading)
-        }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 8)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
-    }
-
-    private var displaySeconds: Double {
-        isScrubbing ? scrubPosition * controller.duration : controller.currentTime
-    }
-
-    private func formatTime(_ seconds: Double) -> String {
-        let total = Int(max(0, seconds))
-        let h = total / 3600
-        let m = (total % 3600) / 60
-        let s = total % 60
-        return h > 0
-            ? String(format: "%d:%02d:%02d", h, m, s)
-            : String(format: "%d:%02d", m, s)
     }
 }

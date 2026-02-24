@@ -8,8 +8,12 @@
 
 /* Begin PBXBuildFile section */
 		AA000050 /* MPVLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000050 /* MPVLib.swift */; };
+		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
 		AA000051 /* MPVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* MPVPlayerView.swift */; };
 		AA000052 /* AVPlayerControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000052 /* AVPlayerControlBar.swift */; };
+		AA000054 /* HDRImageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000054 /* HDRImageViews.swift */; };
+		AA000055 /* MPVController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* MPVController.swift */; };
+		AA000056 /* MPVControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000056 /* MPVControlBar.swift */; };
 		8070F3122F43487D0095B967 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8070F3112F43487D0095B967 /* SettingsView.swift */; };
 		80EBB13D2F42434900D5463B /* ThumbnailCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */; };
 		AA000001 /* SpectrumApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000001 /* SpectrumApp.swift */; };
@@ -40,8 +44,12 @@
 
 /* Begin PBXFileReference section */
 		AB000050 /* MPVLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVLib.swift; sourceTree = "<group>"; };
+		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
 		AB000051 /* MPVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVPlayerView.swift; sourceTree = "<group>"; };
 		AB000052 /* AVPlayerControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerControlBar.swift; sourceTree = "<group>"; };
+		AB000054 /* HDRImageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRImageViews.swift; sourceTree = "<group>"; };
+		AB000055 /* MPVController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVController.swift; sourceTree = "<group>"; };
+		AB000056 /* MPVControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVControlBar.swift; sourceTree = "<group>"; };
 		8070F3112F43487D0095B967 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCacheState.swift; sourceTree = "<group>"; };
 		AB000001 /* SpectrumApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumApp.swift; sourceTree = "<group>"; };
@@ -133,6 +141,7 @@
 			isa = PBXGroup;
 			children = (
 				AB000050 /* MPVLib.swift */,
+				AB000053 /* GyroCore.swift */,
 				AB000010 /* FolderScanner.swift */,
 				AB000011 /* EXIFService.swift */,
 				AB000012 /* ThumbnailService.swift */,
@@ -186,8 +195,11 @@
 			isa = PBXGroup;
 			children = (
 				AB00000B /* PhotoDetailView.swift */,
+				AB000054 /* HDRImageViews.swift */,
 				AB00000C /* PhotoInfoPanel.swift */,
 				AB000051 /* MPVPlayerView.swift */,
+				AB000055 /* MPVController.swift */,
+				AB000056 /* MPVControlBar.swift */,
 				AB000052 /* AVPlayerControlBar.swift */,
 			);
 			path = Detail;
@@ -233,6 +245,7 @@
 		};
 		DC000001 /* Bundle libmpv */ = {
 			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
 			buildActionMask = 2147483647;
 			files = (
 			);
@@ -249,6 +262,25 @@
 			shellPath = /bin/bash;
 			shellScript = "set -e\n\nLIB_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nDEST=\"$LIB_DIR/libmpv.dylib\"\n\nmkdir -p \"$LIB_DIR\"\n\n# Copy libmpv if not already present\nif [ ! -f \"$DEST\" ]; then\n  # 1. Source tree Spectrum/Resources/lib/\n  SOURCE=\"${SRCROOT}/Spectrum/Resources/lib/libmpv.dylib\"\n  if [ -f \"$SOURCE\" ]; then\n    cp \"$SOURCE\" \"$DEST\"\n    echo \"note: Bundled libmpv from source tree\"\n  else\n    # 2. IINA.app\n    IINA_DIR=\"/Applications/IINA.app/Contents/Frameworks\"\n    COPIED=0\n    for NAME in libmpv.dylib libmpv.2.dylib; do\n      if [ -f \"$IINA_DIR/$NAME\" ]; then\n        cp \"$IINA_DIR/$NAME\" \"$DEST\"\n        echo \"note: Bundled $NAME from IINA.app\"\n        COPIED=1\n        break\n      fi\n    done\n    if [ \"$COPIED\" -eq 0 ]; then\n      echo \"warning: libmpv.dylib not found. Place it in Spectrum/Resources/lib/ or install IINA. mpv player will be unavailable.\"\n      exit 0\n    fi\n  fi\nfi\n\n# Add IINA Frameworks as LC_RPATH so @rpath deps (libass, libavcodec, etc.) resolve at runtime\nIINA_FW=\"/Applications/IINA.app/Contents/Frameworks\"\nif [ -d \"$IINA_FW\" ]; then\n  if ! otool -l \"$DEST\" 2>/dev/null | grep -q \"path $IINA_FW \"; then\n    install_name_tool -add_rpath \"$IINA_FW\" \"$DEST\" 2>/dev/null || true\n    echo \"note: Added IINA Frameworks rpath to bundled libmpv\"\n  fi\nfi\n\n# Re-sign ad-hoc after any modification (disable-library-validation entitlement in effect)\ncodesign --force --sign - \"$DEST\" 2>/dev/null || true\n";
 		};
+		DC000002 /* Bundle libgyrocore */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+			);
+			name = "Bundle libgyrocore";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/bash;
+			shellScript = "set -e\n\nLIB_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nDEST=\"$LIB_DIR/libgyrocore_c.dylib\"\nGW_DIR=\"${SRCROOT}/gyro-wrapper\"\nGW_DYLIB=\"$GW_DIR/target/release/libgyrocore_c.dylib\"\n\nmkdir -p \"$LIB_DIR\"\n\n# Build gyro-wrapper only when source is newer than the existing dylib\nif [ -f \"$GW_DIR/Cargo.toml\" ] && command -v cargo >/dev/null 2>&1; then\n  NEED_BUILD=0\n  if [ ! -f \"$GW_DYLIB\" ]; then\n    NEED_BUILD=1\n  else\n    # Rebuild if Cargo.toml or any src/ file is newer than the dylib\n    NEWER=$(find \"$GW_DIR/src\" \"$GW_DIR/Cargo.toml\" -newer \"$GW_DYLIB\" 2>/dev/null | head -1)\n    if [ -n \"$NEWER\" ]; then\n      NEED_BUILD=1\n    fi\n  fi\n  if [ \"$NEED_BUILD\" -eq 1 ]; then\n    echo \"note: Building libgyrocore_c (cargo release)...\"\n    (cd \"$GW_DIR\" && cargo build --release 2>&1 | tail -5)\n  else\n    echo \"note: libgyrocore_c up-to-date, skipping cargo build\"\n  fi\nfi\n\n# Copy into app bundle only if source is newer than destination\nif [ -f \"$GW_DYLIB\" ]; then\n  if [ ! -f \"$DEST\" ] || [ \"$GW_DYLIB\" -nt \"$DEST\" ]; then\n    cp \"$GW_DYLIB\" \"$DEST\"\n    codesign --force --sign - \"$DEST\" 2>/dev/null || true\n    echo \"note: Bundled libgyrocore_c from gyro-wrapper\"\n  fi\nelse\n  # Fallback: ~/gyroflow/target/release/\n  GF=\"$HOME/gyroflow/target/release/libgyrocore_c.dylib\"\n  if [ -f \"$GF\" ]; then\n    if [ ! -f \"$DEST\" ] || [ \"$GF\" -nt \"$DEST\" ]; then\n      cp \"$GF\" \"$DEST\"\n      codesign --force --sign - \"$DEST\" 2>/dev/null || true\n      echo \"note: Bundled libgyrocore_c from ~/gyroflow\"\n    fi\n  else\n    echo \"warning: libgyrocore_c.dylib not found. Install Rust toolchain or pre-build gyro-wrapper.\"\n    exit 0\n  fi\nfi\n";
+		};
 /* End PBXShellScriptBuildPhase section */
 
 /* Begin PBXNativeTarget section */
@@ -261,6 +293,7 @@
 				AD000001 /* Frameworks */,
 				B0000002 /* Resources */,
 				DC000001 /* Bundle libmpv */,
+				DC000002 /* Bundle libgyrocore */,
 				);
 			buildRules = (
 			);
@@ -341,8 +374,12 @@
 				AA000016 /* Date+Formatting.swift in Sources */,
 				AA000017 /* VideoMetadataService.swift in Sources */,
 				AA000050 /* MPVLib.swift in Sources */,
+				AA000053 /* GyroCore.swift in Sources */,
 				AA000051 /* MPVPlayerView.swift in Sources */,
 				AA000052 /* AVPlayerControlBar.swift in Sources */,
+				AA000054 /* HDRImageViews.swift in Sources */,
+				AA000055 /* MPVController.swift in Sources */,
+				AA000056 /* MPVControlBar.swift in Sources */,
 				AA00001D /* ImagePreloadCache.swift in Sources */,
 				AA000029 /* FolderClipboard.swift in Sources */,
 				AA000032 /* FolderListCache.swift in Sources */,
@@ -400,10 +437,14 @@
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
+					"GL_SILENCE_DEPRECATION=1",
 					"$(inherited)",
 				);
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_SHADOW = YES;
+				GCC_WARN_SIGN_COMPARE = YES;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
@@ -416,6 +457,7 @@
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_ACTIVE_COMPILATION_CONDITIONS = "DEBUG $(inherited)";
 				SWIFT_OPTIMIZATION_LEVEL = "-Onone";
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
 			name = Debug;
 		};
@@ -461,8 +503,15 @@
 				ENABLE_USER_SCRIPT_SANDBOXING = NO;
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
+				GCC_PREPROCESSOR_DEFINITIONS = (
+					"GL_SILENCE_DEPRECATION=1",
+					"$(inherited)",
+				);
+				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
 				GCC_WARN_64_TO_32_BIT_CONVERSION = YES;
 				GCC_WARN_ABOUT_RETURN_TYPE = YES_ERROR;
+				GCC_WARN_SHADOW = YES;
+				GCC_WARN_SIGN_COMPARE = YES;
 				GCC_WARN_UNDECLARED_SELECTOR = YES;
 				GCC_WARN_UNINITIALIZED_AUTOS = YES_AGGRESSIVE;
 				GCC_WARN_UNUSED_FUNCTION = YES;
@@ -473,6 +522,7 @@
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
 				SWIFT_COMPILATION_MODE = wholemodule;
+				SWIFT_TREAT_WARNINGS_AS_ERRORS = YES;
 			};
 			name = Release;
 		};

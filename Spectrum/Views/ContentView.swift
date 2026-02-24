@@ -138,25 +138,31 @@ struct ContentView: View {
     }
 
     var body: some View {
-        Group {
-            if isFullScreen, let photo = detailPhoto {
-                // Fullscreen: just the photo, no NavigationSplitView
-                photoDetail(photo, showInspector: .constant(false))
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                normalContent
-            }
-        }
+        normalContent
         .onAppear { escapeMonitor.start() }
         .onChange(of: escapeMonitor.escaped) { _, _ in handleEscape() }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
+            guard !isFullScreen else { return }
+            savedColumnVisibility = columnVisibility
+            isFullScreen = true
+            // Force sidebar collapse — columnVisibility alone is unreliable on macOS
+            if columnVisibility != .detailOnly {
+                columnVisibility = .detailOnly
+                NSApp.sendAction(#selector(NSSplitViewController.toggleSidebar(_:)), to: nil, from: nil)
+            }
+            showInspector = false
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.didEnterFullScreenNotification)) { notification in
+            if let window = notification.object as? NSWindow {
+                window.toolbar?.isVisible = false
+            }
+        }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
             guard isFullScreen else { return }
-            // User exited fullscreen via green button or gesture — restore state
             isFullScreen = false
             columnVisibility = savedColumnVisibility
         }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.didExitFullScreenNotification)) { notification in
-            // Restore toolbar after fullscreen animation completes
             if let window = notification.object as? NSWindow {
                 window.toolbar?.isVisible = true
             }
@@ -237,20 +243,13 @@ struct ContentView: View {
     }
 
     private func enterFullScreen() {
-        guard let window = NSApp.keyWindow else { return }
-        savedColumnVisibility = columnVisibility
-        isFullScreen = true
-        window.toolbar?.isVisible = false
-        window.toggleFullScreen(nil)
+        NSApp.keyWindow?.toggleFullScreen(nil)
     }
 
     private func exitFullScreen() {
-        guard let window = NSApp.keyWindow else { return }
-        isFullScreen = false
-        columnVisibility = savedColumnVisibility
-        if window.styleMask.contains(.fullScreen) {
-            window.toggleFullScreen(nil)
-        }
+        guard let window = NSApp.keyWindow,
+              window.styleMask.contains(.fullScreen) else { return }
+        window.toggleFullScreen(nil)
     }
 
     private func navigateToParent(folder: ScannedFolder, subPath: String) {

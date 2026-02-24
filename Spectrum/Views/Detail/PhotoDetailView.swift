@@ -2,139 +2,6 @@ import SwiftUI
 import SwiftData
 import AVKit
 
-// MARK: - HDR NSImageView wrapper
-
-private class FlexibleImageView: NSImageView {
-    override var intrinsicContentSize: NSSize {
-        NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
-    }
-    override var acceptsFirstResponder: Bool { false }
-}
-
-struct HDRImageView: NSViewRepresentable {
-    let image: NSImage
-    let dynamicRange: NSImage.DynamicRange
-
-    func makeNSView(context: Context) -> NSImageView {
-        let view = FlexibleImageView()
-        view.imageScaling = .scaleProportionallyUpOrDown
-        view.imageAlignment = .alignCenter
-        view.animates = false
-        view.isEditable = false
-        return view
-    }
-
-    func updateNSView(_ nsView: NSImageView, context: Context) {
-        nsView.image = image
-        nsView.preferredImageDynamicRange = dynamicRange
-    }
-}
-
-// MARK: - HLG CALayer image view (mpv-style: explicit itur_2100_HLG colorspace + EDR hierarchy)
-
-class HLGNSView: NSView {
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        wantsLayer = true
-        layer?.contentsGravity = .resizeAspect
-    }
-    required init?(coder: NSCoder) { fatalError() }
-
-    func configure(cgImage: CGImage) {
-        layer?.contents = cgImage
-        enableEDR()
-    }
-
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        enableEDR()
-    }
-
-    private func enableEDR() {
-        setEDRDown(layer)
-        var current = layer?.superlayer
-        while let l = current { setEDR(l); current = l.superlayer }
-    }
-
-    private func setEDR(_ l: CALayer) {
-        if #available(macOS 26.0, *) {
-            l.preferredDynamicRange = .high
-        } else {
-            l.wantsExtendedDynamicRangeContent = true
-        }
-    }
-
-    private func setEDRDown(_ l: CALayer?) {
-        guard let l else { return }
-        setEDR(l)
-        l.sublayers?.forEach { setEDRDown($0) }
-    }
-}
-
-struct HLGImageView: NSViewRepresentable {
-    let cgImage: CGImage
-
-    func makeNSView(context: Context) -> HLGNSView { HLGNSView() }
-
-    func updateNSView(_ nsView: HLGNSView, context: Context) { nsView.configure(cgImage: cgImage) }
-
-}
-
-// MARK: - HDR AVPlayerView wrapper
-
-private class EDRPlayerView: AVPlayerView {
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        enableEDR()
-    }
-
-    override func layout() {
-        super.layout()
-        enableEDR()
-    }
-
-    private func enableEDR() {
-        setEDRDown(layer)
-        var current = layer?.superlayer
-        while let l = current {
-            setEDR(l)
-            current = l.superlayer
-        }
-    }
-
-    private func setEDR(_ l: CALayer) {
-        if #available(macOS 26.0, *) {
-            l.preferredDynamicRange = .high
-        } else {
-            l.wantsExtendedDynamicRangeContent = true
-        }
-    }
-
-    private func setEDRDown(_ l: CALayer?) {
-        guard let l else { return }
-        setEDR(l)
-        l.sublayers?.forEach { setEDRDown($0) }
-    }
-}
-
-struct HDRVideoPlayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = EDRPlayerView()
-        view.controlsStyle = .none          // custom control bar overlaid in SwiftUI
-        view.allowsVideoFrameAnalysis = false
-        view.player = player
-        return view
-    }
-
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        if nsView.player !== player {
-            nsView.player = player
-        }
-    }
-}
-
 // MARK: - PhotoDetailView
 
 struct PhotoDetailView: View {
@@ -165,10 +32,31 @@ struct PhotoDetailView: View {
     @State private var avHideTask: Task<Void, Never>? = nil
     @State private var avBarOffset: CGSize = .zero
     @State private var avBarDragStart: CGSize = .zero
+    @State private var videoStarted = false
     // Shared
     @State private var spaceKeyMonitor: Any?
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
     @AppStorage("videoPlayer") private var videoPlayerPref: String = "libmpv"
+    @AppStorage("gyroStabEnabled") private var gyroStabEnabled: Bool = true
+    @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
+    @AppStorage("gyroOffsetMs") private var gyroOffsetMs: Double = 0
+    @AppStorage("gyroLensPath") private var gyroLensPath: String = ""
+    @AppStorage("gyroIntegrationMethod") private var gyroIntegrationMethod: Int = 2
+    @AppStorage("gyroImuOrientation") private var gyroImuOrientation: String = "YXz"
+    @AppStorage("gyroFov") private var gyroFov: Double = 1.0
+    @AppStorage("gyroLensCorrectionAmount") private var gyroLensCorrectionAmount: Double = 1.0
+    @AppStorage("gyroZoomingMethod") private var gyroZoomingMethod: Int = 1
+    @AppStorage("gyroAdaptiveZoom") private var gyroAdaptiveZoom: Double = 4.0
+    @AppStorage("gyroMaxZoom") private var gyroMaxZoom: Double = 130.0
+    @AppStorage("gyroMaxZoomIterations") private var gyroMaxZoomIterations: Int = 5
+    @AppStorage("gyroUseGravityVectors") private var gyroUseGravityVectors: Bool = false
+    @AppStorage("gyroVideoSpeed") private var gyroVideoSpeed: Double = 1.0
+    @AppStorage("gyroHorizonLockAmount") private var gyroHorizonLockAmount: Double = 0
+    @AppStorage("gyroHorizonLockRoll") private var gyroHorizonLockRoll: Double = 0
+    @AppStorage("gyroPerAxis") private var gyroPerAxis: Bool = false
+    @AppStorage("gyroSmoothnessPitch") private var gyroSmoothnessPitch: Double = 0
+    @AppStorage("gyroSmoothnessYaw") private var gyroSmoothnessYaw: Double = 0
+    @AppStorage("gyroSmoothnessRoll") private var gyroSmoothnessRoll: Double = 0
 
     private var bookmarkData: Data? {
         photo.resolveBookmarkData(from: folders)
@@ -256,29 +144,19 @@ struct PhotoDetailView: View {
 
     @ViewBuilder
     private var videoContent: some View {
+        activeVideoContent
+    }
+
+    /// Active video player (mpv or AVPlayer) — created only after user presses play.
+    @ViewBuilder
+    private var activeVideoContent: some View {
         if useMPV {
-            // mpv handles HLG HDR natively — correct brightness + colors without any toggle
             ZStack(alignment: .bottom) {
                 MPVPlayerView(path: photo.filePath, bookmarkData: bookmarkData,
                               controller: mpvController,
                               hdrType: videoHDRType,
                               showHDR: showHDR)
 
-                // HDR/SDR toggle badge — top-left (mirrors AVPlayer branch)
-                if isHDR {
-                    Button {
-                        showHDR.toggle()
-                        // MPVPlayerView.updateNSView picks up showHDR change automatically
-                    } label: {
-                        hdrBadge
-                    }
-                    .buttonStyle(.plain)
-                    .help(showHDR ? "Switch to SDR" : "Switch to HDR")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(12)
-                }
-
-                // Diagnostics badge — top-right corner (hidden via Settings)
                 if showMPVDiagBadge {
                     mpvDiagBadge
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
@@ -319,32 +197,15 @@ struct PhotoDetailView: View {
                 if let player {
                     HDRVideoPlayerView(player: player)
                 } else {
-                    ProgressView("Loading...")
+                    ProgressView()
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                 }
 
-                // HDR badge — top-left
-                if isHDR {
-                    Button {
-                        showHDR.toggle()
-                        applyVideoDynamicRange()
-                    } label: {
-                        hdrBadge
-                    }
-                    .buttonStyle(.plain)
-                    .help(showHDR ? "Switch to SDR" : "Switch to HDR")
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(12)
-                    .allowsHitTesting(true)
-                }
-
-                // Diagnostics badge — top-right
                 if showMPVDiagBadge {
                     avDiagBadge
                         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
                 }
 
-                // Custom control bar — bottom centre, draggable
                 if avControlsVisible {
                     AVPlayerControlBar(controller: avController)
                         .frame(maxWidth: 480)
@@ -413,7 +274,7 @@ struct PhotoDetailView: View {
                         }
                     }
 
-                    if isHDR {
+                    if isHDR && showMPVDiagBadge {
                         Button { showHDR.toggle() } label: { hdrBadge }
                             .buttonStyle(.plain)
                             .help(showHDR ? "Switch to SDR" : "Switch to HDR")
@@ -437,36 +298,46 @@ struct PhotoDetailView: View {
         let videoFPS  = avController.videoFPS
         let renderFPS = avController.renderFPS
 
-        VStack(alignment: .trailing, spacing: 3) {
-            // Top line: HDR type (if any) + codec
-            HStack(spacing: 4) {
-                if let hdrType = videoHDRType {
-                    Text(hdrType.rawValue).foregroundStyle(.orange)
-                    Text("·").foregroundStyle(.tertiary)
-                }
-                Text(avController.codecInfo)
+        Button {
+            if isHDR {
+                showHDR.toggle()
+                applyVideoDynamicRange()
             }
+        } label: {
+            VStack(alignment: .trailing, spacing: 3) {
+                // Top line: HDR/SDR state + codec
+                HStack(spacing: 4) {
+                    if let hdrType = videoHDRType {
+                        Text(showHDR ? hdrType.rawValue : "SDR")
+                            .foregroundStyle(showHDR ? .orange : .secondary)
+                        Text("·").foregroundStyle(.tertiary)
+                    }
+                    Text(avController.codecInfo)
+                }
 
-            // Bottom line: render fps / video fps + CV dot (same format as mpvDiagBadge)
-            HStack(spacing: 4) {
-                Circle()
-                    .fill(renderFPS > 0 ? dotColor : .secondary)
-                    .frame(width: 6, height: 6)
-                if videoFPS > 0 {
-                    Text(String(format: "%.1f/%.0f fps", renderFPS, videoFPS))
-                } else {
-                    Text(String(format: "%.1f fps", renderFPS))
+                // Bottom line: render fps / video fps + CV dot
+                HStack(spacing: 4) {
+                    Circle()
+                        .fill(renderFPS > 0 ? dotColor : .secondary)
+                        .frame(width: 6, height: 6)
+                    if videoFPS > 0 {
+                        Text(String(format: "%.1f/%.0f fps", renderFPS, videoFPS))
+                    } else {
+                        Text(String(format: "%.1f fps", renderFPS))
+                    }
+                    Text("CV \(String(format: "%.3f", cv))")
+                        .foregroundStyle(dotColor)
                 }
-                Text("CV \(String(format: "%.3f", cv))")
-                    .foregroundStyle(dotColor)
             }
+            .font(.caption2.monospacedDigit())
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 7)
+            .padding(.vertical, 5)
+            .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 5))
+            .padding(8)
         }
-        .font(.caption2.monospacedDigit())
-        .foregroundStyle(.secondary)
-        .padding(.horizontal, 7)
-        .padding(.vertical, 5)
-        .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 5))
-        .padding(8)
+        .buttonStyle(.plain)
+        .help(isHDR ? (showHDR ? "Switch to SDR" : "Switch to HDR") : "")
     }
 
     @ViewBuilder
@@ -477,7 +348,23 @@ struct PhotoDetailView: View {
         let videoFPS = mpvController.videoFPS
         let renderFPS = mpvController.renderFPS
 
-        VStack(alignment: .trailing, spacing: 3) {
+        VStack(alignment: .trailing, spacing: 4) {
+            // Toggle pills — separate row so they look clearly interactive
+            HStack(spacing: 4) {
+                if let hdrType = videoHDRType {
+                    togglePill(label: showHDR ? hdrType.rawValue : "SDR",
+                               active: showHDR, color: .orange) {
+                        showHDR.toggle()
+                    }
+                }
+                if mpvController.gyroAvailable {
+                    togglePill(label: "GYRO",
+                               active: mpvController.gyroStabEnabled, color: .green) {
+                        toggleGyroStab()
+                    }
+                }
+            }
+
             Text(mpvController.hwdecInfo)
 
             HStack(spacing: 4) {
@@ -493,9 +380,15 @@ struct PhotoDetailView: View {
                     .foregroundStyle(dotColor)
             }
 
-            if mpvController.droppedFrames > 0 {
-                Text("↓ \(mpvController.droppedFrames) dropped")
-                    .foregroundStyle(.orange)
+            Text("↓ vo:\(mpvController.droppedFrames) dec:\(mpvController.decoderDroppedFrames)")
+                .foregroundStyle(
+                    mpvController.droppedFrames > 0 || mpvController.decoderDroppedFrames > 0
+                    ? .orange : .secondary
+                )
+
+            if mpvController.gyroStabEnabled {
+                Text("gyro \(String(format: "%.2f", mpvController.gyroComputeMs))ms")
+                    .foregroundStyle(.secondary)
             }
         }
         .font(.caption2.monospacedDigit())
@@ -504,6 +397,52 @@ struct PhotoDetailView: View {
         .padding(.vertical, 5)
         .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 5))
         .padding(8)
+    }
+
+    private func togglePill(label: String, active: Bool, color: Color,
+                            action: @escaping () -> Void) -> some View {
+        Text(label)
+            .font(.caption2.bold())
+            .foregroundStyle(active ? .white : .secondary)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 2)
+            .background(active ? color.opacity(0.8) : Color.secondary.opacity(0.2),
+                        in: Capsule())
+            .onTapGesture(perform: action)
+    }
+
+    private func buildGyroConfig() -> GyroConfig {
+        GyroConfig(
+            smooth:               gyroSmooth,
+            gyroOffsetMs:         gyroOffsetMs,
+            integrationMethod:    gyroIntegrationMethod,
+            imuOrientation:       gyroImuOrientation,
+            fov:                  gyroFov,
+            lensCorrectionAmount: gyroLensCorrectionAmount,
+            zoomingMethod:        gyroZoomingMethod,
+            adaptiveZoom:         gyroAdaptiveZoom,
+            maxZoom:              gyroMaxZoom,
+            maxZoomIterations:    gyroMaxZoomIterations,
+            useGravityVectors:    gyroUseGravityVectors,
+            videoSpeed:           gyroVideoSpeed,
+            horizonLockAmount:    gyroHorizonLockAmount,
+            horizonLockRoll:      gyroHorizonLockRoll,
+            perAxis:              gyroPerAxis,
+            smoothnessPitch:      gyroSmoothnessPitch,
+            smoothnessYaw:        gyroSmoothnessYaw,
+            smoothnessRoll:       gyroSmoothnessRoll
+        )
+    }
+
+    private func toggleGyroStab() {
+        if mpvController.gyroStabEnabled {
+            mpvController.stopGyroStab()
+        } else {
+            let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
+            let lens = gyroLensPath.isEmpty ? nil : gyroLensPath
+            mpvController.startGyroStab(videoPath: photo.filePath, fps: fps,
+                                        config: buildGyroConfig(), lensPath: lens)
+        }
     }
 
     private var isHLGImage: Bool { hdrFormat == .hlg }
@@ -543,7 +482,9 @@ struct PhotoDetailView: View {
 
     // MARK: - Loading
 
+    /// Load video: reset state and immediately start the player.
     private func loadVideo() async {
+        // Reset all player state from previous video
         player?.pause()
         avController.detach()
         player = nil
@@ -554,6 +495,7 @@ struct PhotoDetailView: View {
         videoHDRComposition = nil
         videoSDRComposition = nil
         useMPV = false
+        videoStarted = false
         mpvController.reset()
         mpvHideTask?.cancel()
         mpvControlsVisible = true
@@ -563,52 +505,97 @@ struct PhotoDetailView: View {
         avControlsVisible = true
         avBarOffset = .zero
         avBarDragStart = .zero
+        removeSpaceMonitor()
 
-        let path = photo.filePath
-        let bookmark = bookmarkData
-        guard let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) else { return }
+        // Start playback immediately (no thumbnail preview phase)
+        startPlayback()
+    }
 
-        // Apple DV Profile 8.4 is HLG-decoded by VideoToolbox (hdrType=.dolbyVision but
-        // actual pixels are HLG). Fall back to AVPlayer which handles Apple DV natively.
-        let mpvCanHandle = entry.hdrType != .dolbyVision
-        let preferMPV = videoPlayerPref == "libmpv" && LibMPV.shared.ok && mpvCanHandle
+    /// Load the player (paused on first frame; user presses Space to play).
+    private func startPlayback() {
+        guard !videoStarted else { return }
 
+        // Decide player type synchronously so SwiftUI shows the right view immediately.
+        let preferMPV = videoPlayerPref == "libmpv" && LibMPV.shared.ok
         if preferMPV {
-            // libmpv: all formats; colorspace configured per hdrType in MPVOpenGLLayer
             mpvController.diagnosticsEnabled = showMPVDiagBadge
             useMPV = true
-            installVideoKeyMonitor()
-            // videoHDRType still useful for badge label even in mpv mode
-            videoHDRType = entry.hdrType
-            isHDR = entry.hdrType != nil
-        } else {
-            // AVPlayer: use custom control bar
-            player = entry.player
-            videoHDRType = entry.hdrType
-            isHDR = entry.hdrType != nil
-            videoHDRComposition = entry.hdrComposition
-            videoSDRComposition = entry.sdrComposition
-            applyVideoDynamicRange()
-            avController.attach(player: entry.player)
-            installVideoKeyMonitor()
-            resetAVControlsTimer()
+        }
+        videoStarted = true
+
+        Task {
+            let path = photo.filePath
+            let bookmark = bookmarkData
+
+            if preferMPV {
+                // HDR detection for mpv (non-blocking)
+                if let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) {
+                    videoHDRType = entry.hdrType
+                    isHDR = entry.hdrType != nil
+                }
+            } else {
+                guard let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) else { return }
+                player = entry.player
+                videoHDRType = entry.hdrType
+                isHDR = entry.hdrType != nil
+                videoHDRComposition = entry.hdrComposition
+                videoSDRComposition = entry.sdrComposition
+                applyVideoDynamicRange()
+                avController.attach(player: entry.player)
+                resetAVControlsTimer()
+            }
+
+            // Install key monitor with full playback controls
+            installActiveKeyMonitor()
         }
     }
 
-    /// Installs a local key monitor for Space → play/pause.
-    /// macOS menu commands don't support bare Space, so we use NSEvent local monitor
-    /// — same approach as IINA and VLC.
-    private func installVideoKeyMonitor() {
+    /// Install key monitor with full playback controls (called after startPlayback).
+    private func installActiveKeyMonitor() {
         removeSpaceMonitor()
         let isMPV = useMPV
         let mpv   = mpvController
         let av    = avController
-        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
-            guard event.keyCode == 49,   // Space
-                  event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
-            else { return event }
-            if isMPV { mpv.togglePlayPause() } else { av.togglePlayPause() }
-            return nil
+        let gyroEnabled = gyroStabEnabled
+        let gyroCfg = buildGyroConfig()
+        let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
+        let gyroToggle: () -> Void = { [mpv, photo] in
+            if mpv.gyroStabEnabled {
+                mpv.stopGyroStab()
+            } else {
+                let fps = mpv.videoFPS > 0 ? mpv.videoFPS : 30.0
+                mpv.startGyroStab(videoPath: photo.filePath, fps: fps,
+                                  config: gyroCfg, lensPath: lens)
+            }
+        }
+        let inspectorToggle: () -> Void = { [self] in self.showInspector.toggle() }
+        var gyroLaunched = false
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [photo] event in
+            let bare = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
+            guard bare else { return event }
+            switch event.charactersIgnoringModifiers {
+            case " ":
+                // Start gyro on first play (not during preview)
+                if isMPV && gyroEnabled && !gyroLaunched && !mpv.gyroStabEnabled {
+                    gyroLaunched = true
+                    let fps = mpv.videoFPS > 0 ? mpv.videoFPS : 30.0
+                    mpv.startGyroStab(videoPath: photo.filePath, fps: fps,
+                                      config: gyroCfg, lensPath: lens)
+                }
+                if isMPV { mpv.togglePlayPause() } else { av.togglePlayPause() }
+                return nil
+            case "f":
+                NSApp.keyWindow?.toggleFullScreen(nil)
+                return nil
+            case "s":
+                gyroToggle()
+                return nil
+            case "i":
+                inspectorToggle()
+                return nil
+            default:
+                return event
+            }
         }
     }
 
