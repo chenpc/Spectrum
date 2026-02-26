@@ -7,13 +7,6 @@
 	objects = {
 
 /* Begin PBXBuildFile section */
-		AA000050 /* MPVLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000050 /* MPVLib.swift */; };
-		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
-		AA000051 /* MPVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* MPVPlayerView.swift */; };
-		AA000052 /* AVPlayerControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000052 /* AVPlayerControlBar.swift */; };
-		AA000054 /* HDRImageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000054 /* HDRImageViews.swift */; };
-		AA000055 /* MPVController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* MPVController.swift */; };
-		AA000056 /* MPVControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000056 /* MPVControlBar.swift */; };
 		8070F3122F43487D0095B967 /* SettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8070F3112F43487D0095B967 /* SettingsView.swift */; };
 		80EBB13D2F42434900D5463B /* ThumbnailCacheState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */; };
 		AA000001 /* SpectrumApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000001 /* SpectrumApp.swift */; };
@@ -21,7 +14,6 @@
 		AA000003 /* Photo.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000003 /* Photo.swift */; };
 		AA000006 /* ScannedFolder.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000006 /* ScannedFolder.swift */; };
 		AA000007 /* SidebarView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000007 /* SidebarView.swift */; };
-		AA000028 /* CacheSidebarFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000028 /* CacheSidebarFooter.swift */; };
 		AA000008 /* PhotoGridView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000008 /* PhotoGridView.swift */; };
 		AA000009 /* PhotoThumbnailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000009 /* PhotoThumbnailView.swift */; };
 		AA00000A /* TimelineSectionHeader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00000A /* TimelineSectionHeader.swift */; };
@@ -37,19 +29,40 @@
 		AA000017 /* VideoMetadataService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000018 /* VideoMetadataService.swift */; };
 		AA00001C /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = AB00001C /* Assets.xcassets */; };
 		AA00001D /* ImagePreloadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001D /* ImagePreloadCache.swift */; };
+		AA000028 /* CacheSidebarFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000028 /* CacheSidebarFooter.swift */; };
 		AA000029 /* FolderClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000029 /* FolderClipboard.swift */; };
 		AA000031 /* NetworkVolumeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000031 /* NetworkVolumeService.swift */; };
 		AA000032 /* FolderListCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000032 /* FolderListCache.swift */; };
+		AA000050 /* MPVLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000050 /* MPVLib.swift */; };
+		AA000051 /* MPVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* MPVPlayerView.swift */; };
+		AA000052 /* AVPlayerControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000052 /* AVPlayerControlBar.swift */; };
+		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
+		AA000054 /* HDRImageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000054 /* HDRImageViews.swift */; };
+		AA000055 /* MPVController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* MPVController.swift */; };
+		AA000056 /* MPVControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000056 /* MPVControlBar.swift */; };
+		AA100001 /* ImageHDRDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100001 /* ImageHDRDetectionTests.swift */; };
+		AA100002 /* VideoHDRDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100002 /* VideoHDRDetectionTests.swift */; };
+		AA100003 /* GyroConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100003 /* GyroConfigTests.swift */; };
+		AA100004 /* PhotoResolveBookmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100004 /* PhotoResolveBookmarkTests.swift */; };
+		AA100010 /* hlg_correctly_tagged.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100010 /* hlg_correctly_tagged.HIF */; };
+		AA100011 /* hlg_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100011 /* hlg_mislabeled.HIF */; };
+		AA100012 /* slog3_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100012 /* slog3_mislabeled.HIF */; };
+		AA100013 /* hlg_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100013 /* hlg_video.mp4 */; };
+		AA100014 /* sdr_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100014 /* sdr_video.mp4 */; };
+		AA100015 /* sdr_photo.jpg in Resources */ = {isa = PBXBuildFile; fileRef = AB100015 /* sdr_photo.jpg */; };
 /* End PBXBuildFile section */
 
+/* Begin PBXContainerItemProxy section */
+		B5100001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B2000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AF000001;
+			remoteInfo = Spectrum;
+		};
+/* End PBXContainerItemProxy section */
+
 /* Begin PBXFileReference section */
-		AB000050 /* MPVLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVLib.swift; sourceTree = "<group>"; };
-		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
-		AB000051 /* MPVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVPlayerView.swift; sourceTree = "<group>"; };
-		AB000052 /* AVPlayerControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerControlBar.swift; sourceTree = "<group>"; };
-		AB000054 /* HDRImageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRImageViews.swift; sourceTree = "<group>"; };
-		AB000055 /* MPVController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVController.swift; sourceTree = "<group>"; };
-		AB000056 /* MPVControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVControlBar.swift; sourceTree = "<group>"; };
 		8070F3112F43487D0095B967 /* SettingsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsView.swift; sourceTree = "<group>"; };
 		80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailCacheState.swift; sourceTree = "<group>"; };
 		AB000001 /* SpectrumApp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumApp.swift; sourceTree = "<group>"; };
@@ -57,7 +70,6 @@
 		AB000003 /* Photo.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Photo.swift; sourceTree = "<group>"; };
 		AB000006 /* ScannedFolder.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScannedFolder.swift; sourceTree = "<group>"; };
 		AB000007 /* SidebarView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarView.swift; sourceTree = "<group>"; };
-		AB000028 /* CacheSidebarFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheSidebarFooter.swift; sourceTree = "<group>"; };
 		AB000008 /* PhotoGridView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoGridView.swift; sourceTree = "<group>"; };
 		AB000009 /* PhotoThumbnailView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoThumbnailView.swift; sourceTree = "<group>"; };
 		AB00000A /* TimelineSectionHeader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = TimelineSectionHeader.swift; sourceTree = "<group>"; };
@@ -74,14 +86,41 @@
 		AB000018 /* VideoMetadataService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMetadataService.swift; sourceTree = "<group>"; };
 		AB00001C /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 		AB00001D /* ImagePreloadCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCache.swift; sourceTree = "<group>"; };
+		AB000028 /* CacheSidebarFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheSidebarFooter.swift; sourceTree = "<group>"; };
 		AB000029 /* FolderClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderClipboard.swift; sourceTree = "<group>"; };
-		AB000032 /* FolderListCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderListCache.swift; sourceTree = "<group>"; };
 		AB000031 /* NetworkVolumeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkVolumeService.swift; sourceTree = "<group>"; };
+		AB000032 /* FolderListCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderListCache.swift; sourceTree = "<group>"; };
+		AB000050 /* MPVLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVLib.swift; sourceTree = "<group>"; };
+		AB000051 /* MPVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVPlayerView.swift; sourceTree = "<group>"; };
+		AB000052 /* AVPlayerControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerControlBar.swift; sourceTree = "<group>"; };
+		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
+		AB000054 /* HDRImageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRImageViews.swift; sourceTree = "<group>"; };
+		AB000055 /* MPVController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVController.swift; sourceTree = "<group>"; };
+		AB000056 /* MPVControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVControlBar.swift; sourceTree = "<group>"; };
+		AB100001 /* ImageHDRDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageHDRDetectionTests.swift; sourceTree = "<group>"; };
+		AB100002 /* VideoHDRDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoHDRDetectionTests.swift; sourceTree = "<group>"; };
+		AB100003 /* GyroConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfigTests.swift; sourceTree = "<group>"; };
+		AB100004 /* PhotoResolveBookmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoResolveBookmarkTests.swift; sourceTree = "<group>"; };
+		AB100010 /* hlg_correctly_tagged.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_correctly_tagged.HIF; sourceTree = "<group>"; };
+		AB100011 /* hlg_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_mislabeled.HIF; sourceTree = "<group>"; };
+		AB100012 /* slog3_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = slog3_mislabeled.HIF; sourceTree = "<group>"; };
+		AB100013 /* hlg_video.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_video.mp4; sourceTree = "<group>"; };
+		AB100014 /* sdr_video.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = sdr_video.mp4; sourceTree = "<group>"; };
+		AB100015 /* sdr_photo.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = sdr_photo.jpg; sourceTree = "<group>"; };
+		AB000060 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		AC100001 /* SpectrumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpectrumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
 		AD000001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		AD100001 /* Frameworks */ = {
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
@@ -94,7 +133,9 @@
 		AE000001 = {
 			isa = PBXGroup;
 			children = (
+				AE000014 /* Config */,
 				AE000002 /* Spectrum */,
+				AE100001 /* SpectrumTests */,
 				AE000099 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -111,7 +152,7 @@
 				AE000006 /* ViewModels */,
 				AE000007 /* Extensions */,
 				AE000013 /* Resources */,
-					80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */,
+				80EBB13C2F42434900D5463B /* ThumbnailCacheState.swift */,
 			);
 			path = Spectrum;
 			sourceTree = "<group>";
@@ -212,15 +253,150 @@
 			path = Resources;
 			sourceTree = "<group>";
 		};
+		AE000014 /* Config */ = {
+			isa = PBXGroup;
+			children = (
+				AB000060 /* Shared.xcconfig */,
+			);
+			path = Config;
+			sourceTree = "<group>";
+		};
 		AE000099 /* Products */ = {
 			isa = PBXGroup;
 			children = (
 				AC000001 /* Spectrum.app */,
+				AC100001 /* SpectrumTests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
 		};
+		AE100001 /* SpectrumTests */ = {
+			isa = PBXGroup;
+			children = (
+				AB100001 /* ImageHDRDetectionTests.swift */,
+				AB100002 /* VideoHDRDetectionTests.swift */,
+				AB100003 /* GyroConfigTests.swift */,
+				AB100004 /* PhotoResolveBookmarkTests.swift */,
+				AE100002 /* Fixtures */,
+			);
+			path = SpectrumTests;
+			sourceTree = "<group>";
+		};
+		AE100002 /* Fixtures */ = {
+			isa = PBXGroup;
+			children = (
+				AB100010 /* hlg_correctly_tagged.HIF */,
+				AB100011 /* hlg_mislabeled.HIF */,
+				AB100012 /* slog3_mislabeled.HIF */,
+				AB100013 /* hlg_video.mp4 */,
+				AB100014 /* sdr_video.mp4 */,
+				AB100015 /* sdr_photo.jpg */,
+			);
+			path = Fixtures;
+			sourceTree = "<group>";
+		};
 /* End PBXGroup section */
+
+/* Begin PBXNativeTarget section */
+		AF000001 /* Spectrum */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1000001 /* Build configuration list for PBXNativeTarget "Spectrum" */;
+			buildPhases = (
+				CC000001 /* Generate App Icon */,
+				B0000001 /* Sources */,
+				AD000001 /* Frameworks */,
+				B0000002 /* Resources */,
+				DC000001 /* Bundle libmpv */,
+				DC000002 /* Bundle libgyrocore */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+			);
+			name = Spectrum;
+			productName = Spectrum;
+			productReference = AC000001 /* Spectrum.app */;
+			productType = "com.apple.product-type.application";
+		};
+		AF100001 /* SpectrumTests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = B1100001 /* Build configuration list for PBXNativeTarget "SpectrumTests" */;
+			buildPhases = (
+				B0100001 /* Sources */,
+				AD100001 /* Frameworks */,
+				B0100002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				B4100001 /* PBXTargetDependency */,
+			);
+			name = SpectrumTests;
+			productName = SpectrumTests;
+			productReference = AC100001 /* SpectrumTests.xctest */;
+			productType = "com.apple.product-type.bundle.unit-test";
+		};
+/* End PBXNativeTarget section */
+
+/* Begin PBXProject section */
+		B2000001 /* Project object */ = {
+			isa = PBXProject;
+			attributes = {
+				BuildIndependentTargetsInParallel = 1;
+				LastSwiftUpdateCheck = 1500;
+				LastUpgradeCheck = 2620;
+				TargetAttributes = {
+					AF000001 = {
+						CreatedOnToolsVersion = 15.0;
+					};
+					AF100001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = AF000001;
+					};
+				};
+			};
+			buildConfigurationList = B1000002 /* Build configuration list for PBXProject "Spectrum" */;
+			compatibilityVersion = "Xcode 14.0";
+			developmentRegion = en;
+			hasScannedForEncodings = 0;
+			knownRegions = (
+				en,
+				Base,
+			);
+			mainGroup = AE000001;
+			productRefGroup = AE000099 /* Products */;
+			projectDirPath = "";
+			projectRoot = "";
+			targets = (
+				AF000001 /* Spectrum */,
+				AF100001 /* SpectrumTests */,
+			);
+		};
+/* End PBXProject section */
+
+/* Begin PBXResourcesBuildPhase section */
+		B0000002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA00001C /* Assets.xcassets in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		B0100002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA100010 /* hlg_correctly_tagged.HIF in Resources */,
+				AA100011 /* hlg_mislabeled.HIF in Resources */,
+				AA100012 /* slog3_mislabeled.HIF in Resources */,
+				AA100013 /* hlg_video.mp4 in Resources */,
+				AA100014 /* sdr_video.mp4 in Resources */,
+				AA100015 /* sdr_photo.jpg in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+/* End PBXResourcesBuildPhase section */
 
 /* Begin PBXShellScriptBuildPhase section */
 		CC000001 /* Generate App Icon */ = {
@@ -283,71 +459,6 @@
 		};
 /* End PBXShellScriptBuildPhase section */
 
-/* Begin PBXNativeTarget section */
-		AF000001 /* Spectrum */ = {
-			isa = PBXNativeTarget;
-			buildConfigurationList = B1000001 /* Build configuration list for PBXNativeTarget "Spectrum" */;
-			buildPhases = (
-				CC000001 /* Generate App Icon */,
-				B0000001 /* Sources */,
-				AD000001 /* Frameworks */,
-				B0000002 /* Resources */,
-				DC000001 /* Bundle libmpv */,
-				DC000002 /* Bundle libgyrocore */,
-				);
-			buildRules = (
-			);
-			dependencies = (
-			);
-			name = Spectrum;
-			productName = Spectrum;
-			productReference = AC000001 /* Spectrum.app */;
-			productType = "com.apple.product-type.application";
-		};
-/* End PBXNativeTarget section */
-
-/* Begin PBXProject section */
-		B2000001 /* Project object */ = {
-			isa = PBXProject;
-			attributes = {
-				BuildIndependentTargetsInParallel = 1;
-				LastSwiftUpdateCheck = 1500;
-				LastUpgradeCheck = 2620;
-				TargetAttributes = {
-					AF000001 = {
-						CreatedOnToolsVersion = 15.0;
-					};
-				};
-			};
-			buildConfigurationList = B1000002 /* Build configuration list for PBXProject "Spectrum" */;
-			compatibilityVersion = "Xcode 14.0";
-			developmentRegion = en;
-			hasScannedForEncodings = 0;
-			knownRegions = (
-				en,
-				Base,
-			);
-			mainGroup = AE000001;
-			productRefGroup = AE000099 /* Products */;
-			projectDirPath = "";
-			projectRoot = "";
-			targets = (
-				AF000001 /* Spectrum */,
-			);
-		};
-/* End PBXProject section */
-
-/* Begin PBXResourcesBuildPhase section */
-		B0000002 /* Resources */ = {
-			isa = PBXResourcesBuildPhase;
-			buildActionMask = 2147483647;
-			files = (
-				AA00001C /* Assets.xcassets in Resources */,
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-		};
-/* End PBXResourcesBuildPhase section */
-
 /* Begin PBXSourcesBuildPhase section */
 		B0000001 /* Sources */ = {
 			isa = PBXSourcesBuildPhase;
@@ -388,11 +499,31 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		B0100001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				AA100001 /* ImageHDRDetectionTests.swift in Sources */,
+				AA100002 /* VideoHDRDetectionTests.swift in Sources */,
+				AA100003 /* GyroConfigTests.swift in Sources */,
+				AA100004 /* PhotoResolveBookmarkTests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
+
+/* Begin PBXTargetDependency section */
+		B4100001 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AF000001 /* Spectrum */;
+			targetProxy = B5100001 /* PBXContainerItemProxy */;
+		};
+/* End PBXTargetDependency section */
 
 /* Begin XCBuildConfiguration section */
 		B3000001 /* Debug */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AB000060 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -463,6 +594,7 @@
 		};
 		B3000002 /* Release */ = {
 			isa = XCBuildConfiguration;
+			baseConfigurationReference = AB000060 /* Shared.xcconfig */;
 			buildSettings = {
 				ALWAYS_SEARCH_USER_PATHS = NO;
 				ASSETCATALOG_COMPILER_GENERATE_SWIFT_ASSET_SYMBOL_EXTENSIONS = YES;
@@ -530,13 +662,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_USE_OPTIMIZATION_PROFILE = YES;
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = Spectrum/Spectrum.entitlements;
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = "";
 				EAGER_LINKING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -558,13 +689,12 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CLANG_USE_OPTIMIZATION_PROFILE = YES;
 				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = Spectrum/Spectrum.entitlements;
-				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
-				DEVELOPMENT_TEAM = "";
 				EAGER_LINKING = YES;
 				ENABLE_APP_SANDBOX = NO;
 				ENABLE_HARDENED_RUNTIME = YES;
@@ -579,6 +709,42 @@
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
+			};
+			name = Release;
+		};
+		B3100001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Spectrum.app/Contents/MacOS/Spectrum";
+			};
+			name = Debug;
+		};
+		B3100002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				BUNDLE_LOADER = "$(TEST_HOST)";
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumTests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = complete;
+				SWIFT_VERSION = 5.0;
+				TEST_HOST = "$(BUILT_PRODUCTS_DIR)/Spectrum.app/Contents/MacOS/Spectrum";
 			};
 			name = Release;
 		};
@@ -599,6 +765,15 @@
 			buildConfigurations = (
 				B3000001 /* Debug */,
 				B3000002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		B1100001 /* Build configuration list for PBXNativeTarget "SpectrumTests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				B3100001 /* Debug */,
+				B3100002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

@@ -41,3 +41,6 @@ testmpv/testmpv
 testmpv/libgyrocore_c.dylib
 testmpv/gyroserve
 testmpv/matexport
+
+# Local signing config (per-machine DEVELOPMENT_TEAM)
+Config/Local.xcconfig
