@@ -260,7 +260,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -e\nbash \"${SRCROOT}/mpv-build/xcode-bundle-mpv.sh\"\n";
+			shellScript = "# Copy pre-built dylibs into app bundle\nSRC_DIR=\"${SRCROOT}/Spectrum/Resources/lib\"\nDST_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nmkdir -p \"$DST_DIR\"\nfor f in \"$SRC_DIR\"/*.dylib; do\n    [ -f \"$f\" ] || continue\n    cp -f \"$f\" \"$DST_DIR/\"\ndone\necho \"Bundled $(ls -1 \"$DST_DIR\"/*.dylib 2>/dev/null | wc -l | tr -d ' ') dylibs\"\n";
 		};
 		DC000002 /* Bundle libgyrocore */ = {
 			isa = PBXShellScriptBuildPhase;

@@ -14,10 +14,10 @@ rm -rf "$BUILD_DIR"
 rm -f "$DMG_OUTPUT"
 mkdir -p "$BUILD_DIR"
 
-# Build libmpv from source if not already built
+# Download pre-built dylibs if not present
 if [ ! -f "$SCRIPT_DIR/Spectrum/Resources/lib/libmpv.dylib" ]; then
-    echo "==> Building libmpv from source..."
-    "$SCRIPT_DIR/mpv-build/build-all.sh"
+    echo "==> Downloading pre-built dependencies..."
+    "$SCRIPT_DIR/download_libs.sh"
 fi
 
 echo "==> Building Release (incremental, $(sysctl -n hw.logicalcpu) jobs)..."
