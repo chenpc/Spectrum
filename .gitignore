@@ -33,3 +33,11 @@ gyro-wrapper/target/
 # Pre-built dylibs and headers (downloaded by download_libs.sh)
 Spectrum/Resources/lib/
 mpv-build/deps/
+
+# testimg / testmpv build artifacts
+testimg/testimg
+testimg/*.o
+testmpv/testmpv
+testmpv/libgyrocore_c.dylib
+testmpv/gyroserve
+testmpv/matexport
