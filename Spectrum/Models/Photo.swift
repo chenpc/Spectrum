@@ -61,6 +61,9 @@ final class Photo {
     var videoCodec: String?
     var audioCodec: String?
 
+    /// Per-video gyro config override (JSON-encoded GyroConfig). nil = use global settings.
+    var gyroConfigJson: String?
+
     // Relationships
     var folder: ScannedFolder?
 

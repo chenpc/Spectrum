@@ -193,7 +193,14 @@ final class GyroCore: @unchecked Sendable {
         } catch {
             configJSON = "{}"
         }
-        print("[gyro] 載入 \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  config=\(configJSON)")
+        do {
+            let enc = JSONEncoder()
+            enc.outputFormatting = [.prettyPrinted, .sortedKeys]
+            let pretty = String(data: try enc.encode(config), encoding: .utf8) ?? "{}"
+            print("[gyro] 載入 \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)\n[gyro] config:\n\(pretty)")
+        } catch {
+            print("[gyro] 載入 \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  config=\(configJSON)")
+        }
         let handle: UnsafeMutableRawPointer?
         if let lp = lensPath {
             handle = videoPath.withCString { vp in lp.withCString { lpp in configJSON.withCString { cj in fn(vp, lpp, cj) } } }

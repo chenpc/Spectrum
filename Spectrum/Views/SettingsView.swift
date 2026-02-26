@@ -61,6 +61,14 @@ private struct PlaybackSettingsTab: View {
     @AppStorage("mpvAVSync") private var mpvAVSync: Bool = true
     @AppStorage("mpvFrameDrop") private var mpvFrameDrop: Bool = true
 
+    // Per-type player overrides
+    @AppStorage("playerForSDR") private var playerForSDR: String = "default"
+    @AppStorage("playerForHLG") private var playerForHLG: String = "default"
+    @AppStorage("playerForHDR10") private var playerForHDR10: String = "default"
+    @AppStorage("playerForDolbyVision") private var playerForDV: String = "default"
+    @AppStorage("playerForSLog2") private var playerForSLog2: String = "default"
+    @AppStorage("playerForSLog3") private var playerForSLog3: String = "default"
+
     var body: some View {
         Form {
             Section("Video Decoder") {
@@ -77,6 +85,18 @@ private struct PlaybackSettingsTab: View {
             }
 
             if LibMPV.shared.ok {
+                Section("Per-Type Player") {
+                    perTypePicker("SDR", selection: $playerForSDR)
+                    perTypePicker("HLG", selection: $playerForHLG)
+                    perTypePicker("HDR10", selection: $playerForHDR10)
+                    perTypePicker("Dolby Vision", selection: $playerForDV)
+                    perTypePicker("S-Log2", selection: $playerForSLog2)
+                    perTypePicker("S-Log3", selection: $playerForSLog3)
+                    Text("Default = 使用上方全域 Decoder 設定")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+
                 Section("Hardware Decode") {
                     Picker("hwdec", selection: $mpvHwdec) {
                         Text("auto").tag("auto")
@@ -105,6 +125,14 @@ private struct PlaybackSettingsTab: View {
             }
         }
         .formStyle(.grouped)
+    }
+
+    private func perTypePicker(_ label: String, selection: Binding<String>) -> some View {
+        Picker(label, selection: selection) {
+            Text("Default").tag("default")
+            Text("libmpv").tag("libmpv")
+            Text("AVPlayer").tag("avplayer")
+        }
     }
 }
 

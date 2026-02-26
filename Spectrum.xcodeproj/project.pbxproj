@@ -260,7 +260,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -e\n\nLIB_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nDEST=\"$LIB_DIR/libmpv.dylib\"\n\nmkdir -p \"$LIB_DIR\"\n\n# Copy libmpv if not already present\nif [ ! -f \"$DEST\" ]; then\n  # 1. Source tree Spectrum/Resources/lib/\n  SOURCE=\"${SRCROOT}/Spectrum/Resources/lib/libmpv.dylib\"\n  if [ -f \"$SOURCE\" ]; then\n    cp \"$SOURCE\" \"$DEST\"\n    echo \"note: Bundled libmpv from source tree\"\n  else\n    # 2. IINA.app\n    IINA_DIR=\"/Applications/IINA.app/Contents/Frameworks\"\n    COPIED=0\n    for NAME in libmpv.dylib libmpv.2.dylib; do\n      if [ -f \"$IINA_DIR/$NAME\" ]; then\n        cp \"$IINA_DIR/$NAME\" \"$DEST\"\n        echo \"note: Bundled $NAME from IINA.app\"\n        COPIED=1\n        break\n      fi\n    done\n    if [ \"$COPIED\" -eq 0 ]; then\n      echo \"warning: libmpv.dylib not found. Place it in Spectrum/Resources/lib/ or install IINA. mpv player will be unavailable.\"\n      exit 0\n    fi\n  fi\nfi\n\n# Add IINA Frameworks as LC_RPATH so @rpath deps (libass, libavcodec, etc.) resolve at runtime\nIINA_FW=\"/Applications/IINA.app/Contents/Frameworks\"\nif [ -d \"$IINA_FW\" ]; then\n  if ! otool -l \"$DEST\" 2>/dev/null | grep -q \"path $IINA_FW \"; then\n    install_name_tool -add_rpath \"$IINA_FW\" \"$DEST\" 2>/dev/null || true\n    echo \"note: Added IINA Frameworks rpath to bundled libmpv\"\n  fi\nfi\n\n# Re-sign ad-hoc after any modification (disable-library-validation entitlement in effect)\ncodesign --force --sign - \"$DEST\" 2>/dev/null || true\n";
+			shellScript = "set -e\nbash \"${SRCROOT}/mpv-build/xcode-bundle-mpv.sh\"\n";
 		};
 		DC000002 /* Bundle libgyrocore */ = {
 			isa = PBXShellScriptBuildPhase;
@@ -530,6 +530,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = Spectrum/Spectrum.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;
@@ -557,6 +558,7 @@
 			isa = XCBuildConfiguration;
 			buildSettings = {
 				ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon;
+				CODE_SIGN_ALLOW_ENTITLEMENTS_MODIFICATION = YES;
 				CODE_SIGN_ENTITLEMENTS = Spectrum/Spectrum.entitlements;
 				CODE_SIGN_STYLE = Automatic;
 				COMBINE_HIDPI_IMAGES = YES;

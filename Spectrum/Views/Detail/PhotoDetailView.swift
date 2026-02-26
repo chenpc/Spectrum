@@ -37,6 +37,12 @@ struct PhotoDetailView: View {
     @State private var spaceKeyMonitor: Any?
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
     @AppStorage("videoPlayer") private var videoPlayerPref: String = "libmpv"
+    @AppStorage("playerForSDR") private var playerForSDR: String = "default"
+    @AppStorage("playerForHLG") private var playerForHLG: String = "default"
+    @AppStorage("playerForHDR10") private var playerForHDR10: String = "default"
+    @AppStorage("playerForDolbyVision") private var playerForDV: String = "default"
+    @AppStorage("playerForSLog2") private var playerForSLog2: String = "default"
+    @AppStorage("playerForSLog3") private var playerForSLog3: String = "default"
     @AppStorage("gyroStabEnabled") private var gyroStabEnabled: Bool = true
     @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
     @AppStorage("gyroOffsetMs") private var gyroOffsetMs: Double = 0
@@ -79,6 +85,14 @@ struct PhotoDetailView: View {
         }
         .onChange(of: showMPVDiagBadge) { _, enabled in
             mpvController.diagnosticsEnabled = enabled
+        }
+        .onChange(of: photo.gyroConfigJson) { _, _ in
+            guard useMPV, mpvController.gyroStabEnabled else { return }
+            mpvController.stopGyroStab()
+            let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
+            let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
+            mpvController.startGyroStab(videoPath: photo.filePath, fps: fps,
+                                        config: buildGyroConfig(), lensPath: lens)
         }
         .onDisappear {
             removeSpaceMonitor()
@@ -412,7 +426,14 @@ struct PhotoDetailView: View {
     }
 
     private func buildGyroConfig() -> GyroConfig {
-        GyroConfig(
+        // Per-video override takes priority
+        if let json = photo.gyroConfigJson,
+           let data = json.data(using: .utf8),
+           let config = try? JSONDecoder().decode(GyroConfig.self, from: data) {
+            return config
+        }
+        // Fallback to global settings
+        return GyroConfig(
             smooth:               gyroSmooth,
             gyroOffsetMs:         gyroOffsetMs,
             integrationMethod:    gyroIntegrationMethod,
@@ -511,33 +532,48 @@ struct PhotoDetailView: View {
         startPlayback()
     }
 
+    /// Resolve per-type player preference: returns `"libmpv"` or `"avplayer"`.
+    private func resolvedPlayer(for hdrType: VideoHDRType?) -> String {
+        let perType: String
+        if let hdrType {
+            switch hdrType {
+            case .hlg:          perType = playerForHLG
+            case .hdr10:        perType = playerForHDR10
+            case .dolbyVision:  perType = playerForDV
+            case .slog2:        perType = playerForSLog2
+            case .slog3:        perType = playerForSLog3
+            }
+        } else {
+            perType = playerForSDR
+        }
+        return perType == "default" ? videoPlayerPref : perType
+    }
+
     /// Load the player (paused on first frame; user presses Space to play).
     private func startPlayback() {
         guard !videoStarted else { return }
-
-        // Decide player type synchronously so SwiftUI shows the right view immediately.
-        let preferMPV = videoPlayerPref == "libmpv" && LibMPV.shared.ok
-        if preferMPV {
-            mpvController.diagnosticsEnabled = showMPVDiagBadge
-            useMPV = true
-        }
         videoStarted = true
 
         Task {
             let path = photo.filePath
             let bookmark = bookmarkData
 
+            // 1. Lightweight HDR type detection (~50ms, no AVPlayer created)
+            let detectedType = await ImagePreloadCache.detectVideoHDRType(path: path, bookmarkData: bookmark)
+            videoHDRType = detectedType
+            isHDR = detectedType != nil
+
+            // 2. Resolve which player to use based on per-type setting
+            let resolved = resolvedPlayer(for: detectedType)
+            let preferMPV = resolved == "libmpv" && LibMPV.shared.ok
+
             if preferMPV {
-                // HDR detection for mpv (non-blocking)
-                if let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) {
-                    videoHDRType = entry.hdrType
-                    isHDR = entry.hdrType != nil
-                }
+                mpvController.diagnosticsEnabled = showMPVDiagBadge
+                useMPV = true
             } else {
+                // AVPlayer path: full load (creates player + compositions)
                 guard let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) else { return }
                 player = entry.player
-                videoHDRType = entry.hdrType
-                isHDR = entry.hdrType != nil
                 videoHDRComposition = entry.hdrComposition
                 videoSDRComposition = entry.sdrComposition
                 applyVideoDynamicRange()

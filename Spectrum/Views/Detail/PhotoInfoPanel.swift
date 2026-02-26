@@ -4,7 +4,38 @@ struct PhotoInfoPanel: View {
     @Bindable var photo: Photo
     var isHDR: Bool = false
 
+    @State private var selectedTab: InspectorTab = .info
+
+    private enum InspectorTab: Hashable {
+        case info, gyro
+    }
+
     var body: some View {
+        if photo.isVideo {
+            VStack(spacing: 0) {
+                Picker("", selection: $selectedTab) {
+                    Text("Info").tag(InspectorTab.info)
+                    Text("Gyro").tag(InspectorTab.gyro)
+                }
+                .pickerStyle(.segmented)
+                .padding(.horizontal, 12)
+                .padding(.vertical, 8)
+
+                switch selectedTab {
+                case .info:
+                    infoForm
+                case .gyro:
+                    GyroConfigSection(photo: photo)
+                }
+            }
+            .frame(minWidth: 250)
+        } else {
+            infoForm
+                .frame(minWidth: 250)
+        }
+    }
+
+    private var infoForm: some View {
         Form {
             fileSection
             if photo.isVideo {
@@ -18,7 +49,6 @@ struct PhotoInfoPanel: View {
             locationSection
         }
         .formStyle(.grouped)
-        .frame(minWidth: 250)
     }
 
     // MARK: - Sections
@@ -286,6 +316,220 @@ struct PhotoInfoPanel: View {
         case 1: return "Low"
         case 2: return "High"
         default: return "Unknown (\(value))"
+        }
+    }
+}
+
+// MARK: - Per-Video Gyro Config
+
+private struct GyroConfigSection: View {
+    @Bindable var photo: Photo
+
+    // Global settings (read-only, for "Copy from Global" and display)
+    @AppStorage("gyroSmooth") private var globalSmooth: Double = 0.5
+    @AppStorage("gyroOffsetMs") private var globalOffsetMs: Double = 0
+    @AppStorage("gyroIntegrationMethod") private var globalIntegrationMethod: Int = 2
+    @AppStorage("gyroImuOrientation") private var globalImuOrientation: String = "YXz"
+    @AppStorage("gyroFov") private var globalFov: Double = 1.0
+    @AppStorage("gyroLensCorrectionAmount") private var globalLensCorrectionAmount: Double = 1.0
+    @AppStorage("gyroZoomingMethod") private var globalZoomingMethod: Int = 1
+    @AppStorage("gyroAdaptiveZoom") private var globalAdaptiveZoom: Double = 4.0
+    @AppStorage("gyroMaxZoom") private var globalMaxZoom: Double = 130.0
+    @AppStorage("gyroMaxZoomIterations") private var globalMaxZoomIterations: Int = 5
+    @AppStorage("gyroUseGravityVectors") private var globalUseGravityVectors: Bool = false
+    @AppStorage("gyroVideoSpeed") private var globalVideoSpeed: Double = 1.0
+    @AppStorage("gyroHorizonLockAmount") private var globalHorizonLockAmount: Double = 0
+    @AppStorage("gyroHorizonLockRoll") private var globalHorizonLockRoll: Double = 0
+    @AppStorage("gyroPerAxis") private var globalPerAxis: Bool = false
+    @AppStorage("gyroSmoothnessPitch") private var globalSmoothnessPitch: Double = 0
+    @AppStorage("gyroSmoothnessYaw") private var globalSmoothnessYaw: Double = 0
+    @AppStorage("gyroSmoothnessRoll") private var globalSmoothnessRoll: Double = 0
+
+    @State private var config = GyroConfig()
+
+    private var hasCustom: Bool { photo.gyroConfigJson != nil }
+
+    @State private var dirty = false
+
+    var body: some View {
+        Form {
+            Section {
+                Toggle("Custom Gyro Config", isOn: Binding(
+                    get: { hasCustom },
+                    set: { on in
+                        if on {
+                            config = globalConfig()
+                            save()
+                        } else {
+                            photo.gyroConfigJson = nil
+                            dirty = false
+                        }
+                    }
+                ))
+
+                if !hasCustom {
+                    Text("使用全域設定")
+                        .foregroundStyle(.secondary)
+                        .font(.caption)
+                }
+            }
+
+            if hasCustom {
+                Section {
+                    Button("Apply") {
+                        save()
+                        dirty = false
+                    }
+                    .disabled(!dirty)
+
+                    HStack {
+                        Button("Copy from Global") {
+                            config = globalConfig()
+                            dirty = true
+                        }
+                        Button("Reset to Global") {
+                            photo.gyroConfigJson = nil
+                            dirty = false
+                        }
+                    }
+                    .font(.caption)
+                }
+
+                Section("Smoothing") {
+                    sliderRow("Smoothness", value: binding(\.smooth), range: 0.01...1.0, step: 0.01)
+
+                    Toggle("Per-axis smoothing", isOn: binding(\.perAxis))
+
+                    if config.perAxis {
+                        sliderRow("Pitch", value: binding(\.smoothnessPitch), range: 0...1.0, step: 0.01)
+                        sliderRow("Yaw", value: binding(\.smoothnessYaw), range: 0...1.0, step: 0.01)
+                        sliderRow("Roll", value: binding(\.smoothnessRoll), range: 0...1.0, step: 0.01)
+                    }
+                }
+
+                Section("Sync & Lens") {
+                    HStack {
+                        Text("Gyro Offset (ms)")
+                        Spacer()
+                        TextField("", value: binding(\.gyroOffsetMs), format: .number)
+                            .frame(width: 80)
+                            .multilineTextAlignment(.trailing)
+                    }
+                }
+
+                Section("IMU") {
+                    Picker("Integration", selection: binding(\.integrationMethod)) {
+                        Text("Complementary").tag(0)
+                        Text("Complementary2").tag(1)
+                        Text("VQF").tag(2)
+                    }
+
+                    HStack {
+                        Text("IMU Orientation")
+                        Spacer()
+                        TextField("", text: binding(\.imuOrientation))
+                            .frame(width: 80)
+                            .multilineTextAlignment(.trailing)
+                    }
+
+                    Toggle("Use gravity vectors", isOn: binding(\.useGravityVectors))
+                }
+
+                Section("Stabilization") {
+                    sliderRow("FOV", value: binding(\.fov), range: 0.1...2.0, step: 0.01)
+                    sliderRow("Lens Correction", value: binding(\.lensCorrectionAmount), range: 0...1.0, step: 0.01)
+
+                    Picker("Zooming Method", selection: binding(\.zoomingMethod)) {
+                        Text("None").tag(0)
+                        Text("Envelope Follower").tag(1)
+                    }
+
+                    if config.zoomingMethod == 1 {
+                        sliderRow("Adaptive Zoom (s)", value: binding(\.adaptiveZoom), range: 0.1...15.0, step: 0.1)
+                    }
+
+                    sliderRow("Max Zoom (%)", value: binding(\.maxZoom), range: 100...300, step: 1)
+
+                    Stepper("Max Zoom Iterations: \(config.maxZoomIterations)",
+                            value: binding(\.maxZoomIterations), in: 1...20)
+                }
+
+                Section("Horizon Lock") {
+                    sliderRow("Lock Amount", value: binding(\.horizonLockAmount), range: 0...1.0, step: 0.01)
+                    sliderRow("Roll (°)", value: binding(\.horizonLockRoll), range: -180...180, step: 0.1)
+                }
+
+                Section("Video Speed") {
+                    sliderRow("Speed", value: binding(\.videoSpeed), range: 0.1...4.0, step: 0.1)
+                }
+            }
+        }
+        .formStyle(.grouped)
+        .onAppear { load() }
+    }
+
+    // MARK: - Helpers
+
+    private func globalConfig() -> GyroConfig {
+        GyroConfig(
+            smooth: globalSmooth,
+            gyroOffsetMs: globalOffsetMs,
+            integrationMethod: globalIntegrationMethod,
+            imuOrientation: globalImuOrientation,
+            fov: globalFov,
+            lensCorrectionAmount: globalLensCorrectionAmount,
+            zoomingMethod: globalZoomingMethod,
+            adaptiveZoom: globalAdaptiveZoom,
+            maxZoom: globalMaxZoom,
+            maxZoomIterations: globalMaxZoomIterations,
+            useGravityVectors: globalUseGravityVectors,
+            videoSpeed: globalVideoSpeed,
+            horizonLockAmount: globalHorizonLockAmount,
+            horizonLockRoll: globalHorizonLockRoll,
+            perAxis: globalPerAxis,
+            smoothnessPitch: globalSmoothnessPitch,
+            smoothnessYaw: globalSmoothnessYaw,
+            smoothnessRoll: globalSmoothnessRoll
+        )
+    }
+
+    private func load() {
+        guard let json = photo.gyroConfigJson,
+              let data = json.data(using: .utf8),
+              let decoded = try? JSONDecoder().decode(GyroConfig.self, from: data)
+        else { return }
+        config = decoded
+    }
+
+    private func save() {
+        guard let data = try? JSONEncoder().encode(config) else { return }
+        photo.gyroConfigJson = String(data: data, encoding: .utf8)
+    }
+
+    /// Two-way binding to a GyroConfig property. Only updates local state; user must press Apply.
+    private func binding<T>(_ keyPath: WritableKeyPath<GyroConfig, T>) -> Binding<T> {
+        Binding(
+            get: { config[keyPath: keyPath] },
+            set: { newValue in
+                config[keyPath: keyPath] = newValue
+                dirty = true
+            }
+        )
+    }
+
+    private func sliderRow(_ label: String, value: Binding<Double>,
+                           range: ClosedRange<Double>, step: Double) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Text(label)
+                Spacer()
+                Text(step >= 1 ? String(format: "%.0f", value.wrappedValue)
+                     : step >= 0.1 ? String(format: "%.1f", value.wrappedValue)
+                     : String(format: "%.2f", value.wrappedValue))
+                    .foregroundStyle(.secondary)
+                    .monospacedDigit()
+            }
+            Slider(value: value, in: range, step: step)
         }
     }
 }

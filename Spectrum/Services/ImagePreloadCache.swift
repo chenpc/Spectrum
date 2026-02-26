@@ -15,10 +15,26 @@ enum HDRFormat {
 
 // MARK: - Cache entry types
 
-enum VideoHDRType: String {
+enum VideoHDRType: String, CaseIterable {
     case dolbyVision = "Dolby Vision"
     case hlg = "HLG"
     case hdr10 = "HDR10"
+    case slog2 = "S-Log2"
+    case slog3 = "S-Log3"
+
+    /// AppStorage key for per-type player override
+    var playerStorageKey: String {
+        switch self {
+        case .dolbyVision: return "playerForDolbyVision"
+        case .hlg:         return "playerForHLG"
+        case .hdr10:       return "playerForHDR10"
+        case .slog2:       return "playerForSLog2"
+        case .slog3:       return "playerForSLog3"
+        }
+    }
+
+    /// The key used for SDR videos (no HDR type detected)
+    static let sdrPlayerStorageKey = "playerForSDR"
 }
 
 struct CachedImageEntry: @unchecked Sendable {
@@ -133,6 +149,56 @@ enum ImagePreloadCache {
 
         let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
         return CachedVideoEntry(player: player, hdrType: hdrType, hdrComposition: hdrComposition, sdrComposition: sdrComposition)
+    }
+
+    // MARK: - Lightweight HDR type detection (no AVPlayer created)
+
+    static func detectVideoHDRType(
+        path: String,
+        bookmarkData: Data?
+    ) async -> VideoHDRType? {
+        let url = URL(fileURLWithPath: path)
+
+        var scopeURL: URL?
+        var didStart = false
+        if let bookmarkData,
+           let folderURL = try? BookmarkService.resolveBookmark(bookmarkData) {
+            scopeURL = folderURL
+            didStart = folderURL.startAccessingSecurityScopedResource()
+        }
+        defer {
+            if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
+        }
+
+        let asset = AVURLAsset(url: url)
+        guard let videoTracks = try? await asset.loadTracks(withMediaType: .video),
+              let track = videoTracks.first,
+              let descriptions = try? await track.load(.formatDescriptions) else {
+            return nil
+        }
+
+        for desc in descriptions {
+            let codecType = CMFormatDescriptionGetMediaSubType(desc)
+            if codecType == kCMVideoCodecType_DolbyVisionHEVC {
+                return .dolbyVision
+            }
+
+            guard let extensions = CMFormatDescriptionGetExtensions(desc) as? [String: Any] else { continue }
+
+            if let atoms = extensions[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] as? [String: Any],
+               atoms["dvcC"] != nil || atoms["dvvC"] != nil {
+                return .dolbyVision
+            }
+
+            if let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String {
+                if transfer == (kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String) {
+                    return .hlg
+                } else if transfer == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) {
+                    return .hdr10
+                }
+            }
+        }
+        return nil
     }
 
     // MARK: - Image loading
