@@ -29,3 +29,7 @@ Spectrum/Assets.xcassets/AppIcon.appiconset/icon_*.png
 
 # Rust build artifacts
 gyro-wrapper/target/
+
+# Pre-built dylibs and headers (downloaded by download_libs.sh)
+Spectrum/Resources/lib/
+mpv-build/deps/
