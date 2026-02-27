@@ -36,13 +36,12 @@ struct PhotoDetailView: View {
     // Shared
     @State private var spaceKeyMonitor: Any?
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
-    @AppStorage("videoPlayer") private var videoPlayerPref: String = "libmpv"
-    @AppStorage("playerForSDR") private var playerForSDR: String = "default"
-    @AppStorage("playerForHLG") private var playerForHLG: String = "default"
-    @AppStorage("playerForHDR10") private var playerForHDR10: String = "default"
-    @AppStorage("playerForDolbyVision") private var playerForDV: String = "default"
-    @AppStorage("playerForSLog2") private var playerForSLog2: String = "default"
-    @AppStorage("playerForSLog3") private var playerForSLog3: String = "default"
+    @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
+    @AppStorage("playerForHLG") private var playerForHLG: String = "libmpv"
+    @AppStorage("playerForHDR10") private var playerForHDR10: String = "libmpv"
+    @AppStorage("playerForDolbyVision") private var playerForDV: String = "avplayer"
+    @AppStorage("playerForSLog2") private var playerForSLog2: String = "libmpv"
+    @AppStorage("playerForSLog3") private var playerForSLog3: String = "libmpv"
     @AppStorage("gyroStabEnabled") private var gyroStabEnabled: Bool = true
     @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
     @AppStorage("gyroOffsetMs") private var gyroOffsetMs: Double = 0
@@ -534,19 +533,14 @@ struct PhotoDetailView: View {
 
     /// Resolve per-type player preference: returns `"libmpv"` or `"avplayer"`.
     private func resolvedPlayer(for hdrType: VideoHDRType?) -> String {
-        let perType: String
-        if let hdrType {
-            switch hdrType {
-            case .hlg:          perType = playerForHLG
-            case .hdr10:        perType = playerForHDR10
-            case .dolbyVision:  perType = playerForDV
-            case .slog2:        perType = playerForSLog2
-            case .slog3:        perType = playerForSLog3
-            }
-        } else {
-            perType = playerForSDR
+        switch hdrType {
+        case .hlg:          return playerForHLG
+        case .hdr10:        return playerForHDR10
+        case .dolbyVision:  return playerForDV
+        case .slog2:        return playerForSLog2
+        case .slog3:        return playerForSLog3
+        case nil:           return playerForSDR
         }
-        return perType == "default" ? videoPlayerPref : perType
     }
 
     /// Load the player (paused on first frame; user presses Space to play).
@@ -570,6 +564,16 @@ struct PhotoDetailView: View {
             if preferMPV {
                 mpvController.diagnosticsEnabled = showMPVDiagBadge
                 useMPV = true
+                // Start gyro loading immediately (in parallel with SwiftUI creating
+                // the MPVPlayerView). By the time the user presses Space, gyro will
+                // already be ready. Previously gyro only started on first Space press,
+                // which had a one-shot gyroLaunched flag that prevented retries on failure.
+                if gyroStabEnabled && GyroCore.dylibFound {
+                    let cfg = buildGyroConfig()
+                    let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
+                    mpvController.startGyroStab(videoPath: path, fps: 30,
+                                                config: cfg, lensPath: lens)
+                }
             } else {
                 // AVPlayer path: full load (creates player + compositions)
                 guard let entry = await ImagePreloadCache.loadVideoEntry(path: path, bookmarkData: bookmark) else { return }
@@ -592,7 +596,6 @@ struct PhotoDetailView: View {
         let isMPV = useMPV
         let mpv   = mpvController
         let av    = avController
-        let gyroEnabled = gyroStabEnabled
         let gyroCfg = buildGyroConfig()
         let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
         let gyroToggle: () -> Void = { [mpv, photo] in
@@ -605,19 +608,12 @@ struct PhotoDetailView: View {
             }
         }
         let inspectorToggle: () -> Void = { [self] in self.showInspector.toggle() }
-        var gyroLaunched = false
-        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [photo] event in
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let bare = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
             guard bare else { return event }
             switch event.charactersIgnoringModifiers {
             case " ":
-                // Start gyro on first play (not during preview)
-                if isMPV && gyroEnabled && !gyroLaunched && !mpv.gyroStabEnabled {
-                    gyroLaunched = true
-                    let fps = mpv.videoFPS > 0 ? mpv.videoFPS : 30.0
-                    mpv.startGyroStab(videoPath: photo.filePath, fps: fps,
-                                      config: gyroCfg, lensPath: lens)
-                }
+                // Gyro is started early in startPlayback() — Space only toggles play/pause.
                 if isMPV { mpv.togglePlayPause() } else { av.togglePlayPause() }
                 return nil
             case "f":
@@ -671,19 +667,17 @@ struct PhotoDetailView: View {
     private func loadFullImage() async {
         zoomLevel = 1.0
         showHDR = true
-        image = nil
         isHDR = false
         hdrFormat = nil
         hlgCGImage = nil
 
         let path = photo.filePath
 
-        let thumbBookmark = bookmarkData
-        if let thumb = await ThumbnailService.shared.thumbnail(for: path, bookmarkData: thumbBookmark),
-           image == nil {
-            image = thumb
-        }
+        // Use cached thumbnail immediately (nonisolated, no actor wait) to avoid
+        // black screen when the ThumbnailService actor is busy generating grid thumbnails.
+        image = ThumbnailService.shared.cachedThumbnail(for: path)
 
+        // Load full image directly — skip actor-bound thumbnail generation
         let bookmark = bookmarkData
         let entry = await ImagePreloadCache.loadImageEntry(path: path, bookmarkData: bookmark)
 

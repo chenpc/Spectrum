@@ -139,6 +139,17 @@ final class GyroCore: @unchecked Sendable {
         return 20.0
     }
 
+    deinit {
+        // Safety net: if stop() was never called (e.g. onError path sets
+        // activeGyroCore = nil without calling stop()), clean up resources.
+        if coreHandle != nil || libHandle != nil {
+            if let handle = coreHandle, let fn = fnFree { fn(handle) }
+            coreHandle = nil
+            if let lib = libHandle { dlclose(lib) }
+            libHandle = nil
+        }
+    }
+
     // ── 載入 dylib 並在背景執行 gyrocore_load ─────────────────────────────────
 
     func start(videoPath: String,

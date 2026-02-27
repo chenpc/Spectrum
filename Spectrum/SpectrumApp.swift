@@ -19,6 +19,7 @@ struct SpectrumApp: App {
             FileCommands()
             PhotoNavigationCommands()
             FolderEditCommands()
+            DeleteCommands()
             MpvPlaybackCommands()
         }
 
@@ -101,6 +102,21 @@ struct PhotoNavigationCommands: Commands {
             }
             .keyboardShortcut(.return, modifiers: [])
             .disabled(navigation == nil)
+        }
+    }
+}
+
+struct DeleteCommands: Commands {
+    @FocusedValue(\.deletePhotoAction) var deletePhoto
+
+    var body: some Commands {
+        CommandGroup(after: .pasteboard) {
+            Divider()
+            Button("Move to Trash") {
+                deletePhoto?()
+            }
+            .keyboardShortcut(.delete, modifiers: [])
+            .disabled(deletePhoto == nil)
         }
     }
 }

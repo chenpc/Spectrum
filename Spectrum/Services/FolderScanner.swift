@@ -1,6 +1,7 @@
 import SwiftData
 import Foundation
 import ImageIO
+import os
 
 @ModelActor
 actor FolderScanner {
@@ -22,8 +23,15 @@ actor FolderScanner {
     /// - `clearAll`: if true, delete ALL photos for this folder first (used on app launch)
     func scanFolder(id: PersistentIdentifier, subPath: String? = nil, clearAll: Bool = false) async throws {
         guard let folder = modelContext.model(for: id) as? ScannedFolder else { return }
-        guard let bookmarkData = folder.bookmarkData,
-              let rootURL = try? BookmarkService.resolveBookmark(bookmarkData) else { return }
+        guard let bookmarkData = folder.bookmarkData else { return }
+
+        let rootURL: URL
+        do {
+            rootURL = try BookmarkService.resolveBookmark(bookmarkData)
+        } catch {
+            Log.bookmark.warning("Failed to resolve bookmark for folder \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return
+        }
 
         let rootPath = rootURL.path
         let targetURL = subPath.map { childURL(rootURL: rootURL, rootPath: rootPath, childPath: $0) } ?? rootURL
@@ -35,20 +43,36 @@ actor FolderScanner {
             // Delete all photos belonging to this folder
             let folderPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
             let descriptor = FetchDescriptor<Photo>()
-            let allPhotos = (try? modelContext.fetch(descriptor)) ?? []
+            let allPhotos: [Photo]
+            do {
+                allPhotos = try modelContext.fetch(descriptor)
+            } catch {
+                Log.scanner.warning("Failed to fetch photos for clearAll: \(error.localizedDescription, privacy: .public)")
+                allPhotos = []
+            }
             for photo in allPhotos where photo.filePath.hasPrefix(folderPrefix) || photo.filePath == rootPath {
                 modelContext.delete(photo)
             }
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                Log.scanner.warning("Failed to save after clearAll: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         // Collect media URLs — one level only
         let fm = FileManager.default
-        guard let contents = try? fm.contentsOfDirectory(
-            at: targetURL,
-            includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
-            options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return }
+        let contents: [URL]
+        do {
+            contents = try fm.contentsOfDirectory(
+                at: targetURL,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey, .contentModificationDateKey],
+                options: [.skipsHiddenFiles, .skipsPackageDescendants]
+            )
+        } catch {
+            Log.scanner.warning("Failed to list directory \(targetURL.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return
+        }
 
         // All media paths at this level (used for delta removal later)
         let allDiskMediaPaths = Set(contents.filter { $0.isMediaFile }.map(\.path))
@@ -56,7 +80,13 @@ actor FolderScanner {
         // Skip duplicates already in DB
         let existingPaths: Set<String> = {
             let descriptor = FetchDescriptor<Photo>()
-            let photos = (try? modelContext.fetch(descriptor)) ?? []
+            let photos: [Photo]
+            do {
+                photos = try modelContext.fetch(descriptor)
+            } catch {
+                Log.scanner.warning("Failed to fetch existing photos: \(error.localizedDescription, privacy: .public)")
+                photos = []
+            }
             return Set(photos.map(\.filePath))
         }()
 
@@ -147,20 +177,34 @@ actor FolderScanner {
             batch.append(photo)
 
             if batch.count >= batchSize {
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    Log.scanner.warning("Failed to save batch: \(error.localizedDescription, privacy: .public)")
+                }
                 batch.removeAll(keepingCapacity: true)
             }
         }
 
         if !batch.isEmpty {
-            try? modelContext.save()
+            do {
+                try modelContext.save()
+            } catch {
+                Log.scanner.warning("Failed to save final batch: \(error.localizedDescription, privacy: .public)")
+            }
         }
 
         // Delta removal: when not doing a full clear, remove DB entries for files
         // that existed at this level in the previous scan but are no longer on disk.
         if !clearAll {
             let levelPrefix = targetURL.path + "/"
-            let allDbPhotos = (try? modelContext.fetch(FetchDescriptor<Photo>())) ?? []
+            let allDbPhotos: [Photo]
+            do {
+                allDbPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
+            } catch {
+                Log.scanner.warning("Failed to fetch photos for delta removal: \(error.localizedDescription, privacy: .public)")
+                allDbPhotos = []
+            }
             var deletedAny = false
             for photo in allDbPhotos {
                 guard photo.filePath.hasPrefix(levelPrefix) else { continue }
@@ -171,7 +215,11 @@ actor FolderScanner {
                 deletedAny = true
             }
             if deletedAny {
-                try? modelContext.save()
+                do {
+                    try modelContext.save()
+                } catch {
+                    Log.scanner.warning("Failed to save after delta removal: \(error.localizedDescription, privacy: .public)")
+                }
             }
         }
     }
@@ -181,8 +229,15 @@ actor FolderScanner {
     /// Always performs the outer directory listing to detect added/removed folders.
     func listSubfolders(id: PersistentIdentifier, path: String? = nil) -> [(name: String, path: String, coverPath: String?, coverDate: Date?)] {
         guard let folder = modelContext.model(for: id) as? ScannedFolder else { return [] }
-        guard let bookmarkData = folder.bookmarkData,
-              let rootURL = try? BookmarkService.resolveBookmark(bookmarkData) else { return [] }
+        guard let bookmarkData = folder.bookmarkData else { return [] }
+
+        let rootURL: URL
+        do {
+            rootURL = try BookmarkService.resolveBookmark(bookmarkData)
+        } catch {
+            Log.bookmark.warning("Failed to resolve bookmark for listSubfolders \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            return []
+        }
 
         let rootPath = rootURL.path
         let targetURL = path.map { childURL(rootURL: rootURL, rootPath: rootPath, childPath: $0) } ?? rootURL
@@ -191,11 +246,17 @@ actor FolderScanner {
 
         return BookmarkService.withSecurityScope(rootURL) {
             let fm = FileManager.default
-            guard let contents = try? fm.contentsOfDirectory(
-                at: targetURL,
-                includingPropertiesForKeys: [.isDirectoryKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) else { return [] }
+            let contents: [URL]
+            do {
+                contents = try fm.contentsOfDirectory(
+                    at: targetURL,
+                    includingPropertiesForKeys: [.isDirectoryKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                )
+            } catch {
+                Log.scanner.warning("Failed to list subdirectories at \(targetPath, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                return []
+            }
 
             let dirs = contents
                 .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
@@ -208,11 +269,17 @@ actor FolderScanner {
                 }
 
                 // Cache miss: read inner directory to find cover file
-                let subContents = (try? fm.contentsOfDirectory(
-                    at: dirURL,
-                    includingPropertiesForKeys: [.isRegularFileKey],
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                )) ?? []
+                let subContents: [URL]
+                do {
+                    subContents = try fm.contentsOfDirectory(
+                        at: dirURL,
+                        includingPropertiesForKeys: [.isRegularFileKey],
+                        options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                    )
+                } catch {
+                    Log.scanner.warning("Failed to list contents of \(dirURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                    subContents = []
+                }
                 let imageFiles = subContents.filter { $0.isImageFile }
                 let coverURL: URL? = imageFiles.first ?? subContents.first { $0.isMediaFile }
                 let coverPath = coverURL?.path

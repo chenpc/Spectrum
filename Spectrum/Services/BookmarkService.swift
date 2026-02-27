@@ -1,4 +1,5 @@
 import Foundation
+import os
 
 enum BookmarkService {
     static func createBookmark(for url: URL) throws -> Data {
@@ -20,7 +21,11 @@ enum BookmarkService {
         if isStale {
             // Bookmark needs refreshing — but don't fail if we can't create a new one yet.
             // The resolved URL is still valid for this session.
-            _ = try? createBookmark(for: url)
+            do {
+                _ = try createBookmark(for: url)
+            } catch {
+                Log.bookmark.warning("Failed to refresh stale bookmark for \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
         return url
     }
@@ -29,7 +34,12 @@ enum BookmarkService {
     static func remountURL(for url: URL) -> URL? {
         let started = url.startAccessingSecurityScopedResource()
         defer { if started { url.stopAccessingSecurityScopedResource() } }
-        return (try? url.resourceValues(forKeys: [.volumeURLForRemountingKey]))?.volumeURLForRemounting
+        do {
+            return try url.resourceValues(forKeys: [.volumeURLForRemountingKey]).volumeURLForRemounting
+        } catch {
+            Log.bookmark.warning("Failed to get remount URL: \(error.localizedDescription, privacy: .public)")
+            return nil
+        }
     }
 
     @discardableResult

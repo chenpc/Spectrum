@@ -8,6 +8,6 @@ name = "gyrocore_c"
 crate-type = ["cdylib"]
 
 [dependencies]
-gyroflow-core = { path = "../gyroflow/src/core", features = ["bundle-lens-profiles"] }
+gyroflow-core = { git = "https://github.com/gyroflow/gyroflow.git", rev = "79302059", features = ["bundle-lens-profiles"] }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"

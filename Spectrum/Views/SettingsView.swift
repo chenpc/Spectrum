@@ -3,14 +3,37 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
+            AppearanceSettingsTab()
+                .tabItem { Label("Appearance", systemImage: "paintbrush") }
             CacheSettingsTab()
                 .tabItem { Label("Cache", systemImage: "internaldrive") }
             PlaybackSettingsTab()
                 .tabItem { Label("Playback", systemImage: "play.circle") }
             GyroSettingsTab()
                 .tabItem { Label("Gyro", systemImage: "gyroscope") }
+            // TODO: [Backlog] Face/Object Detection — Vision framework VNDetectFaceRectanglesRequest
         }
         .frame(width: 460, height: 520)
+    }
+}
+
+// MARK: - Appearance
+
+private struct AppearanceSettingsTab: View {
+    @AppStorage("appearanceMode") private var appearanceMode: String = "system"
+
+    var body: some View {
+        Form {
+            Section("Appearance") {
+                Picker("Theme", selection: $appearanceMode) {
+                    Text("System").tag("system")
+                    Text("Light").tag("light")
+                    Text("Dark").tag("dark")
+                }
+                .pickerStyle(.radioGroup)
+            }
+        }
+        .formStyle(.grouped)
     }
 }
 
@@ -56,45 +79,28 @@ private struct CacheSettingsTab: View {
 
 private struct PlaybackSettingsTab: View {
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
-    @AppStorage("videoPlayer") private var videoPlayer: String = "libmpv"
     @AppStorage("mpvHwdec") private var mpvHwdec: String = "auto"
     @AppStorage("mpvAVSync") private var mpvAVSync: Bool = true
     @AppStorage("mpvFrameDrop") private var mpvFrameDrop: Bool = true
 
-    // Per-type player overrides
-    @AppStorage("playerForSDR") private var playerForSDR: String = "default"
-    @AppStorage("playerForHLG") private var playerForHLG: String = "default"
-    @AppStorage("playerForHDR10") private var playerForHDR10: String = "default"
-    @AppStorage("playerForDolbyVision") private var playerForDV: String = "default"
-    @AppStorage("playerForSLog2") private var playerForSLog2: String = "default"
-    @AppStorage("playerForSLog3") private var playerForSLog3: String = "default"
+    // Per-type player selection (no "default" indirection)
+    @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
+    @AppStorage("playerForHLG") private var playerForHLG: String = "libmpv"
+    @AppStorage("playerForHDR10") private var playerForHDR10: String = "libmpv"
+    @AppStorage("playerForDolbyVision") private var playerForDV: String = "avplayer"
+    @AppStorage("playerForSLog2") private var playerForSLog2: String = "libmpv"
+    @AppStorage("playerForSLog3") private var playerForSLog3: String = "libmpv"
 
     var body: some View {
         Form {
-            Section("Video Decoder") {
-                if LibMPV.shared.ok {
-                    Picker("Decoder", selection: $videoPlayer) {
-                        Text("libmpv").tag("libmpv")
-                        Text("AVPlayer").tag("avplayer")
-                    }
-                    .pickerStyle(.segmented)
-                } else {
-                    Text("libmpv 不可用，僅 AVPlayer")
-                        .foregroundStyle(.secondary)
-                }
-            }
-
             if LibMPV.shared.ok {
-                Section("Per-Type Player") {
+                Section("Video Player") {
                     perTypePicker("SDR", selection: $playerForSDR)
                     perTypePicker("HLG", selection: $playerForHLG)
                     perTypePicker("HDR10", selection: $playerForHDR10)
                     perTypePicker("Dolby Vision", selection: $playerForDV)
                     perTypePicker("S-Log2", selection: $playerForSLog2)
                     perTypePicker("S-Log3", selection: $playerForSLog3)
-                    Text("Default = 使用上方全域 Decoder 設定")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
                 }
 
                 Section("Hardware Decode") {
@@ -129,7 +135,6 @@ private struct PlaybackSettingsTab: View {
 
     private func perTypePicker(_ label: String, selection: Binding<String>) -> some View {
         Picker(label, selection: selection) {
-            Text("Default").tag("default")
             Text("libmpv").tag("libmpv")
             Text("AVPlayer").tag("avplayer")
         }

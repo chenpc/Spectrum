@@ -114,6 +114,9 @@ struct PhotoThumbnailView: View {
             RoundedRectangle(cornerRadius: 4)
                 .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
         )
+        .onDrag {
+            NSItemProvider(object: URL(fileURLWithPath: photo.filePath) as NSURL)
+        }
         .task(id: photo.filePath + "\(cacheState.generation)") {
             if let cached = ThumbnailService.shared.cachedThumbnail(for: photo.filePath) {
                 thumbnail = cached

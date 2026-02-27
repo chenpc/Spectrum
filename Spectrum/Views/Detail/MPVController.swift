@@ -40,6 +40,9 @@ final class MPVController: @unchecked Sendable {
     /// until gyro is ready. This prevents mpv from decoding (and dropping) frames
     /// while `waitingForGyro` suppresses draw().
     private var deferredPlay = false
+    /// When true, gyro is loading but nsView hasn't been attached yet.
+    /// startPolling() will set waitingForGyro on the view when it connects.
+    private var gyroLoadPending = false
 
     private weak var nsView: MPVPlayerNSView?
     /// Serial background queue: reads mpv properties off the main thread.
@@ -90,7 +93,12 @@ final class MPVController: @unchecked Sendable {
                        lensPath: String? = nil) {
         stopGyroStab()
         // Suppress rendering until gyro is ready — prevents unstabilized first-frame flash.
-        nsView?.setWaitingForGyro(true)
+        // If nsView isn't attached yet (early start before SwiftUI creates the view),
+        // gyroLoadPending tells startPolling() to set waitingForGyro when it connects.
+        if let v = nsView {
+            v.setWaitingForGyro(true)
+        }
+        gyroLoadPending = true
         // If config.readoutMs is 0, estimate from fps
         var cfg = config
         if cfg.readoutMs <= 0 {
@@ -104,6 +112,7 @@ final class MPVController: @unchecked Sendable {
             config: cfg,
             onReady: { [weak self] in
                 guard let self else { return }
+                self.gyroLoadPending = false
                 self.gyroStabEnabled = true
                 self.gyroAvailable = true
                 self.nsView?.loadGyroCore(core)  // clears waitingForGyro
@@ -115,6 +124,7 @@ final class MPVController: @unchecked Sendable {
             },
             onError: { [weak self] msg in
                 print("[gyro] ❌ \(msg)")
+                self?.gyroLoadPending = false
                 self?.activeGyroCore = nil
                 self?.nsView?.setWaitingForGyro(false)  // 失敗也要解除抑制
                 // Still start playback if user pressed play during gyro load
@@ -129,6 +139,7 @@ final class MPVController: @unchecked Sendable {
     /// Stop and detach gyro stabilization.
     func stopGyroStab() {
         deferredPlay = false
+        gyroLoadPending = false
         gyroStabEnabled = false
         nsView?.loadGyroCore(nil)
         activeGyroCore?.stop()
@@ -138,6 +149,10 @@ final class MPVController: @unchecked Sendable {
     func startPolling(view: MPVPlayerNSView) {
         guard nsView !== view else { return }   // already polling this view
         nsView = view
+        // If gyro started loading before the view was attached, suppress rendering now.
+        if gyroLoadPending {
+            view.setWaitingForGyro(true)
+        }
         // After 1 s the file should be open; read the actual decoder for diagnostics.
         hwdecCheckTask?.cancel()
         if diagnosticsEnabled {

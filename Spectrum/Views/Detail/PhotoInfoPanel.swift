@@ -61,6 +61,9 @@ struct PhotoInfoPanel: View {
             LabeledContent("Size", value: formatFileSize(photo.fileSize))
             LabeledContent("Dimensions", value: "\(photo.pixelWidth) x \(photo.pixelHeight)")
             LabeledContent("Date Taken", value: photo.dateTaken.shortDate)
+            if let tz = photo.offsetTimeOriginal {
+                LabeledContent("Timezone", value: tz)
+            }
             if isHDR {
                 LabeledContent("Dynamic Range") {
                     Text("HDR")

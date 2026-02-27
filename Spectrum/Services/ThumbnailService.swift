@@ -3,19 +3,24 @@ import AppKit
 import ImageIO
 import AVFoundation
 import CryptoKit
+import os
 
 actor ThumbnailService {
     static let shared = ThumbnailService()
 
     private nonisolated(unsafe) let memoryCache = NSCache<NSString, NSImage>()
     private let cacheDirectory: URL
-    private let thumbnailSize: Int = 300
+    private let thumbnailSize: Int = 400
 
     init() {
         let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
         cacheDirectory = caches.appendingPathComponent("Spectrum/Thumbnails", isDirectory: true)
 
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        } catch {
+            Log.thumbnail.warning("Failed to create thumbnail cache directory: \(error.localizedDescription, privacy: .public)")
+        }
         memoryCache.countLimit = 500
     }
 
@@ -44,13 +49,20 @@ actor ThumbnailService {
             return image
         }
 
+        // Skip if the source file no longer exists — avoids IIOImageSource errors
+        guard FileManager.default.fileExists(atPath: filePath) else { return nil }
+
         let url = URL(fileURLWithPath: filePath)
         var folderURL: URL?
         var didStart = false
-        if let bookmarkData,
-           let resolved = try? BookmarkService.resolveBookmark(bookmarkData) {
-            folderURL = resolved
-            didStart = resolved.startAccessingSecurityScopedResource()
+        if let bookmarkData {
+            do {
+                let resolved = try BookmarkService.resolveBookmark(bookmarkData)
+                folderURL = resolved
+                didStart = resolved.startAccessingSecurityScopedResource()
+            } catch {
+                Log.bookmark.warning("Failed to resolve bookmark for thumbnail \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            }
         }
         let image = await generateAndCacheThumbnail(from: url, to: diskURL)
         if didStart, let folderURL {
@@ -66,8 +78,16 @@ actor ThumbnailService {
 
     func clearCache() {
         memoryCache.removeAllObjects()
-        try? FileManager.default.removeItem(at: cacheDirectory)
-        try? FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.removeItem(at: cacheDirectory)
+        } catch {
+            Log.thumbnail.warning("Failed to remove cache directory: \(error.localizedDescription, privacy: .public)")
+        }
+        do {
+            try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
+        } catch {
+            Log.thumbnail.warning("Failed to recreate cache directory: \(error.localizedDescription, privacy: .public)")
+        }
     }
 
     func diskCacheSize() async -> Int64 {
@@ -129,7 +149,11 @@ actor ThumbnailService {
 
             for entry in entries {
                 guard totalSize > limit else { break }
-                try? fm.removeItem(at: entry.url)
+                do {
+                    try fm.removeItem(at: entry.url)
+                } catch {
+                    Log.thumbnail.warning("Failed to evict cache entry: \(error.localizedDescription, privacy: .public)")
+                }
                 totalSize -= entry.size
             }
         }
@@ -236,8 +260,12 @@ actor ThumbnailService {
         generator.maximumSize = CGSize(width: thumbnailSize, height: thumbnailSize)
         generator.appliesPreferredTrackTransform = true
 
-        guard let result = try? await generator.image(at: .zero),
-              case let cgImage = result.image else {
+        let cgImage: CGImage
+        do {
+            let result = try await generator.image(at: .zero)
+            cgImage = result.image
+        } catch {
+            Log.thumbnail.warning("Failed to generate video thumbnail for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
         }
 
