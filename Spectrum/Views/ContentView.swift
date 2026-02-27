@@ -50,6 +50,10 @@ struct FolderEditActionKey: FocusedValueKey {
     typealias Value = FolderEditAction
 }
 
+struct DeletePhotoActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
 struct MpvPlayPauseKey: FocusedValueKey {
     typealias Value = () -> Void
 }
@@ -66,6 +70,10 @@ extension FocusedValues {
     var folderEditAction: FolderEditAction? {
         get { self[FolderEditActionKey.self] }
         set { self[FolderEditActionKey.self] = newValue }
+    }
+    var deletePhotoAction: (() -> Void)? {
+        get { self[DeletePhotoActionKey.self] }
+        set { self[DeletePhotoActionKey.self] = newValue }
     }
     var mpvPlayPause: (() -> Void)? {
         get { self[MpvPlayPauseKey.self] }
@@ -116,6 +124,7 @@ struct ContentView: View {
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
     @State private var escapeMonitor = EscapeKeyMonitor()
+    @AppStorage("appearanceMode") private var appearanceMode: String = "system"
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -167,6 +176,7 @@ struct ContentView: View {
                 window.toolbar?.isVisible = true
             }
         }
+        .preferredColorScheme(appearanceMode == "light" ? .light : appearanceMode == "dark" ? .dark : nil)
         .environment(\.thumbnailCacheState, thumbnailCacheState)
         .onChange(of: selectedSidebarItem) { _, _ in
             detailPhoto = nil
@@ -177,8 +187,26 @@ struct ContentView: View {
             // add new files and remove deleted files in the background.
             let scanner = FolderScanner(modelContainer: modelContext.container)
             for folder in allFolders {
+                // Skip folders whose bookmark cannot be resolved or directory no longer exists
+                guard let bookmarkData = folder.bookmarkData,
+                      let url = try? BookmarkService.resolveBookmark(bookmarkData) else { continue }
+                let accessible = BookmarkService.withSecurityScope(url) {
+                    FileManager.default.fileExists(atPath: url.path)
+                }
+                guard accessible else { continue }
                 try? await scanner.scanFolder(id: folder.persistentModelID, clearAll: false)
             }
+
+            // Start FSEvents monitoring for all folders
+            for folder in allFolders {
+                FolderMonitor.shared.startMonitoring(path: folder.path)
+            }
+        }
+        .onChange(of: allFolders.map(\.path)) { old, new in
+            let added = Set(new).subtracting(old)
+            let removed = Set(old).subtracting(new)
+            for path in added { FolderMonitor.shared.startMonitoring(path: path) }
+            for path in removed { FolderMonitor.shared.stopMonitoring(path: path) }
         }
     }
 
@@ -261,6 +289,13 @@ struct ContentView: View {
         }
     }
 
+    private func breadcrumb(root: String, current: String) -> String {
+        let rootName = URL(fileURLWithPath: root).lastPathComponent
+        let suffix = current.dropFirst(root.count)
+        let components = suffix.split(separator: "/").map(String.init)
+        return ([rootName] + components).joined(separator: " › ")
+    }
+
     private func photoDetail(_ photo: Photo, showInspector: Binding<Bool>) -> some View {
         PhotoDetailView(photo: photo, showInspector: showInspector, isHDR: $isPhotoHDR, viewModel: viewModel)
             .focusedSceneValue(\.photoNavigation, detailNavigation)
@@ -279,6 +314,7 @@ struct ContentView: View {
                 },
                 folder: folder
             )
+            .navigationTitle(URL(fileURLWithPath: folder.path).lastPathComponent)
         case .subfolder(let folder, let subPath):
             PhotoGridView(
                 viewModel: viewModel,
@@ -290,6 +326,7 @@ struct ContentView: View {
                 folder: folder,
                 folderPath: subPath
             )
+            .navigationTitle(breadcrumb(root: folder.path, current: subPath))
         case nil:
             ContentUnavailableView(
                 "Select a Folder",

@@ -52,6 +52,8 @@ struct SidebarView: View {
     /// folder.persistentModelID -> immediate subfolders
     @State private var folderChildren: [String: [(name: String, path: String, coverPath: String?, coverDate: Date?)]] = [:]
     @State private var dropTargeted = false
+    /// Paths of folders whose bookmark cannot be resolved or whose directory no longer exists.
+    @State private var missingFolders: Set<String> = []
 
     /// Folders sorted by latest photo dateTaken (most recent first).
     /// Falls back to folder path alphabetically when no photos are indexed yet.
@@ -115,6 +117,8 @@ struct SidebarView: View {
     }
 
     private func loadAllFolderChildren() async {
+        var nowMissing: Set<String> = []
+
         // Show cached children immediately (no filesystem I/O)
         for folder in folders {
             if let cached = FolderListCache.shared.entries(for: folder.path) {
@@ -127,41 +131,66 @@ struct SidebarView: View {
         // Async refresh from filesystem — updates if folders were added/removed
         let scanner = FolderScanner(modelContainer: modelContext.container)
         for folder in folders {
+            // Check if the folder is still accessible
+            guard let bookmarkData = folder.bookmarkData,
+                  let url = try? BookmarkService.resolveBookmark(bookmarkData) else {
+                nowMissing.insert(folder.path)
+                folderChildren[folder.path] = nil
+                FolderListCache.shared.invalidate(parentPath: folder.path)
+                continue
+            }
+            let accessible = BookmarkService.withSecurityScope(url) {
+                FileManager.default.fileExists(atPath: url.path)
+            }
+            guard accessible else {
+                nowMissing.insert(folder.path)
+                folderChildren[folder.path] = nil
+                FolderListCache.shared.invalidate(parentPath: folder.path)
+                continue
+            }
+
             let children = await scanner.listSubfolders(id: folder.persistentModelID)
             folderChildren[folder.path] = children
         }
+
+        missingFolders = nowMissing
     }
 
     @ViewBuilder
     private func folderRow(_ folder: ScannedFolder) -> some View {
+        let isMissing = missingFolders.contains(folder.path)
         let children = folderChildren[folder.path] ?? []
-        if children.isEmpty {
-            folderLabel(folder)
+        if isMissing || children.isEmpty {
+            folderLabel(folder, isMissing: isMissing)
         } else {
             DisclosureGroup {
                 ForEach(children, id: \.path) { child in
                     SubfolderSidebarRow(folder: folder, path: child.path, name: child.name)
                 }
             } label: {
-                folderLabel(folder)
+                folderLabel(folder, isMissing: false)
             }
         }
     }
 
     @ViewBuilder
-    private func folderLabel(_ folder: ScannedFolder) -> some View {
-        Label(URL(fileURLWithPath: folder.path).lastPathComponent, systemImage: "folder")
+    private func folderLabel(_ folder: ScannedFolder, isMissing: Bool) -> some View {
+        Label(URL(fileURLWithPath: folder.path).lastPathComponent,
+              systemImage: isMissing ? "folder.badge.questionmark" : "folder")
+        .foregroundStyle(isMissing ? .secondary : .primary)
         .tag(SidebarItem.folder(folder))
         .contextMenu {
             Button("Rescan") {
                 Task { await rescanFolder(folder) }
             }
-            .disabled(isScanning)
+            .disabled(isScanning || isMissing)
             Button("Show in Finder") {
                 NSWorkspace.shared.selectFile(nil, inFileViewerRootedAtPath: folder.path)
             }
+            .disabled(isMissing)
             Divider()
             Button("Remove", role: .destructive) {
+                FolderMonitor.shared.stopMonitoring(path: folder.path)
                 if selection == .folder(folder) {
                     selection = nil
                 }

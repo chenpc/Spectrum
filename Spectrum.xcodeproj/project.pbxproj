@@ -50,6 +50,8 @@
 		AA100013 /* hlg_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100013 /* hlg_video.mp4 */; };
 		AA100014 /* sdr_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100014 /* sdr_video.mp4 */; };
 		AA100015 /* sdr_photo.jpg in Resources */ = {isa = PBXBuildFile; fileRef = AB100015 /* sdr_photo.jpg */; };
+		AA000070 /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000070 /* Log.swift */; };
+		AA000071 /* FolderMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000071 /* FolderMonitor.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -110,6 +112,8 @@
 		AB000060 /* Shared.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; path = Shared.xcconfig; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AC100001 /* SpectrumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpectrumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		AB000070 /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
+		AB000071 /* FolderMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMonitor.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -181,6 +185,7 @@
 		AE000005 /* Services */ = {
 			isa = PBXGroup;
 			children = (
+				AB000070 /* Log.swift */,
 				AB000050 /* MPVLib.swift */,
 				AB000053 /* GyroCore.swift */,
 				AB000010 /* FolderScanner.swift */,
@@ -192,6 +197,7 @@
 				AB000029 /* FolderClipboard.swift */,
 				AB000032 /* FolderListCache.swift */,
 				AB000031 /* NetworkVolumeService.swift */,
+				AB000071 /* FolderMonitor.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -496,6 +502,8 @@
 				AA000032 /* FolderListCache.swift in Sources */,
 				AA000031 /* NetworkVolumeService.swift in Sources */,
 				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
+				AA000070 /* Log.swift in Sources */,
+				AA000071 /* FolderMonitor.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

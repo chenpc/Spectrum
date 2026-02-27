@@ -16,7 +16,6 @@ struct PhotoGridView: View {
     var onNavigateToSubfolder: ((String) -> Void)? = nil
     var folder: ScannedFolder? = nil
     var folderPath: String? = nil
-
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Photo.dateTaken, order: .reverse) private var allPhotos: [Photo]
 
@@ -27,12 +26,16 @@ struct PhotoGridView: View {
     @State private var pendingPaths: [String] = []
     @State private var selectedItemId: String?
     @State private var currentSections: [TimelineSection] = []
+    @State private var photoToDelete: Photo? = nil
+    @State private var visibleSectionCount = 10
+    @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
 
     // Folder clipboard and edit state
     private let clipboard = FolderClipboard.shared
     @State private var renamingInfo: SubfolderInfo? = nil
     @State private var renameText = ""
     @State private var errorMessage: String? = nil
+    @State private var folderChangeToken = 0
 
     /// Subfolders inferred from existing Photo records — available instantly without scanning.
     private var inferredSubfolders: [SubfolderInfo] {
@@ -104,7 +107,7 @@ struct PhotoGridView: View {
     ]
 
     var body: some View {
-        let sections = currentSections
+        let sections = Array(currentSections.prefix(visibleSectionCount))
         let flatItems = buildFlatItems(sections: sections)
 
         GeometryReader { geo in
@@ -188,7 +191,7 @@ struct PhotoGridView: View {
                             .frame(maxWidth: .infinity, minHeight: 200)
                         }
 
-                        ForEach(sections) { section in
+                        ForEach(Array(sections.enumerated()), id: \.element.id) { idx, section in
                             Section {
                                 LazyVGrid(columns: columns, spacing: 2) {
                                     ForEach(section.photos) { photo in
@@ -206,7 +209,12 @@ struct PhotoGridView: View {
                                             selectedPhoto = photo
                                         }
                                         .contextMenu {
-                                            PhotoContextMenu(photo: photo)
+                                            PhotoContextMenu(
+                                                photo: photo,
+                                                bookmarkData: folder?.bookmarkData,
+                                                allFolders: allFolders,
+                                                onDelete: { photoToDelete = photo }
+                                            )
                                         }
                                     }
                                 }
@@ -216,6 +224,11 @@ struct PhotoGridView: View {
                                     label: section.label,
                                     count: section.photos.count
                                 )
+                            }
+                            .onAppear {
+                                if idx == sections.count - 1, visibleSectionCount < currentSections.count {
+                                    visibleSectionCount += 10
+                                }
                             }
                         }
                     }
@@ -231,11 +244,12 @@ struct PhotoGridView: View {
             .focusedSceneValue(\.photoNavigation, PhotoNavigationAction(
                 navigateLeft: { navigate(by: -1, in: flatItems) },
                 navigateRight: { navigate(by: 1, in: flatItems) },
-                navigateUp: { navigate(by: -columnCount, in: flatItems) },
-                navigateDown: { navigate(by: columnCount, in: flatItems) },
+                navigateUp: { navigate(by: -columnCount, in: flatItems, clamp: false) },
+                navigateDown: { navigate(by: columnCount, in: flatItems, clamp: false) },
                 enter: { activateSelection() }
             ))
             .focusedSceneValue(\.folderEditAction, currentFolderEditAction)
+            .focusedSceneValue(\.deletePhotoAction, selectedPhoto != nil ? { photoToDelete = selectedPhoto } : nil)
         }
         .frame(minWidth: 400)
         .contextMenu {
@@ -256,8 +270,15 @@ struct PhotoGridView: View {
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
             }
         }
-        .task(id: effectivePath) {
+        .task(id: "\(effectivePath ?? "")_\(folderChangeToken)") {
             await scanCurrentLevel()
+        }
+        .onReceive(NotificationCenter.default.publisher(for: FolderMonitor.folderDidChange)) { note in
+            guard let changedPath = note.userInfo?["path"] as? String,
+                  let ePath = effectivePath,
+                  ePath.hasPrefix(changedPath) || changedPath.hasPrefix(ePath)
+            else { return }
+            folderChangeToken += 1
         }
         .task(id: sectionTaskId) {
             currentSections = viewModel.timelineSections(from: directPhotos)
@@ -267,6 +288,7 @@ struct PhotoGridView: View {
             pendingPaths = []
             isMounting = false
             isScanning = true
+            visibleSectionCount = 10
             // Load from cache synchronously to avoid a flash of inferredSubfolders
             let path = newPath ?? folder?.path ?? ""
             if let cached = FolderListCache.shared.entries(for: path) {
@@ -302,6 +324,23 @@ struct PhotoGridView: View {
         } message: { msg in
             Text(msg)
         }
+        .confirmationDialog(
+            "Move to Trash?",
+            isPresented: Binding(
+                get: { photoToDelete != nil },
+                set: { if !$0 { photoToDelete = nil } }
+            ),
+            presenting: photoToDelete
+        ) { photo in
+            Button("Move to Trash", role: .destructive) {
+                performTrash(photo: photo)
+            }
+            Button("Cancel", role: .cancel) {
+                photoToDelete = nil
+            }
+        } message: { photo in
+            Text("\"\(photo.fileName)\" will be moved to the Trash.")
+        }
     }
 
     private func buildFlatItems(sections: [TimelineSection]) -> [String] {
@@ -312,7 +351,7 @@ struct PhotoGridView: View {
         return items
     }
 
-    private func navigate(by offset: Int, in flatItems: [String]) {
+    private func navigate(by offset: Int, in flatItems: [String], clamp: Bool = true) {
         guard !flatItems.isEmpty else { return }
         guard let current = selectedItemId,
               let index = flatItems.firstIndex(of: current) else {
@@ -320,7 +359,16 @@ struct PhotoGridView: View {
             syncSelection()
             return
         }
-        let newIndex = min(max(0, index + offset), flatItems.count - 1)
+        let newIndex = index + offset
+        guard newIndex >= 0 && newIndex < flatItems.count else {
+            if clamp {
+                // Left/right: clamp to boundary
+                selectedItemId = flatItems[min(max(0, newIndex), flatItems.count - 1)]
+                syncSelection()
+            }
+            // Up/down (clamp=false): do nothing when out of range
+            return
+        }
         selectedItemId = flatItems[newIndex]
         syncSelection()
     }
@@ -474,6 +522,37 @@ struct PhotoGridView: View {
         }
     }
 
+    private func performTrash(photo: Photo) {
+        let url = URL(fileURLWithPath: photo.filePath)
+        let bm = photo.resolveBookmarkData(from: allFolders) ?? folder?.bookmarkData
+        var scopeURL: URL?
+        var didStart = false
+        if let bm {
+            do {
+                let resolved = try BookmarkService.resolveBookmark(bm)
+                scopeURL = resolved
+                didStart = resolved.startAccessingSecurityScopedResource()
+            } catch {
+                errorMessage = "Cannot access folder. Remove and re-add it in the sidebar."
+                return
+            }
+        }
+        defer {
+            if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
+        }
+        do {
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            modelContext.delete(photo)
+            try? modelContext.save()
+            if selectedPhoto?.filePath == photo.filePath {
+                selectedPhoto = nil
+                selectedItemId = nil
+            }
+        } catch {
+            errorMessage = fileErrorMessage(error)
+        }
+    }
+
     /// Sort subfolders most-recent first, falling back to alphabetical when dates are equal or absent.
     private func subfoldersAreInOrder(_ a: SubfolderInfo, _ b: SubfolderInfo) -> Bool {
         switch (a.coverDate, b.coverDate) {
@@ -602,10 +681,48 @@ private struct PlaceholderTileView: View {
 
 struct PhotoContextMenu: View {
     let photo: Photo
+    var bookmarkData: Data? = nil
+    var allFolders: [ScannedFolder] = []
+    var onDelete: (() -> Void)? = nil
 
     var body: some View {
         Button("Show in Finder") {
             NSWorkspace.shared.selectFile(photo.filePath, inFileViewerRootedAtPath: "")
+        }
+
+        Divider()
+
+        Button("Share...") {
+            shareFile()
+        }
+
+        Divider()
+
+        Button("Move to Trash", role: .destructive) {
+            onDelete?()
+        }
+    }
+
+    private func shareFile() {
+        let url = URL(fileURLWithPath: photo.filePath)
+        let bm = photo.resolveBookmarkData(from: allFolders) ?? bookmarkData
+        var scopeURL: URL?
+        if let bm, let resolved = try? BookmarkService.resolveBookmark(bm) {
+            scopeURL = resolved
+            _ = resolved.startAccessingSecurityScopedResource()
+        }
+        guard let window = NSApp.keyWindow,
+              let contentView = window.contentView else {
+            if let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
+            return
+        }
+        let picker = NSSharingServicePicker(items: [url])
+        picker.show(relativeTo: .zero, of: contentView, preferredEdge: .minY)
+        // Delay scope cleanup to allow sharing services to access the file
+        if let scopeURL {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) {
+                scopeURL.stopAccessingSecurityScopedResource()
+            }
         }
     }
 }
