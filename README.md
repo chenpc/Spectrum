@@ -27,11 +27,9 @@ Spectrum solves all three: HDR photos render with full EDR headroom, HDR video p
 
 - **HLG video** — Correct BT.2100 HLG playback with HDR pass-through to display
 - **S-Log2 / S-Log3** — Sony's log gamma curves with proper EOTF rendering
-- **Dual player backends** — libmpv (OpenGL render API) and AVPlayer, selectable per HDR type
 - **All HDR formats** — HLG, HDR10, Dolby Vision, S-Log2, S-Log3, SDR
 - **HDR/SDR toggle** — Switch between HDR and SDR during playback
-- **Hardware decoding** — VideoToolbox acceleration with configurable decode modes
-- **Per-type player override** — Choose libmpv or AVPlayer independently for each format (e.g. AVPlayer for Dolby Vision, mpv for HLG)
+- **Hardware decoding** — VideoToolbox acceleration
 - **Playback diagnostics** — On-screen badge showing render FPS, stability metric, codec info, and dropped frame counts
 
 ### Real-Time Gyro Stabilization (Gyroflow)
@@ -77,78 +75,17 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 ## Requirements
 
 - macOS 14.0 (Sonoma) or later
-- Xcode 16+ (for building from source)
-- [Rust toolchain](https://rustup.rs/) (for gyroflow-core; optional if you don't need gyro stabilization)
 - HDR display recommended (e.g. Apple Pro Display XDR, MacBook Pro with Liquid Retina XDR)
 
 ## Build
 
-### Prerequisites
-
 ```bash
-# Build tools and library headers (required for compiling libmpv from source)
-brew install meson ninja nasm pkg-config libass libplacebo little-cms2
-
-# Rust toolchain (required for gyroflow-core)
-curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh
-```
-
-### Build & Package
-
-```bash
-# Clone with submodules (mpv, FFmpeg, gyroflow)
 git clone --recurse-submodules https://github.com/chenpc/Spectrum.git
 cd Spectrum
-
-# Build Release (automatically compiles mpv + FFmpeg on first run)
 ./release.sh
 ```
 
-The DMG will be created in the project root directory.
-
-To rebuild mpv or gyroflow-core manually:
-
-```bash
-./mpv-build/build-all.sh        # build FFmpeg + mpv + bundle dylibs
-./mpv-build/build-all.sh clean   # remove all build artifacts
-
-cd gyro-wrapper && cargo build --release   # rebuild gyroflow-core
-```
-
-### Without building from source
-
-If you skip the Homebrew prerequisites, the Xcode build will:
-- **libmpv** — fall back to IINA.app's bundled libmpv (if IINA is installed)
-- **gyroflow-core** — gyro stabilization will be unavailable
-
-The app works without either library — video playback falls back to AVPlayer.
-
-## Architecture
-
-```
-Spectrum/
-├── Models/           # SwiftData models (Photo, ScannedFolder)
-├── Views/
-│   ├── Sidebar/      # Folder tree navigation
-│   ├── Grid/         # Timeline photo grid with keyboard nav
-│   └── Detail/       # HDR photo/video detail view, mpv + AVPlayer
-├── Services/
-│   ├── ImagePreloadCache.swift  # HDR format detection + rendering
-│   ├── MPVLib.swift             # libmpv runtime loader (dlopen)
-│   ├── GyroCore.swift           # gyroflow-core runtime loader
-│   ├── FolderScanner.swift      # Filesystem scanning (@ModelActor)
-│   ├── ThumbnailService.swift   # Three-tier thumbnail cache
-│   ├── XMPSidecarService.swift  # XMP sidecar read/write (edits + gyro config)
-│   └── CGImageRotation.swift    # CGImage rotate + flip
-├── ViewModels/       # Timeline section logic
-└── Resources/        # App icon, bundled dylibs
-
-mpv-build/            # Shell scripts to build libmpv from source
-mpv/                  # Git submodule — mpv player
-FFmpeg/               # Git submodule — FFmpeg
-gyro-wrapper/         # Rust cdylib wrapper for gyroflow-core
-gyroflow/             # Git submodule — gyroflow
-```
+See [docs/DEVELOPMENT.md](docs/DEVELOPMENT.md) for prerequisites, build options, and architecture details.
 
 ## License
 

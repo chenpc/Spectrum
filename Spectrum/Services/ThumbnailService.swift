@@ -25,10 +25,9 @@ actor ThumbnailService {
     }
 
     private var cacheLimitBytes: Int64 {
-        let mb = UserDefaults.standard.integer(forKey: "thumbnailCacheLimitMB")
-        if mb == 0 { return Int64.max }  // unlimited
-        let limit = mb > 0 ? mb : 500   // default 500 MB
-        return Int64(limit) * 1024 * 1024
+        let mb = UserDefaults.standard.object(forKey: "thumbnailCacheLimitMB") as? Int ?? 500
+        if mb == 0 { return Int64.max }  // unlimited (user chose ∞)
+        return Int64(max(mb, 100)) * 1024 * 1024
     }
 
     nonisolated func cachedThumbnail(for filePath: String) -> NSImage? {

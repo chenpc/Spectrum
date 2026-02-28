@@ -20,15 +20,74 @@ import AVFoundation
 // 關閉 stdout buffering，確保 print() 在 process 被 kill 前就寫出
 setbuf(stdout, nil)
 
+// ── Display peak nits（IINA 方式：讀 CoreDisplay private API）──────────
+func displayPeakNits() -> Int {
+    typealias FnCreateInfo = @convention(c) (UInt32) -> CFDictionary?
+    guard let cd = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY),
+          let sym = dlsym(cd, "CoreDisplay_DisplayCreateInfoDictionary") else { return 400 }
+    let fn = unsafeBitCast(sym, to: FnCreateInfo.self)
+    let displayId = CGMainDisplayID()
+    guard let dict = fn(displayId) as? [String: Any] else { return 400 }
+    if let v = dict["NonReferencePeakHDRLuminance"] as? Int { return v }  // Apple Silicon
+    if let v = dict["DisplayBacklight"] as? Int { return v }              // Intel
+    return 400
+}
+
 // ════════════════════════════════════════════════════════
 // MARK: - Stabilization Data
 // ════════════════════════════════════════════════════════
+
+struct GyroConfig: Codable {
+    var readoutMs:            Double = 0
+    var smooth:               Double = 0
+    var gyroOffsetMs:         Double = 0
+    var integrationMethod:    Int    = 2
+    var imuOrientation:       String = "YXz"
+    var fov:                  Double = 1.0
+    var lensCorrectionAmount: Double = 1.0
+    var zoomingMethod:        Int    = 1
+    var adaptiveZoom:         Double = 4.0
+    var maxZoom:              Double = 130.0
+    var maxZoomIterations:    Int    = 5
+    var useGravityVectors:    Bool   = false
+    var videoSpeed:           Double = 1.0
+    var horizonLockEnabled:   Bool   = false
+    var horizonLockAmount:    Double = 1.0
+    var horizonLockRoll:      Double = 0
+    var perAxis:              Bool   = false
+    var smoothnessPitch:      Double = 0
+    var smoothnessYaw:        Double = 0
+    var smoothnessRoll:       Double = 0
+
+    enum CodingKeys: String, CodingKey {
+        case readoutMs            = "readout_ms"
+        case smooth
+        case gyroOffsetMs         = "gyro_offset_ms"
+        case integrationMethod    = "integration_method"
+        case imuOrientation       = "imu_orientation"
+        case fov
+        case lensCorrectionAmount = "lens_correction_amount"
+        case zoomingMethod        = "zooming_method"
+        case adaptiveZoom         = "adaptive_zoom"
+        case maxZoom              = "max_zoom"
+        case maxZoomIterations    = "max_zoom_iterations"
+        case useGravityVectors    = "use_gravity_vectors"
+        case videoSpeed           = "video_speed"
+        case horizonLockEnabled   = "horizon_lock_enabled"
+        case horizonLockAmount    = "horizon_lock_amount"
+        case horizonLockRoll      = "horizon_lock_roll"
+        case perAxis              = "per_axis"
+        case smoothnessPitch      = "smoothness_pitch"
+        case smoothnessYaw        = "smoothness_yaw"
+        case smoothnessRoll       = "smoothness_roll"
+    }
+}
 
 // GyroCore: in-process gyroflow-core 矩陣計算
 // 用 dlopen 載入 libgyrocore_c.dylib（與 libmpv 相同模式），無 subprocess
 class GyroCore {
     // ── C function pointer types ──────────────────────────────────────────────
-    private typealias FnLoad      = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, Double, Double, Double) -> UnsafeMutableRawPointer?
+    private typealias FnLoad      = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
     private typealias FnGetParams = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
     private typealias FnGetFrame  = @convention(c) (UnsafeMutableRawPointer, UInt32, UnsafeMutablePointer<Float>) -> Int32
     private typealias FnFree      = @convention(c) (UnsafeMutableRawPointer) -> Void
@@ -75,8 +134,8 @@ class GyroCore {
     }
 
     // ── 載入 dylib 並在背景執行 gyrocore_load ────────────────────────────────
-    func start(videoPath: String, lensPath: String? = nil, readoutMs: Double,
-               smoothness: Double = 0.5, gyroOffsetMs: Double = 0.0,
+    func start(videoPath: String, lensPath: String? = nil,
+               config: GyroConfig = GyroConfig(),
                onReady: @escaping () -> Void,
                onError: @escaping (String) -> Void) {
         let path = Self.dylibPath
@@ -97,26 +156,31 @@ class GyroCore {
         fnFree      = unsafeBitCast(s4, to: FnFree.self)
 
         ioQueue.async { [weak self] in
-            self?.loadCore(videoPath: videoPath, lensPath: lensPath, readoutMs: readoutMs,
-                           smoothness: smoothness, gyroOffsetMs: gyroOffsetMs,
+            self?.loadCore(videoPath: videoPath, lensPath: lensPath, config: config,
                            onReady: onReady, onError: onError)
         }
     }
 
     /// ioQueue 上執行：呼叫 gyrocore_load（阻塞 ~0.3s）→ 讀取參數 → 標記 ready
-    private func loadCore(videoPath: String, lensPath: String?, readoutMs: Double,
-                          smoothness: Double, gyroOffsetMs: Double,
+    private func loadCore(videoPath: String, lensPath: String?, config: GyroConfig,
                           onReady: @escaping () -> Void,
                           onError: @escaping (String) -> Void) {
         guard let fn = fnLoad else { onError("No load fn"); return }
 
+        let configJSON: String
+        do {
+            configJSON = String(data: try JSONEncoder().encode(config), encoding: .utf8) ?? "{}"
+        } catch {
+            configJSON = "{}"
+        }
+
         let lensDesc = lensPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "none"
-        print("[gyro] 載入 \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  readoutMs=\(readoutMs)  smooth=\(smoothness)  offset=\(gyroOffsetMs)ms")
+        print("[gyro] 載入 \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  config=\(configJSON)")
         let handle: UnsafeMutableRawPointer?
         if let lp = lensPath {
-            handle = videoPath.withCString { vp in lp.withCString { lpp in fn(vp, lpp, readoutMs, smoothness, gyroOffsetMs) } }
+            handle = videoPath.withCString { vp in lp.withCString { lpp in configJSON.withCString { cj in fn(vp, lpp, cj) } } }
         } else {
-            handle = videoPath.withCString { fn($0, nil, readoutMs, smoothness, gyroOffsetMs) }
+            handle = videoPath.withCString { vp in configJSON.withCString { cj in fn(vp, nil, cj) } }
         }
         guard let handle else { onError("gyrocore_load 失敗（無 gyro 資料？）"); return }
         coreHandle = handle
@@ -427,7 +491,9 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     private var stabW:      GLsizei = 0
     private var stabH:      GLsizei = 0
     private var warpProg:   GLuint = 0     // GLSL program
+    private var warpVAO:    GLuint = 0     // VAO (Core profile 必須)
     private var warpVBO:    GLuint = 0     // fullscreen quad VBO
+    private var useCoreProfile = false      // GL 3.2 Core vs Legacy
     private var matTexId:   GLuint = 0     // per-row matrix texture (width=3, height=videoH, RGBA32F)
     private var matTexH:    Int    = 0     // 目前 matTex 的高度（= videoHeight）
     // uniforms
@@ -456,46 +522,83 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     // ─── OpenGL Pixel Format & Context ───────────────────
 
     private func setupGL() {
-        // 嘗試 64-bit float（PQ HDR 精確輸出需要）
-        // Apple Silicon (M 系列) 通常不支援，會 fallback 到 8-bit
-        let floatAttrs: [CGLPixelFormatAttribute] = [
-            kCGLPFADoubleBuffer,
-            kCGLPFAAccelerated,
-            kCGLPFAColorSize,  _CGLPixelFormatAttribute(rawValue: 64),
-            kCGLPFAColorFloat,
-            _CGLPixelFormatAttribute(rawValue: 0)
+        // ── IINA 風格：漸進式 pixel format 選擇 ──────────────────
+        let glVersions: [CGLOpenGLProfile] = [
+            kCGLOGLPVersion_3_2_Core,
+            kCGLOGLPVersion_Legacy
         ]
-        var pf: CGLPixelFormatObj?
-        var n = GLint(0)
+        let glFormat10Bit: [CGLPixelFormatAttribute] = [
+            kCGLPFAColorSize, _CGLPixelFormatAttribute(rawValue: 64),
+            kCGLPFAColorFloat
+        ]
+        let glFormatOptional: [[CGLPixelFormatAttribute]] = [
+            [kCGLPFABackingStore],
+            [kCGLPFAAllowOfflineRenderers],
+            [kCGLPFASupportsAutomaticGraphicsSwitching]
+        ]
 
-        if CGLChoosePixelFormat(floatAttrs, &pf, &n) == kCGLNoError, let pf {
-            print("[GL] ✅ Float framebuffer (64-bit RGBA) — 真正 HDR 精度")
-            isFloat = true
-            cglPF = pf
-            contentsFormat = .RGBA16Float
-            // HLG 直接輸出：使用 itur_2100_HLG colorspace
-            // macOS 套用 HLG OOTF，根據顯示器能力自動縮放亮度
-            colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-        } else {
-            print("[GL] ⚠️  Float framebuffer 不可用 (Apple Silicon 通常如此)")
-            print("[GL]    Fallback 到 8-bit 標準格式，套用 HLG colorspace")
-            let stdAttrs: [CGLPixelFormatAttribute] = [
-                kCGLPFADoubleBuffer,
+        var pf: CGLPixelFormatObj?
+        var npix = GLint(0)
+        var depth: GLint = 8
+
+        outer: for ver in glVersions {
+            // 基礎屬性：Profile + Accelerated + DoubleBuffer
+            let glBase: [CGLPixelFormatAttribute] = [
+                kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(ver.rawValue),
                 kCGLPFAAccelerated,
-                _CGLPixelFormatAttribute(rawValue: 0)
+                kCGLPFADoubleBuffer
             ]
-            CGLChoosePixelFormat(stdAttrs, &pf, &n)
-            cglPF = pf
-            colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+            // 組合：基礎 + 10-bit float + 可選屬性（漸進式 fallback）
+            var groups: [[CGLPixelFormatAttribute]] = [glBase, glFormat10Bit] + glFormatOptional
+
+            for index in stride(from: groups.count - 1, through: 0, by: -1) {
+                let format = groups.flatMap { $0 } + [_CGLPixelFormatAttribute(rawValue: 0)]
+                let err = CGLChoosePixelFormat(format, &pf, &npix)
+                if err == kCGLBadAttribute || err == kCGLBadPixelFormat || pf == nil {
+                    let removed = groups.remove(at: index)
+                    let names = removed.map { String($0.rawValue) }.joined(separator: ",")
+                    print("[GL]   移除屬性 [\(names)]，繼續嘗試...")
+                } else if err == kCGLNoError {
+                    useCoreProfile = (ver == kCGLOGLPVersion_3_2_Core)
+                    let has10Bit = groups.contains(where: { $0 == glFormat10Bit })
+                    depth = has10Bit ? 16 : 8
+                    let profile = useCoreProfile ? "3.2 Core" : "Legacy"
+                    print("[GL] ✅ Pixel format: \(profile), depth=\(depth)")
+                    break outer
+                }
+            }
         }
+
+        guard let pixelFormat = pf else {
+            print("[GL] ❌ 無法建立任何 pixel format!")
+            return
+        }
+
+        cglPF = pixelFormat
+        isFloat = (depth > 8)
+        if isFloat { contentsFormat = .RGBA16Float }
+        colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
 
         // ★ 告知 macOS 此 layer 要顯示 EDR 內容
         wantsExtendedDynamicRangeContent = true
 
-        if let pf = cglPF {
-            CGLCreateContext(pf, nil, &cglCtx)
-            print("[GL] CGL context created (isFloat=\(isFloat))")
+        // ── IINA 風格：Context 建立 ──────────────────────────
+        var ctx: CGLContextObj?
+        CGLCreateContext(pixelFormat, nil, &ctx)
+        guard let context = ctx else {
+            print("[GL] ❌ 無法建立 CGL context!")
+            return
         }
+        cglCtx = context
+
+        // Sync to vertical retrace
+        var swapInterval: GLint = 1
+        CGLSetParameter(context, kCGLCPSwapInterval, &swapInterval)
+
+        // Enable multi-threaded GL engine
+        CGLEnable(context, kCGLCEMPEngine)
+
+        print("[GL] CGL context created (isFloat=\(isFloat), coreProfile=\(useCoreProfile), swap=1, MPEngine=on)")
 
         setupWarpPipeline()
     }
@@ -506,49 +609,42 @@ class MPVOpenGLLayer: CAOpenGLLayer {
         guard let cglCtx else { return }
         CGLSetCurrentContext(cglCtx)
 
-        // ── Vertex shader（不變）──
-        let vsSrc = """
-#version 120
-attribute vec2 pos;
-varying vec2 uv;
+        // ── Shader 版本根據 GL profile 選擇 ──
+        // Core 3.2: #version 150 (in/out, texture(), 需要 VAO)
+        // Legacy:   #version 120 (attribute/varying, texture2D, gl_FragColor)
+        let vsSrc: String
+        let fsSrc: String
+
+        if useCoreProfile {
+            vsSrc = """
+#version 150
+in vec2 pos;
+out vec2 uv;
 void main() {
     uv = pos * 0.5 + 0.5;
     gl_Position = vec4(pos, 0.0, 1.0);
 }
 """
-        // ── Fragment shader（gyroflow-core pipeline + IBIS/OIS）───────────────
-        // matTex：width=4, height=videoH, GL_RGBA32F
-        //   texel(0,y) = [m00, m01, m02, sx]   (matrix row 0 + IBIS shift x)
-        //   texel(1,y) = [m10, m11, m12, sy]   (matrix row 1 + IBIS shift y)
-        //   texel(2,y) = [m20, m21, m22, ra]   (matrix row 2 + IBIS rotation angle)
-        //   texel(3,y) = [ox,  oy,  0,   0]    (OIS offset)
-        //
-        // Pipeline（同 gyroflow wgpu_undistort.wgsl rotate_and_distort()）：
-        //   (_x,_y,_w) = mat3 × (out_x, out_y, 1)
-        //   uv = fIn × (_x/_w, _y/_w)       ← perspective divide (distort_point identity for Sony)
-        //   uv = IBIS_rotate(-ra) × uv - (sx,sy) + (ox,oy)   ← IBIS/OIS correction
-        //   src = uv + cIn
-        let fsSrc = """
-#version 120
-varying vec2 uv;
-uniform sampler2D tex;       // mpv 渲染的原始幀
-uniform sampler2D matTex;    // per-row 矩陣（width=4, height=matCount, RGBA32F）
-uniform vec2  videoSize;     // 視訊解析度（e.g. 3840, 2160）
-uniform float matCount;      // 矩陣列數（= videoHeight）
-uniform vec2  fIn;           // 焦距像素 (fx, fy)
-uniform vec2  cIn;           // 主點 (cx, cy)
-// rotate_and_distort: 3×3 matrix × out_px → perspective divide → fIn × → IBIS → + cIn
+            fsSrc = """
+#version 150
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D tex;
+uniform sampler2D matTex;
+uniform vec2  videoSize;
+uniform float matCount;
+uniform vec2  fIn;
+uniform vec2  cIn;
 vec2 rotate_and_distort(vec2 out_px, float texY) {
-    vec4 m0 = texture2D(matTex, vec2(0.125, texY));
-    vec4 m1 = texture2D(matTex, vec2(0.375, texY));
-    vec4 m2 = texture2D(matTex, vec2(0.625, texY));
-    vec4 m3 = texture2D(matTex, vec2(0.875, texY));
+    vec4 m0 = texture(matTex, vec2(0.125, texY));
+    vec4 m1 = texture(matTex, vec2(0.375, texY));
+    vec4 m2 = texture(matTex, vec2(0.625, texY));
+    vec4 m3 = texture(matTex, vec2(0.875, texY));
     float _x = m0.r*out_px.x + m0.g*out_px.y + m0.b;
     float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
     float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
     if (_w <= 0.0) return vec2(-99999.0);
     vec2 pt = fIn * vec2(_x / _w, _y / _w);
-    // IBIS correction (matches gyroflow rotate_and_distort lines 391-398)
     float sx = m0.a; float sy = m1.a; float ra = m2.a;
     float ox = m3.r; float oy = m3.g;
     if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
@@ -560,10 +656,7 @@ vec2 rotate_and_distort(vec2 out_px, float texY) {
     return pt + cIn;
 }
 void main() {
-    // mpv FLIP_Y=1：uv.y=0 是畫面底部，轉換到 image 座標（y=0 在頂部）
     vec2 out_px = vec2(uv.x * videoSize.x, (1.0 - uv.y) * videoSize.y);
-    // Two-pass RS row indexing (matches gyroflow undistort_coord lines 501-521):
-    // Pass 1: use middle matrix to estimate source row
     float sy = clamp(out_px.y, 0.0, matCount - 1.0);
     if (matCount > 1.0) {
         float midTexY = (floor(matCount * 0.5) + 0.5) / matCount;
@@ -572,11 +665,69 @@ void main() {
             sy = clamp(floor(0.5 + midPt.y), 0.0, matCount - 1.0);
         }
     }
-    // Pass 2: use source-row matrix for final transform
+    float texY = (sy + 0.5) / matCount;
+    vec2 src_px = rotate_and_distort(out_px, texY);
+    if (src_px.x < -99998.0) { fragColor = vec4(0.0,0.0,0.0,1.0); return; }
+    vec2 src = vec2(src_px.x / videoSize.x, 1.0 - src_px.y / videoSize.y);
+    if (any(lessThan(src, vec2(0.0))) || any(greaterThan(src, vec2(1.0)))) {
+        fragColor = vec4(0.0,0.0,0.0,1.0);
+    } else {
+        fragColor = texture(tex, src);
+    }
+}
+"""
+        } else {
+            vsSrc = """
+#version 120
+attribute vec2 pos;
+varying vec2 uv;
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+"""
+            fsSrc = """
+#version 120
+varying vec2 uv;
+uniform sampler2D tex;
+uniform sampler2D matTex;
+uniform vec2  videoSize;
+uniform float matCount;
+uniform vec2  fIn;
+uniform vec2  cIn;
+vec2 rotate_and_distort(vec2 out_px, float texY) {
+    vec4 m0 = texture2D(matTex, vec2(0.125, texY));
+    vec4 m1 = texture2D(matTex, vec2(0.375, texY));
+    vec4 m2 = texture2D(matTex, vec2(0.625, texY));
+    vec4 m3 = texture2D(matTex, vec2(0.875, texY));
+    float _x = m0.r*out_px.x + m0.g*out_px.y + m0.b;
+    float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
+    float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
+    if (_w <= 0.0) return vec2(-99999.0);
+    vec2 pt = fIn * vec2(_x / _w, _y / _w);
+    float sx = m0.a; float sy = m1.a; float ra = m2.a;
+    float ox = m3.r; float oy = m3.g;
+    if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
+        float cos_a = cos(-ra);
+        float sin_a = sin(-ra);
+        pt = vec2(cos_a * pt.x - sin_a * pt.y - sx + ox,
+                  sin_a * pt.x + cos_a * pt.y - sy + oy);
+    }
+    return pt + cIn;
+}
+void main() {
+    vec2 out_px = vec2(uv.x * videoSize.x, (1.0 - uv.y) * videoSize.y);
+    float sy = clamp(out_px.y, 0.0, matCount - 1.0);
+    if (matCount > 1.0) {
+        float midTexY = (floor(matCount * 0.5) + 0.5) / matCount;
+        vec2 midPt = rotate_and_distort(out_px, midTexY);
+        if (midPt.x > -99998.0) {
+            sy = clamp(floor(0.5 + midPt.y), 0.0, matCount - 1.0);
+        }
+    }
     float texY = (sy + 0.5) / matCount;
     vec2 src_px = rotate_and_distort(out_px, texY);
     if (src_px.x < -99998.0) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }
-    // 轉回 GL UV（y 反轉）
     vec2 src = vec2(src_px.x / videoSize.x, 1.0 - src_px.y / videoSize.y);
     if (any(lessThan(src, vec2(0.0))) || any(greaterThan(src, vec2(1.0)))) {
         gl_FragColor = vec4(0.0,0.0,0.0,1.0);
@@ -585,6 +736,8 @@ void main() {
     }
 }
 """
+        }
+
         let vs = compileShader(GLenum(GL_VERTEX_SHADER),   vsSrc)
         let fs = compileShader(GLenum(GL_FRAGMENT_SHADER), fsSrc)
         guard vs != 0, fs != 0 else { return }
@@ -607,7 +760,12 @@ void main() {
         uMatCount  = glGetUniformLocation(warpProg, "matCount")
         uFIn       = glGetUniformLocation(warpProg, "fIn")
         uCIn       = glGetUniformLocation(warpProg, "cIn")
-        print("[Warp] ✅ gyroflow shader compiled (uMatTex=\(uMatTex) uVideoSize=\(uVideoSize))")
+        let profile = useCoreProfile ? "GL 3.2 Core (#version 150)" : "Legacy (#version 120)"
+        print("[Warp] ✅ gyroflow shader compiled (\(profile), uMatTex=\(uMatTex) uVideoSize=\(uVideoSize))")
+
+        // ── VAO（Core profile 必須，Legacy 可選但無害）──
+        glGenVertexArrays(1, &warpVAO)
+        glBindVertexArray(warpVAO)
 
         // ── Fullscreen quad VBO ──
         var verts: [Float] = [-1,-1, 1,-1, -1,1, 1,1]
@@ -617,6 +775,9 @@ void main() {
             glBufferData(GLenum(GL_ARRAY_BUFFER), GLsizeiptr(ptr.count),
                          ptr.baseAddress, GLenum(GL_STATIC_DRAW))
         }
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+        glBindVertexArray(0)
         glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
 
         // ── Per-row matrix texture（RGBA32F，width=3，height 在 draw() 動態設定）──
@@ -673,40 +834,34 @@ void main() {
         // 靜態圖片：顯示不結束
         lib.set(ctx, "image-display-duration", "inf")
 
+        // 預設靜音
+        lib.set(ctx, "mute", "yes")
+
         // video-sync=display-resample：微調影片速度匹配顯示器刷新率，
         // 減少 time-pos 抖動（預設 audio 模式下 time-pos 有 ±幾 ms 波動）。
         lib.set(ctx, "video-sync", "display-resample")
 
-        // ══ IINA 風格 HLG/HDR 三大關鍵選項 ══
+        // ══ IINA 風格 PQ/HDR 設定 ══
+        //   mpv 輸出 PQ，CALayer 用 itur_2100_PQ colorspace
+        //   target-peak 設為顯示器真實峰值亮度，mpv 做精準 tone mapping
 
-        // 1. hdr-compute-peak=no
-        //    不讓 mpv 從 metadata 自動估算 content peak。
-        //    預設 auto 會讀到 HLG metadata peak ≈ 1000 nit，
-        //    導致 reference white (100 nit) 只有 10% → 畫面極暗。
+        let peakNits = displayPeakNits()
+
+        lib.set(ctx, "target-trc",       "pq")
+        lib.set(ctx, "target-prim",      "bt.2020")
+        lib.set(ctx, "target-peak",      String(peakNits))
         lib.set(ctx, "hdr-compute-peak", "no")
-
-        // 2. target-trc=hlg
-        //    直接輸出 HLG（不轉 PQ）。
-        //    mpv 保留 HLG 轉移函數，macOS 透過 itur_2100_HLG colorspace 套用系統 OOTF。
-        //    ★ 避免 HLG→PQ 轉換時 OOTF 重疊導致顏色過飽和。
-        lib.set(ctx, "target-trc", "hlg")
-
-        // 3. target-prim=bt.2020
-        //    Sony HLG 使用 BT.2020 色域，明確指定確保顏色正確。
-        lib.set(ctx, "target-prim", "bt.2020")
-
-        // 4. target-peak（HLG 模式）
-        //    HLG 直接輸出時 peak 設 1000 nit（BT.2100 HLG 定義的 reference display）
-        //    macOS 再根據實際顯示器能力套用 OOTF 縮放。
-        lib.set(ctx, "target-peak", "1000")
+        lib.set(ctx, "tone-mapping",     "auto")
+        lib.set(ctx, "icc-profile-auto", "no")
 
         let edrPotential = NSScreen.main?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0
         let edrCurrent   = NSScreen.main?.maximumExtendedDynamicRangeColorComponentValue ?? 1.0
 
-        print("[mpv] ─── 初始化設定 ─────────────────────")
-        print("[mpv]   target-trc   = hlg  (直接 HLG，不轉 PQ)")
+        print("[mpv] ─── 初始化設定（IINA PQ 方式）──────────")
+        print("[mpv]   target-trc   = pq")
         print("[mpv]   target-prim  = bt.2020")
-        print("[mpv]   target-peak  = 1000 nit  (BT.2100 HLG reference display)")
+        print("[mpv]   target-peak  = \(peakNits) nit  (顯示器實際峰值)")
+        print("[mpv]   colorspace   = itur_2100_PQ")
         print("[mpv]   EDR potential = \(String(format: "%.2f", edrPotential))x")
         print("[mpv]   EDR current   = \(String(format: "%.2f", edrCurrent))x")
         print("[mpv] ─────────────────────────────────────")
@@ -899,40 +1054,42 @@ void main() {
         let edrPotential = NSScreen.main?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0
         let displayPeakNit = Int(203.0 * edrPotential)  // e.g. MBP XDR 7.88× ≈ 1600 nit
 
+        let peakNits = displayPeakNits()
+
         switch gamma {
         case "pq":
-            // PQ / Dolby Vision P8.4：
-            // CAOpenGLLayer + itur_2100_PQ は PQ EOTF を正しく適用しない可能性
-            // （float 0.75 が 75% EDR linear = 1500nit と解釈される）
-            // → mpv で PQ→HLG 変換して出力し、動作確認済みの HLG pipeline を使う
+            // PQ / Dolby Vision：直接 PQ 輸出，mpv 做 tone mapping
             lib.set(ctx, "icc-profile-auto", "no")
-            lib.set(ctx, "target-trc",       "hlg")
-            lib.set(ctx, "target-prim",      "bt.2020")
-            lib.set(ctx, "target-peak",      "1000")
+            lib.set(ctx, "target-trc",       "pq")
+            lib.set(ctx, "target-prim",      primaries)
+            lib.set(ctx, "target-peak",      String(peakNits))
             lib.set(ctx, "hdr-compute-peak", "no")
             lib.set(ctx, "tone-mapping",     "auto")
             newColorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
-            trcLabel = "pq(DV) → HLG 変換  peak=1000nit"
+            wantsExtendedDynamicRangeContent = true
+            trcLabel = "pq → itur_2100_PQ  peak=\(peakNits)nit"
         case "hlg":
-            // HLG（Sony、Apple ProRes HLG 等）：走 HLG pipeline
+            // HLG → PQ 轉換輸出（IINA 方式）
             lib.set(ctx, "icc-profile-auto", "no")
-            lib.set(ctx, "target-trc",       "hlg")
+            lib.set(ctx, "target-trc",       "pq")
             lib.set(ctx, "target-prim",      "bt.2020")
-            lib.set(ctx, "target-peak",      "1000")
+            lib.set(ctx, "target-peak",      String(peakNits))
             lib.set(ctx, "hdr-compute-peak", "no")
             lib.set(ctx, "tone-mapping",     "auto")
-            newColorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
-            trcLabel = "hlg → CALayer itur_2100_HLG  peak=1000nit"
+            newColorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
+            wantsExtendedDynamicRangeContent = true
+            trcLabel = "hlg → pq  itur_2100_PQ  peak=\(peakNits)nit"
         default:
             // SDR（srgb / bt.709 / unknown）
             lib.set(ctx, "icc-profile-auto", "yes")
-            lib.set(ctx, "target-trc",       "auto")
-            lib.set(ctx, "target-prim",      "auto")
+            lib.set(ctx, "target-trc",       "bt.709")
+            lib.set(ctx, "target-prim",      "bt.709")
             lib.set(ctx, "target-peak",      "auto")
             lib.set(ctx, "hdr-compute-peak", "auto")
             lib.set(ctx, "tone-mapping",     "auto")
             newColorspace = CGColorSpace(name: CGColorSpace.sRGB)!
-            trcLabel = "\(gamma) → CALayer sRGB"
+            wantsExtendedDynamicRangeContent = false
+            trcLabel = "\(gamma) → sRGB (EDR off)"
         }
 
         print("[mpv] applyColorMode: gamma=\(gamma) prim=\(primaries) → \(trcLabel)")
@@ -941,6 +1098,32 @@ void main() {
             self?.colorspace = newColorspace
             self?.setNeedsDisplay()
         }
+    }
+
+    // ─── Runtime mpv color option ────────────────────────
+
+    func setColorOption(_ key: String, _ value: String) {
+        guard let ctx = mpvCtx else { return }
+        lib.set(ctx, key, value)
+    }
+
+    func updateColorspace(for trc: String) {
+        let newCS: CGColorSpace
+        switch trc {
+        case "pq":  newCS = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
+        case "hlg": newCS = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
+        default:    newCS = CGColorSpace(name: CGColorSpace.sRGB)!
+        }
+        colorspace = newCS
+        hasPendingFrame = true
+        setNeedsDisplay()
+    }
+
+    func setColorspace(_ name: CFString) {
+        guard let cs = CGColorSpace(name: name) else { return }
+        colorspace = cs
+        hasPendingFrame = true
+        setNeedsDisplay()
     }
 
     // ─── 穩定化資料 ─────────────────────────────────────
@@ -983,6 +1166,16 @@ void main() {
         "cycle".withCString { cyclePtr in
             "pause".withCString { pausePtr in
                 var args: [UnsafePointer<CChar>?] = [cyclePtr, pausePtr, nil]
+                _ = cmdFn(ctx, &args)
+            }
+        }
+    }
+
+    func toggleMute() {
+        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
+        "cycle".withCString { cyclePtr in
+            "mute".withCString { mutePtr in
+                var args: [UnsafePointer<CChar>?] = [cyclePtr, mutePtr, nil]
                 _ = cmdFn(ctx, &args)
             }
         }
@@ -1089,19 +1282,17 @@ void main() {
         }
 
         // ── 同步計算當前幀矩陣（~0.5ms，直接在 render thread 呼叫）──────────
-        // time-pos 由 audio clock 驅動，有微小抖動（±幾 ms），可能導致 frame index
-        // 在 N 和 N+1 之間來回跳動 → 矩陣切換 → 畫面抖。
-        // 修正：正常播放時 frame index 只進不退（單調遞增），消除抖動。
-        // seek 時 fi 大幅變化（|delta| > 2），允許回退並重置 lastGyroFrameIdx。
+        // Spectrum 方式：固定 half-frame 偏移讓取樣點落在幀區間中央，遠離邊界。
+        // 120Hz 顯示器 + 60fps 內容時，同一影片幀會 draw 兩次 → 重用已有的 matTex。
         var currentMatrix: [Float]? = nil
         var gyroFrameIdx = 0
+        var gyroFrameRepeated = false
         if let core = gyroCore, core.isReady, let mpvCtx {
             let timeSec = Double(lib.getString(mpvCtx, "time-pos") ?? "0") ?? 0
-            // time-pos 是音頻驅動的連續時鐘，draw() 執行時已比 callback（幀就緒）
-            // 晚了一個 vsync 週期，導致 time-pos 超前。扣除 vsync 延遲以對齊正確的幀。
-            let vsyncDelay = callbackTime > 0 ? CACurrentMediaTime() - callbackTime : 0
-            let adjustedTime = max(0, timeSec - vsyncDelay)
-            var fi = max(0, min(Int((adjustedTime * core.gyroFps).rounded()),
+            // 固定半幀偏移：讓 floor(t × fps) 落在幀區間中央，避免邊界抖動
+            let halfFrame = 0.5 / core.gyroFps
+            let adjustedTime = max(0, timeSec - halfFrame)
+            var fi = max(0, min(Int(adjustedTime * core.gyroFps),
                                 core.frameCount - 1))
             // 手動微調（, / . 鍵）
             let syncOffset = (NSApp.delegate as? AppDelegate)?.gyroFrameSync ?? 0
@@ -1114,12 +1305,18 @@ void main() {
                 }
                 // delta < -2（seek）或 delta > 0（前進）都允許
             }
-            lastGyroFrameIdx = fi
-            currentMatrix = core.computeMatrix(frameIdx: fi)
-            gyroFrameIdx  = fi
+
+            if fi == lastGyroFrameIdx {
+                // 同一影片幀（120Hz draw 60fps 內容）→ 重用已有 stabFBO + matTex
+                gyroFrameRepeated = true
+            } else {
+                lastGyroFrameIdx = fi
+                currentMatrix = core.computeMatrix(frameIdx: fi)
+            }
+            gyroFrameIdx = fi
         }
 
-        let hasStab = currentMatrix != nil && warpProg != 0
+        let hasStab = (currentMatrix != nil || gyroFrameRepeated) && warpProg != 0
 
         // 穩定化時 mpv 渲染到影片原始解析度的 FBO，warp 在全解析度執行後才 downsample
         let vidW: GLsizei = hasStab ? GLsizei(gyroCore!.gyroVideoW) : w
@@ -1138,54 +1335,60 @@ void main() {
             print("[Warp] stabFBO resized to \(vidW)×\(vidH) (video native resolution)")
         }
 
-        let mpvTargetFBO = hasStab ? GLint(stabFBO) : displayFBO
-        var fbo   = OGLFBO(fbo: mpvTargetFBO, w: vidW, h: vidH, internal_format: 0)
-        var flipY = Int32(1)
-        var depth = Int32(isFloat ? 16 : 8)
+        // ── Pass 1：mpv render（gyroFrameRepeated 時跳過）──────────────
+        if !gyroFrameRepeated {
+            let mpvTargetFBO = hasStab ? GLint(stabFBO) : displayFBO
+            var fbo   = OGLFBO(fbo: mpvTargetFBO, w: vidW, h: vidH, internal_format: 0)
+            var flipY = Int32(1)
+            var depth = Int32(isFloat ? 16 : 8)
 
-        withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
-        withUnsafeMutablePointer(to: &flipY) { flipPtr in
-        withUnsafeMutablePointer(to: &depth) { depthPtr in
-            var params: [RParam] = [
-                RParam(RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
-                RParam(RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
-                RParam(RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
-                RParam()
-            ]
-            let err = params.withUnsafeMutableBufferPointer { buf in
-                renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
-            }
-            if err != 0 { print("[GL] mpv_render_context_render error: \(err)") }
-        }}}
+            withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
+            withUnsafeMutablePointer(to: &flipY) { flipPtr in
+            withUnsafeMutablePointer(to: &depth) { depthPtr in
+                var params: [RParam] = [
+                    RParam(RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
+                    RParam(RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
+                    RParam(RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
+                    RParam()
+                ]
+                let err = params.withUnsafeMutableBufferPointer { buf in
+                    renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
+                }
+                if err != 0 { print("[GL] mpv_render_context_render error: \(err)") }
+            }}}
+        }
 
         // ── Pass 2：gyroflow per-row warp ──────────────────
-        if hasStab, let server = gyroCore, let matrices = currentMatrix {
+        if hasStab, let server = gyroCore {
             let vH = Int(server.gyroVideoH)
             let vW = server.gyroVideoW
 
-            // 若 matTex 尺寸改變，重新配置
-            if matTexH != vH {
-                matTexH = vH
+            // 新幀：上傳矩陣；repeated 幀：重用已有的 matTex
+            if let matrices = currentMatrix {
+                // 若 matTex 尺寸改變，重新配置
+                if matTexH != vH {
+                    matTexH = vH
+                    glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
+                    glTexImage2D(GLenum(GL_TEXTURE_2D), 0,
+                                 0x8814,   // GL_RGBA32F (OpenGL 3.0)
+                                 4, GLsizei(vH), 0,
+                                 GLenum(GL_RGBA), GLenum(GL_FLOAT), nil)
+                    glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+                    print("[Warp] matTex resized to 4×\(vH) RGBA32F")
+                }
+
+                // 矩陣就緒：上傳
                 glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
-                glTexImage2D(GLenum(GL_TEXTURE_2D), 0,
-                             0x8814,   // GL_RGBA32F (OpenGL 3.0)
-                             4, GLsizei(vH), 0,
-                             GLenum(GL_RGBA), GLenum(GL_FLOAT), nil)
+                matrices.withUnsafeBytes { ptr in
+                    glTexSubImage2D(GLenum(GL_TEXTURE_2D), 0,
+                                    0, 0, 4, GLsizei(vH),
+                                    GLenum(GL_RGBA), GLenum(GL_FLOAT),
+                                    ptr.baseAddress)
+                }
                 glBindTexture(GLenum(GL_TEXTURE_2D), 0)
-                print("[Warp] matTex resized to 4×\(vH) RGBA32F")
             }
 
-            // 矩陣就緒：上傳並執行 warp
-            glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
-            matrices.withUnsafeBytes { ptr in
-                glTexSubImage2D(GLenum(GL_TEXTURE_2D), 0,
-                                0, 0, 4, GLsizei(vH),
-                                GLenum(GL_RGBA), GLenum(GL_FLOAT),
-                                ptr.baseAddress)
-            }
-            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
-
-            // 切回 display FBO
+            // 切回 display FBO，執行 warp（新幀和 repeated 幀都需要）
             glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(displayFBO))
             glViewport(0, 0, w, h)
             glUseProgram(warpProg)
@@ -1209,18 +1412,15 @@ void main() {
 
             if frameCount <= 60 && frameCount % 10 == 0 {
                 let ts = Double(lib.getString(mpvCtx!, "time-pos") ?? "?") ?? 0
-                let vd = callbackTime > 0 ? CACurrentMediaTime() - callbackTime : 0
-                print(String(format: "[GL] draw#%d → fi=%d  tp=%.4f  adj=%.4f  vsyncD=%.1fms",
-                             frameCount, gyroFrameIdx, ts, ts - vd, vd * 1000))
+                print(String(format: "[GL] draw#%d → fi=%d  tp=%.4f  repeated=%@",
+                             frameCount, gyroFrameIdx, ts,
+                             gyroFrameRepeated ? "yes" : "no"))
             }
 
-            // Draw fullscreen quad
-            glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
-            glEnableVertexAttribArray(0)
-            glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+            // Draw fullscreen quad (VAO 包含 VBO 綁定 + attrib 設定)
+            glBindVertexArray(warpVAO)
             glDrawArrays(GLenum(GL_TRIANGLE_STRIP), 0, 4)
-            glDisableVertexAttribArray(0)
-            glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
+            glBindVertexArray(0)
 
             glActiveTexture(GLenum(GL_TEXTURE1))
             glBindTexture(GLenum(GL_TEXTURE_2D), 0)
@@ -1305,17 +1505,22 @@ class MPVView: NSView {
     func seek(_ seconds: Double, absolute: Bool) { mpvLayer.seek(seconds, absolute: absolute) }
     func setPause(_ paused: Bool) { mpvLayer.setPause(paused) }
     func togglePause() { mpvLayer.togglePause() }
+    func toggleMute()  { mpvLayer.toggleMute()  }
     func frameStep() { mpvLayer.frameStep() }
     func frameBackStep() { mpvLayer.frameBackStep() }
     var currentTimeSec: Double { mpvLayer.currentTimeSec }
     func loadGyroCore(_ server: GyroCore?) { mpvLayer.loadGyroCore(server) }
     func resetGyroFrameIdx() { mpvLayer.lastGyroFrameIdx = nil }
+    func setColorOption(_ key: String, _ value: String) { mpvLayer.setColorOption(key, value) }
+    func updateColorspace(for trc: String) { mpvLayer.updateColorspace(for: trc) }
+    func setColorspace(_ name: CFString) { mpvLayer.setColorspace(name) }
 
     var renderFPS: Double      { mpvLayer.renderFPS      }
     var renderCV: Double       { mpvLayer.renderCV       }
     var videoFPS: Double       { mpvLayer.videoFPS       }
     var droppedFrames: Int     { mpvLayer.droppedFrames  }
     var stabilityScore: Float  { mpvLayer.stabilityScore }
+    var isFloat: Bool           { mpvLayer.isFloat        }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1463,6 +1668,28 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var stabManager = StabilizationManager()
     var keyMonitor: Any?
 
+    // ── mpv color parameter cycling (number keys 1-6) ──
+    static let trcOptions     = ["hlg", "pq", "srgb", "auto", "linear", "gamma2.2", "bt.1886"]
+    static let primOptions    = ["bt.2020", "bt.709", "display-p3", "auto"]
+    static let peakOptions    = [String(displayPeakNits()), "1000", "auto", "203", "400", "600", "1600"]
+    static let hdrPeakOptions = ["no", "auto", "yes"]
+    static let tmapOptions    = ["auto", "clip", "mobius", "reinhard", "hable", "bt.2390", "spline"]
+    static let csOptions: [(label: String, name: CFString)] = [
+        ("itur_2100_HLG",  CGColorSpace.itur_2100_HLG),
+        ("itur_2100_PQ",   CGColorSpace.itur_2100_PQ),
+        ("sRGB",           CGColorSpace.sRGB),
+        ("displayP3",      CGColorSpace.displayP3),
+        ("linearSRGB",     CGColorSpace.linearSRGB),
+        ("extendedLinearSRGB", CGColorSpace.extendedLinearSRGB),
+        ("genericRGBLinear", CGColorSpace.genericRGBLinear),
+    ]
+    var trcIndex:     Int = 1   // target-trc  (pq)
+    var primIndex:    Int = 0   // target-prim (bt.2020)
+    var peakIndex:    Int = 0   // target-peak (由 displayPeakNits 決定初始值)
+    var hdrPeakIndex: Int = 0   // hdr-compute-peak (no)
+    var tmapIndex:    Int = 0   // tone-mapping (auto)
+    var csIndex:      Int = 1   // CGColorSpace (itur_2100_PQ)
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard lib.load() else {
             let a = NSAlert()
@@ -1547,6 +1774,13 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ──────────────────────────────────────────────────────────
 
         // ── 鍵盤快捷鍵 ────────────────────────────────────────
+        // 1 (18)     : cycle target-trc
+        // 2 (19)     : cycle target-prim
+        // 3 (20)     : cycle target-peak
+        // 4 (21)     : cycle hdr-compute-peak
+        // 5 (23)     : cycle tone-mapping
+        // 6 (22)     : cycle CGColorSpace
+        // M (46)     : toggle mute
         // S (1)      : Phase 1：切換原始↔穩定化（若無則觸發 gyroflow 渲染）
         // R (15)     : gyro 穩定化 on/off
         // T (17)     : 切換 Rolling Shutter 修正
@@ -1556,11 +1790,61 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ↓ (125)   : offset -5ms（Shift: -1ms）
         // ← (123)   : 倒退 5 秒
         // → (124)   : 快進 5 秒
+        // M (46)     : toggle mute
         // Space (49) : 暫停/繼續
         // Q (12)     : 離開
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             switch event.keyCode {
+            case 18:                                         // 1：cycle target-trc
+                self.trcIndex = (self.trcIndex + 1) % Self.trcOptions.count
+                let val = Self.trcOptions[self.trcIndex]
+                self.mpvView.setColorOption("target-trc", val)
+                self.mpvView.seek(0, absolute: true)
+                print("[color] target-trc = \(val)")
+                self.updateTitle()
+                return nil
+            case 19:                                         // 2：cycle target-prim
+                self.primIndex = (self.primIndex + 1) % Self.primOptions.count
+                let val = Self.primOptions[self.primIndex]
+                self.mpvView.setColorOption("target-prim", val)
+                self.mpvView.seek(0, absolute: true)
+                print("[color] target-prim = \(val)")
+                self.updateTitle()
+                return nil
+            case 20:                                         // 3：cycle target-peak
+                self.peakIndex = (self.peakIndex + 1) % Self.peakOptions.count
+                let val = Self.peakOptions[self.peakIndex]
+                self.mpvView.setColorOption("target-peak", val)
+                self.mpvView.seek(0, absolute: true)
+                print("[color] target-peak = \(val)")
+                self.updateTitle()
+                return nil
+            case 21:                                         // 4：cycle hdr-compute-peak
+                self.hdrPeakIndex = (self.hdrPeakIndex + 1) % Self.hdrPeakOptions.count
+                let val = Self.hdrPeakOptions[self.hdrPeakIndex]
+                self.mpvView.setColorOption("hdr-compute-peak", val)
+                self.mpvView.seek(0, absolute: true)
+                print("[color] hdr-compute-peak = \(val)")
+                self.updateTitle()
+                return nil
+            case 23:                                         // 5：cycle tone-mapping
+                self.tmapIndex = (self.tmapIndex + 1) % Self.tmapOptions.count
+                let val = Self.tmapOptions[self.tmapIndex]
+                self.mpvView.setColorOption("tone-mapping", val)
+                self.mpvView.seek(0, absolute: true)
+                print("[color] tone-mapping = \(val)")
+                self.updateTitle()
+                return nil
+            case 22:                                         // 6：cycle CGColorSpace
+                self.csIndex = (self.csIndex + 1) % Self.csOptions.count
+                let opt = Self.csOptions[self.csIndex]
+                self.mpvView.setColorspace(opt.name)
+                self.mpvView.seek(0, absolute: true)
+                print("[color] CGColorSpace = \(opt.label)")
+                self.updateTitle()
+                return nil
+            case 46:  self.mpvView.toggleMute(); return nil   // M：toggle mute
             case 1:   self.handleStabilizeKey(); return nil  // S：Phase 1 切換
             case 15:                                         // R：切換 gyro 穩定化 on/off
                 if self.gyroCore != nil {
@@ -1685,10 +1969,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         gyroCore = server
         updateTitle()
 
-        let effReadout = gyroRSEnabled ? readout : 0.0
+        var cfg = GyroConfig()
+        cfg.readoutMs = gyroRSEnabled ? readout : 0.0
+        cfg.smooth = gyroSmoothness
+        cfg.gyroOffsetMs = gyroOffsetMs
         server.start(
-            videoPath: videoPath, lensPath: lensPath, readoutMs: effReadout,
-            smoothness: gyroSmoothness, gyroOffsetMs: gyroOffsetMs,
+            videoPath: videoPath, lensPath: lensPath, config: cfg,
             onReady: { [weak self] in
                 guard let self, self.gyroCore === server else { return }
                 self.mpvView.loadGyroCore(server)
@@ -1772,8 +2058,20 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // ── 視窗標題更新 ──────────────────────────────────────
+    private var colorStatusString: String {
+        let trc   = Self.trcOptions[trcIndex]
+        let prim  = Self.primOptions[primIndex]
+        let peak  = Self.peakOptions[peakIndex]
+        let cpk   = Self.hdrPeakOptions[hdrPeakIndex]
+        let tm    = Self.tmapOptions[tmapIndex]
+        let cs    = Self.csOptions[csIndex].label
+        let depth = mpvView.isFloat ? 16 : 8
+        return "depth=\(depth) 1:target-trc=\(trc) 2:target-prim=\(prim) 3:target-peak=\(peak) 4:hdr-compute-peak=\(cpk) 5:tone-mapping=\(tm) 6:colorspace=\(cs)"
+    }
+
     private func updateTitle(status: String? = nil) {
         let name = originalPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "testmpv"
+        let color = colorStatusString
         if let s = status {
             window.title = "testmpv — \(s)"
         } else if stabManager.isRendering {
@@ -1783,16 +2081,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let params = String(format: "smooth=%.2f  RS=%@  offset=%dms",
                                 gyroSmoothness, gyroRSEnabled ? "ON" : "OFF", Int(gyroOffsetMs)) + syncStr
             window.title = srv.isReady
-                ? "\(name)  [gyrocore  \(params)]"
+                ? "\(name)  [gyro \(params)]  \(color)"
                 : "\(name)  [gyrocore 初始化中…]"
         } else if isShowingStabilized {
-            window.title = "\(name)  [Phase 1]  (S=切回原始  R=載入 gyro)"
+            window.title = "\(name)  [Phase 1]  \(color)"
         } else {
-            let hasStab = originalPath.map { FileManager.default.fileExists(
-                atPath: StabilizationManager.stabilizedPath(for: $0)) } ?? false
-            window.title = hasStab
-                ? "\(name)  (S=Phase1  R=gyro穩定)"
-                : "\(name)  (S=gyroflow渲染  R=gyro穩定)"
+            window.title = "\(name)  \(color)"
         }
     }
 
