@@ -34,6 +34,10 @@ final class MPVController: @unchecked Sendable {
     /// True once gyro loaded successfully for this video — survives stopGyroStab().
     /// Reset only on reset() (new video load).
     private(set) var gyroAvailable: Bool = false
+    /// Debug: last gyro error message (nil = no error or not attempted).
+    private(set) var gyroLastError: String? = nil
+    /// Debug: true while gyro is currently loading in background.
+    private(set) var gyroIsLoading: Bool = false
     /// Retained during loading and playback; nil = stab off.
     private var activeGyroCore: GyroCore?
     /// When true, the user pressed play while gyro was loading — defer actual unpause
@@ -70,6 +74,8 @@ final class MPVController: @unchecked Sendable {
     func reset() {
         stopGyroStab()
         gyroAvailable = false
+        gyroLastError = nil
+        gyroIsLoading = false
         currentTime = 0
         duration = 0
         isPlaying = false
@@ -99,6 +105,8 @@ final class MPVController: @unchecked Sendable {
             v.setWaitingForGyro(true)
         }
         gyroLoadPending = true
+        gyroLastError = nil
+        gyroIsLoading = true
         // If config.readoutMs is 0, estimate from fps
         var cfg = config
         if cfg.readoutMs <= 0 {
@@ -111,8 +119,9 @@ final class MPVController: @unchecked Sendable {
             lensPath: lensPath,
             config: cfg,
             onReady: { [weak self] in
-                guard let self else { return }
+                guard let self, self.activeGyroCore === core else { return }  // stale guard
                 self.gyroLoadPending = false
+                self.gyroIsLoading = false
                 self.gyroStabEnabled = true
                 self.gyroAvailable = true
                 self.nsView?.loadGyroCore(core)  // clears waitingForGyro
@@ -124,13 +133,17 @@ final class MPVController: @unchecked Sendable {
             },
             onError: { [weak self] msg in
                 print("[gyro] ❌ \(msg)")
-                self?.gyroLoadPending = false
-                self?.activeGyroCore = nil
-                self?.nsView?.setWaitingForGyro(false)  // 失敗也要解除抑制
+                guard let self, self.activeGyroCore === core else { return }  // stale guard
+                self.gyroLoadPending = false
+                self.gyroIsLoading = false
+                self.gyroLastError = msg
+                self.gyroAvailable = false
+                self.activeGyroCore = nil
+                self.nsView?.setWaitingForGyro(false)  // 失敗也要解除抑制
                 // Still start playback if user pressed play during gyro load
-                if self?.deferredPlay == true {
-                    self?.deferredPlay = false
-                    self?.nsView?.setPause(false)
+                if self.deferredPlay {
+                    self.deferredPlay = false
+                    self.nsView?.setPause(false)
                 }
             }
         )

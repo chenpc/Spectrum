@@ -3,18 +3,27 @@ import OpenGL.GL3
 import CoreVideo
 import Darwin
 
+// MARK: - Display Peak Nits
+
+/// Query the display's actual peak HDR luminance via CoreDisplay private API (IINA approach).
+func displayPeakNits() -> Int {
+    typealias FnCreateInfo = @convention(c) (UInt32) -> CFDictionary?
+    guard let cd = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY),
+          let sym = dlsym(cd, "CoreDisplay_DisplayCreateInfoDictionary") else { return 400 }
+    let fn = unsafeBitCast(sym, to: FnCreateInfo.self)
+    guard let dict = fn(CGMainDisplayID()) as? [String: Any] else { return 400 }
+    if let v = dict["NonReferencePeakHDRLuminance"] as? Int { return v }  // Apple Silicon
+    if let v = dict["DisplayBacklight"] as? Int { return v }              // Intel
+    return 400
+}
+
 // MARK: - MPVOpenGLLayer
 
 /// CAOpenGLLayer that renders video via libmpv with per-content HDR configuration.
 ///
-/// HDR pipeline — colorspace-only steering, mpv options left on auto:
-///   HLG   → CALayer colorspace = itur_2100_HLG; mpv target-trc = auto
-///   HDR10 → CALayer colorspace = itur_2100_PQ;  mpv target-trc = auto
-///   SDR toggle → CALayer = sRGB, target-trc = bt.709 (explicit, to force SDR output)
-///   SDR content → CALayer = sRGB, target-trc = auto
-///
-/// Dolby Vision (Apple Profile 8.4) decoded by VideoToolbox as HLG, not PQ.
-/// DV is handled by AVPlayer (see PhotoDetailView.loadVideo).
+/// HDR pipeline — IINA-style PQ output:
+///   All HDR (HLG/HDR10/DV) → mpv target-trc=pq, CALayer = itur_2100_PQ
+///   SDR content / HDR toggle off → mpv target-trc=bt.709, CALayer = sRGB
 class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
 
     private var mpvCtx:    OpaquePointer?
@@ -75,7 +84,9 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     private var stabH:    GLsizei = 0
     // Warp shader program + VBO
     private var warpProg: GLuint = 0
+    private var warpVAO:  GLuint = 0     // VAO (Core profile 必須)
     private var warpVBO:  GLuint = 0
+    private var useCoreProfile = false
     // Per-row matrix texture (width=4, height=videoH, RGBA32F)
     private var matTexId: GLuint = 0
     private var matTexH:  Int    = 0
@@ -110,34 +121,81 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     // MARK: - OpenGL setup
 
     private func setupGL() {
-        // Try 64-bit float framebuffer (better HDR precision)
-        let floatAttrs: [CGLPixelFormatAttribute] = [
-            kCGLPFADoubleBuffer, kCGLPFAAccelerated,
-            kCGLPFAColorSize,  _CGLPixelFormatAttribute(rawValue: 64),
-            kCGLPFAColorFloat, _CGLPixelFormatAttribute(rawValue: 0)
+        // ── IINA 風格：漸進式 pixel format 選擇 ──────────────────
+        let glVersions: [CGLOpenGLProfile] = [
+            kCGLOGLPVersion_3_2_Core,
+            kCGLOGLPVersion_Legacy
         ]
-        var pf: CGLPixelFormatObj?
-        var n = GLint(0)
+        let glFormat10Bit: [CGLPixelFormatAttribute] = [
+            kCGLPFAColorSize, _CGLPixelFormatAttribute(rawValue: 64),
+            kCGLPFAColorFloat
+        ]
+        let glFormatOptional: [[CGLPixelFormatAttribute]] = [
+            [kCGLPFABackingStore],
+            [kCGLPFAAllowOfflineRenderers],
+            [kCGLPFASupportsAutomaticGraphicsSwitching]
+        ]
 
-        if CGLChoosePixelFormat(floatAttrs, &pf, &n) == kCGLNoError, let pf {
-            isFloat = true
-            cglPF = pf
-            contentsFormat = .RGBA16Float
-        } else {
-            let stdAttrs: [CGLPixelFormatAttribute] = [
-                kCGLPFADoubleBuffer, kCGLPFAAccelerated,
-                _CGLPixelFormatAttribute(rawValue: 0)
+        var pf: CGLPixelFormatObj?
+        var npix = GLint(0)
+        var depth: GLint = 8
+
+        outer: for ver in glVersions {
+            let glBase: [CGLPixelFormatAttribute] = [
+                kCGLPFAOpenGLProfile, CGLPixelFormatAttribute(ver.rawValue),
+                kCGLPFAAccelerated,
+                kCGLPFADoubleBuffer
             ]
-            CGLChoosePixelFormat(stdAttrs, &pf, &n)
-            cglPF = pf
+            var groups: [[CGLPixelFormatAttribute]] = [glBase, glFormat10Bit] + glFormatOptional
+
+            for index in stride(from: groups.count - 1, through: 0, by: -1) {
+                let format = groups.flatMap { $0 } + [_CGLPixelFormatAttribute(rawValue: 0)]
+                let err = CGLChoosePixelFormat(format, &pf, &npix)
+                if err == kCGLBadAttribute || err == kCGLBadPixelFormat || pf == nil {
+                    let removed = groups.remove(at: index)
+                    let names = removed.map { String($0.rawValue) }.joined(separator: ",")
+                    print("[GL]   移除屬性 [\(names)]，繼續嘗試...")
+                } else if err == kCGLNoError {
+                    useCoreProfile = (ver == kCGLOGLPVersion_3_2_Core)
+                    let has10Bit = groups.contains(where: { $0 == glFormat10Bit })
+                    depth = has10Bit ? 16 : 8
+                    let profile = useCoreProfile ? "3.2 Core" : "Legacy"
+                    print("[GL] ✅ Pixel format: \(profile), depth=\(depth)")
+                    break outer
+                }
+            }
         }
 
-        // Default to SDR; prepareForContent(isHLG:) sets HLG colorspace when needed.
+        guard let pixelFormat = pf else {
+            print("[GL] ❌ 無法建立任何 pixel format!")
+            return
+        }
+
+        cglPF = pixelFormat
+        isFloat = (depth > 8)
+        if isFloat { contentsFormat = .RGBA16Float }
+
+        // EDR + initial PQ colorspace (prepareForContent will set dynamically)
         wantsExtendedDynamicRangeContent = true
 
-        if let pf = cglPF {
-            CGLCreateContext(pf, nil, &cglCtx)
+        // ── IINA 風格：Context 建立 ──────────────────────────
+        var ctx: CGLContextObj?
+        CGLCreateContext(pixelFormat, nil, &ctx)
+        guard let context = ctx else {
+            print("[GL] ❌ 無法建立 CGL context!")
+            return
         }
+        cglCtx = context
+
+        // Sync to vertical retrace
+        var swapInterval: GLint = 1
+        CGLSetParameter(context, kCGLCPSwapInterval, &swapInterval)
+
+        // Enable multi-threaded GL engine
+        CGLEnable(context, kCGLCEMPEngine)
+
+        print("[GL] CGL context created (isFloat=\(isFloat), coreProfile=\(useCoreProfile), swap=1, MPEngine=on)")
+
         setupWarpPipeline()
     }
 
@@ -157,10 +215,8 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
         lib.set(ctx, "background", "color")    // black bars for letterbox
 
         // Sync & frame-drop settings (from Settings > Playback)
-        let avSync    = UserDefaults.standard.object(forKey: "mpvAVSync") as? Bool ?? true
-        let frameDrop = UserDefaults.standard.object(forKey: "mpvFrameDrop") as? Bool ?? true
-        let syncMode = avSync ? "display-resample" : "display-desync"
-        let dropMode = frameDrop ? "vo" : "no"
+        let syncMode = UserDefaults.standard.string(forKey: "mpvVideoSync") ?? "display-resample"
+        let dropMode = UserDefaults.standard.string(forKey: "mpvFrameDrop") ?? "vo"
         lib.set(ctx, "video-sync", syncMode)
         lib.set(ctx, "framedrop", dropMode)
         print("[mpv] init: video-sync=\(syncMode)  framedrop=\(dropMode)  hwdec=\(hwdec)")
@@ -177,47 +233,30 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     /// Apply CALayer colorspace + mpv tone-mapping options for the given content and HDR state.
     /// Called on new file load (showHDR=true) and on user HDR/SDR toggle.
     func applyHDRSettings(showHDR: Bool, hdrType: VideoHDRType?) {
-        let isHLG = hdrType == .hlg
-        let isPQ  = hdrType == .hdr10
-        // DV P8.4: base layer is HLG but signal levels are calibrated for the DV RPU.
-        // Without RPU, HLG playback over-brightens highlights. Force SDR tone-map instead.
-        let isDV  = hdrType == .dolbyVision
-
-        // --- CALayer colorspace ---
-        // HLG/DV: itur_2100_HLG so macOS compositor applies HLG EOTF for HDR display.
-        // HDR10: itur_2100_PQ. SDR / HDR-toggle-off: sRGB.
-        if showHDR && (isHLG || isDV) {
-            colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-        } else if showHDR && isPQ {
-            colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-        } else {
-            colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-        }
-
-        guard let ctx = mpvCtx else { return }
         let lib = LibMPV.shared
+        guard let ctx = mpvCtx else { return }
+        let peakNits = displayPeakNits()
 
-        // --- mpv rendering options ---
-        if !showHDR && hdrType != nil {
-            // SDR toggle: force bt.709 so mpv tone-maps HDR → SDR output
-            lib.set(ctx, "target-trc",  "bt.709")
-            lib.set(ctx, "target-prim", "bt.709")
-            lib.set(ctx, "target-peak", "auto")
-            lib.set(ctx, "hdr-compute-peak", "auto")
-        } else if isDV {
-            // DV P8.4: HLG base layer with signal calibrated for DV RPU.
-            // Without RPU, hdr-compute-peak=auto over-measures peak → over-bright.
-            // Lock to 1000-nit HLG reference so macOS compositor gets correct EDR mapping.
-            lib.set(ctx, "target-trc",  "pq")
-            lib.set(ctx, "target-prim", "bt.2020")
-            lib.set(ctx, "target-peak", "1000")
+        if showHDR && hdrType != nil {
+            // All HDR content (HLG/HDR10/DV) → PQ output (IINA approach)
+            lib.set(ctx, "icc-profile-auto", "no")
+            lib.set(ctx, "target-trc",       "pq")
+            lib.set(ctx, "target-prim",      "bt.2020")
+            lib.set(ctx, "target-peak",      String(peakNits))
             lib.set(ctx, "hdr-compute-peak", "no")
+            lib.set(ctx, "tone-mapping",     "auto")
+            colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+            wantsExtendedDynamicRangeContent = true
         } else {
-            // HLG / HDR10 / SDR content: let mpv auto-detect everything
-            lib.set(ctx, "target-trc",  "auto")
-            lib.set(ctx, "target-prim", "auto")
-            lib.set(ctx, "target-peak", "auto")
+            // SDR content or HDR toggle off
+            lib.set(ctx, "icc-profile-auto", "yes")
+            lib.set(ctx, "target-trc",       "bt.709")
+            lib.set(ctx, "target-prim",      "bt.709")
+            lib.set(ctx, "target-peak",      "auto")
             lib.set(ctx, "hdr-compute-peak", "auto")
+            lib.set(ctx, "tone-mapping",     "auto")
+            colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+            wantsExtendedDynamicRangeContent = false
         }
         pendingFrame = true
         setNeedsDisplay()
@@ -280,42 +319,44 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
         guard let cglCtx else { return }
         CGLSetCurrentContext(cglCtx)
 
-        let vsSrc = """
-#version 120
-attribute vec2 pos;
-varying vec2 uv;
+        // ── Shader 版本根據 GL profile 選擇 ──
+        // Core 3.2: #version 150 (in/out, texture(), 需要 VAO)
+        // Legacy:   #version 120 (attribute/varying, texture2D, gl_FragColor)
+        let vsSrc: String
+        let fsSrc: String
+        let blitFsSrc: String
+
+        if useCoreProfile {
+            vsSrc = """
+#version 150
+in vec2 pos;
+out vec2 uv;
 void main() {
     uv = pos * 0.5 + 0.5;
     gl_Position = vec4(pos, 0.0, 1.0);
 }
 """
-        // Fragment shader: gyroflow-core pipeline with IBIS/OIS + two-pass RS row indexing.
-        // matTex layout (width=4, RGBA32F):
-        //   texel(0,y) = [m00, m01, m02, sx]   (matrix row 0 + IBIS shift x)
-        //   texel(1,y) = [m10, m11, m12, sy]   (matrix row 1 + IBIS shift y)
-        //   texel(2,y) = [m20, m21, m22, ra]   (matrix row 2 + IBIS rotation angle)
-        //   texel(3,y) = [ox,  oy,  0,   0]   (OIS offset)
-        let fsSrc = """
-#version 120
-varying vec2 uv;
+            // Fragment shader: gyroflow-core pipeline with IBIS/OIS + two-pass RS row indexing.
+            fsSrc = """
+#version 150
+in vec2 uv;
+out vec4 fragColor;
 uniform sampler2D tex;
 uniform sampler2D matTex;
 uniform vec2  videoSize;
 uniform float matCount;
 uniform vec2  fIn;
 uniform vec2  cIn;
-// rotate_and_distort: mat3 × out_px → perspective divide → fIn × → IBIS → + cIn
 vec2 rotate_and_distort(vec2 out_px, float texY) {
-    vec4 m0 = texture2D(matTex, vec2(0.125, texY));
-    vec4 m1 = texture2D(matTex, vec2(0.375, texY));
-    vec4 m2 = texture2D(matTex, vec2(0.625, texY));
-    vec4 m3 = texture2D(matTex, vec2(0.875, texY));
+    vec4 m0 = texture(matTex, vec2(0.125, texY));
+    vec4 m1 = texture(matTex, vec2(0.375, texY));
+    vec4 m2 = texture(matTex, vec2(0.625, texY));
+    vec4 m3 = texture(matTex, vec2(0.875, texY));
     float _x = m0.r*out_px.x + m0.g*out_px.y + m0.b;
     float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
     float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
     if (_w <= 0.0) return vec2(-99999.0);
     vec2 pt = fIn * vec2(_x / _w, _y / _w);
-    // IBIS correction (matches gyroflow rotate_and_distort)
     float sx = m0.a; float sy = m1.a; float ra = m2.a;
     float ox = m3.r; float oy = m3.g;
     if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
@@ -328,8 +369,6 @@ vec2 rotate_and_distort(vec2 out_px, float texY) {
 }
 void main() {
     vec2 out_px = vec2(uv.x * videoSize.x, (1.0 - uv.y) * videoSize.y);
-    // Two-pass RS row indexing (matches gyroflow undistort_coord):
-    // Pass 1: use middle matrix to estimate source row
     float sy = clamp(out_px.y, 0.0, matCount - 1.0);
     if (matCount > 1.0) {
         float midTexY = (floor(matCount * 0.5) + 0.5) / matCount;
@@ -338,7 +377,75 @@ void main() {
             sy = clamp(floor(0.5 + midPt.y), 0.0, matCount - 1.0);
         }
     }
-    // Pass 2: use source-row matrix for final transform
+    float texY = (sy + 0.5) / matCount;
+    vec2 src_px = rotate_and_distort(out_px, texY);
+    if (src_px.x < -99998.0) { fragColor = vec4(0.0,0.0,0.0,1.0); return; }
+    vec2 src = vec2(src_px.x / videoSize.x, 1.0 - src_px.y / videoSize.y);
+    if (any(lessThan(src, vec2(0.0))) || any(greaterThan(src, vec2(1.0)))) {
+        fragColor = vec4(0.0,0.0,0.0,1.0);
+    } else {
+        fragColor = texture(tex, src);
+    }
+}
+"""
+            blitFsSrc = """
+#version 150
+in vec2 uv;
+out vec4 fragColor;
+uniform sampler2D tex;
+void main() {
+    fragColor = texture(tex, uv);
+}
+"""
+        } else {
+            vsSrc = """
+#version 120
+attribute vec2 pos;
+varying vec2 uv;
+void main() {
+    uv = pos * 0.5 + 0.5;
+    gl_Position = vec4(pos, 0.0, 1.0);
+}
+"""
+            fsSrc = """
+#version 120
+varying vec2 uv;
+uniform sampler2D tex;
+uniform sampler2D matTex;
+uniform vec2  videoSize;
+uniform float matCount;
+uniform vec2  fIn;
+uniform vec2  cIn;
+vec2 rotate_and_distort(vec2 out_px, float texY) {
+    vec4 m0 = texture2D(matTex, vec2(0.125, texY));
+    vec4 m1 = texture2D(matTex, vec2(0.375, texY));
+    vec4 m2 = texture2D(matTex, vec2(0.625, texY));
+    vec4 m3 = texture2D(matTex, vec2(0.875, texY));
+    float _x = m0.r*out_px.x + m0.g*out_px.y + m0.b;
+    float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
+    float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
+    if (_w <= 0.0) return vec2(-99999.0);
+    vec2 pt = fIn * vec2(_x / _w, _y / _w);
+    float sx = m0.a; float sy = m1.a; float ra = m2.a;
+    float ox = m3.r; float oy = m3.g;
+    if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
+        float cos_a = cos(-ra);
+        float sin_a = sin(-ra);
+        pt = vec2(cos_a * pt.x - sin_a * pt.y - sx + ox,
+                  sin_a * pt.x + cos_a * pt.y - sy + oy);
+    }
+    return pt + cIn;
+}
+void main() {
+    vec2 out_px = vec2(uv.x * videoSize.x, (1.0 - uv.y) * videoSize.y);
+    float sy = clamp(out_px.y, 0.0, matCount - 1.0);
+    if (matCount > 1.0) {
+        float midTexY = (floor(matCount * 0.5) + 0.5) / matCount;
+        vec2 midPt = rotate_and_distort(out_px, midTexY);
+        if (midPt.x > -99998.0) {
+            sy = clamp(floor(0.5 + midPt.y), 0.0, matCount - 1.0);
+        }
+    }
     float texY = (sy + 0.5) / matCount;
     vec2 src_px = rotate_and_distort(out_px, texY);
     if (src_px.x < -99998.0) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }
@@ -350,6 +457,16 @@ void main() {
     }
 }
 """
+            blitFsSrc = """
+#version 120
+varying vec2 uv;
+uniform sampler2D tex;
+void main() {
+    gl_FragColor = texture2D(tex, uv);
+}
+"""
+        }
+
         let vs = compileShader(GLenum(GL_VERTEX_SHADER),   vsSrc)
         let fs = compileShader(GLenum(GL_FRAGMENT_SHADER), fsSrc)
         guard vs != 0, fs != 0 else { return }
@@ -373,9 +490,14 @@ void main() {
         uMatCount  = glGetUniformLocation(warpProg, "matCount")
         uFIn       = glGetUniformLocation(warpProg, "fIn")
         uCIn       = glGetUniformLocation(warpProg, "cIn")
-        print("[Warp] ✅ shader compiled")
+        let profile = useCoreProfile ? "GL 3.2 Core (#version 150)" : "Legacy (#version 120)"
+        print("[Warp] ✅ shader compiled (\(profile))")
 
-        // Fullscreen quad VBO
+        // ── VAO（Core profile 必須，Legacy 可選但無害）──
+        glGenVertexArrays(1, &warpVAO)
+        glBindVertexArray(warpVAO)
+
+        // ── Fullscreen quad VBO ──
         var verts: [Float] = [-1,-1, 1,-1, -1,1, 1,1]
         glGenBuffers(1, &warpVBO)
         glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
@@ -383,6 +505,9 @@ void main() {
             glBufferData(GLenum(GL_ARRAY_BUFFER), GLsizeiptr(ptr.count),
                          ptr.baseAddress, GLenum(GL_STATIC_DRAW))
         }
+        glEnableVertexAttribArray(0)
+        glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+        glBindVertexArray(0)
         glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
 
         // Per-row matrix texture (RGBA32F, width=4, height set dynamically)
@@ -405,14 +530,6 @@ void main() {
         glBindTexture(GLenum(GL_TEXTURE_2D), 0)
 
         // Blit shader (simple texture pass-through for non-gyro letterbox)
-        let blitFsSrc = """
-#version 120
-varying vec2 uv;
-uniform sampler2D tex;
-void main() {
-    gl_FragColor = texture2D(tex, uv);
-}
-"""
         let blitVs = compileShader(GLenum(GL_VERTEX_SHADER), vsSrc)
         let blitFs = compileShader(GLenum(GL_FRAGMENT_SHADER), blitFsSrc)
         if blitVs != 0 && blitFs != 0 {
@@ -427,7 +544,7 @@ void main() {
             glGetProgramiv(blitProg, GLenum(GL_LINK_STATUS), &blitStatus)
             if blitStatus == GLint(GL_TRUE) {
                 uBlitTex = glGetUniformLocation(blitProg, "tex")
-                print("[Blit] ✅ shader compiled")
+                print("[Blit] ✅ shader compiled (\(profile))")
             } else {
                 print("[Blit] ❌ Shader link failed"); blitProg = 0
             }
@@ -459,10 +576,8 @@ void main() {
         waitingForGyro = false   // gyro ready（或 detach）→ 允許渲染
         // Apply user's Sync & Drop settings (from Settings → Playback).
         if let ctx = mpvCtx {
-            let avSync    = UserDefaults.standard.object(forKey: "mpvAVSync") as? Bool ?? true
-            let frameDrop = UserDefaults.standard.object(forKey: "mpvFrameDrop") as? Bool ?? true
-            let sync     = avSync ? "display-resample" : "display-desync"
-            let dropMode = frameDrop ? "vo" : "no"
+            let sync     = UserDefaults.standard.string(forKey: "mpvVideoSync") ?? "display-resample"
+            let dropMode = UserDefaults.standard.string(forKey: "mpvFrameDrop") ?? "vo"
             LibMPV.shared.setProperty(ctx, "video-sync", sync)
             LibMPV.shared.setProperty(ctx, "framedrop", dropMode)
             print("[mpv] loadGyroCore: video-sync=\(sync)  framedrop=\(dropMode)  gyro=\(core != nil)")
@@ -819,12 +934,10 @@ void main() {
             glUniform2f(uFIn, core.gyroFx, core.gyroFy)
             glUniform2f(uCIn, core.gyroCx, core.gyroCy)
 
-            glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
-            glEnableVertexAttribArray(0)
-            glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+            // Draw fullscreen quad (VAO 包含 VBO 綁定 + attrib 設定)
+            glBindVertexArray(warpVAO)
             glDrawArrays(GLenum(GL_TRIANGLE_STRIP), 0, 4)
-            glDisableVertexAttribArray(0)
-            glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
+            glBindVertexArray(0)
 
             glActiveTexture(GLenum(GL_TEXTURE1))
             glBindTexture(GLenum(GL_TEXTURE_2D), 0)
@@ -844,12 +957,9 @@ void main() {
             glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
             glUniform1i(uBlitTex, 0)
 
-            glBindBuffer(GLenum(GL_ARRAY_BUFFER), warpVBO)
-            glEnableVertexAttribArray(0)
-            glVertexAttribPointer(0, 2, GLenum(GL_FLOAT), GLboolean(GL_FALSE), 8, nil)
+            glBindVertexArray(warpVAO)
             glDrawArrays(GLenum(GL_TRIANGLE_STRIP), 0, 4)
-            glDisableVertexAttribArray(0)
-            glBindBuffer(GLenum(GL_ARRAY_BUFFER), 0)
+            glBindVertexArray(0)
 
             glBindTexture(GLenum(GL_TEXTURE_2D), 0)
             glUseProgram(0)
@@ -887,6 +997,7 @@ void main() {
         // Warp pipeline cleanup (must be called on GL context thread; best-effort here)
         if warpProg != 0 { glDeleteProgram(warpProg) }
         if blitProg != 0 { glDeleteProgram(blitProg) }
+        if warpVAO  != 0 { glDeleteVertexArrays(1, &warpVAO) }
         if warpVBO  != 0 { glDeleteBuffers(1, &warpVBO) }
         if matTexId != 0 { glDeleteTextures(1, &matTexId) }
         if stabTex  != 0 { glDeleteTextures(1, &stabTex) }

@@ -155,12 +155,13 @@ pub extern "C" fn gyrocore_load(
         eprintln!("[gyrocore] {}×{} @ {:.3} fps, {} frames", vid_w, vid_h, fps, frame_count);
 
         // ── Motion data diagnostics ────────────────────────────────────────
+        let has_motion;
         {
             let gyro = stab.gyro.read();
             let md = gyro.file_metadata.read();
             let raw_count = md.raw_imu.len();
             let quat_count = md.quaternions.len();
-            let has_motion = md.has_motion();
+            has_motion = md.has_motion();
             let source = md.detected_source.as_deref().unwrap_or("unknown");
             let orientation = md.imu_orientation.as_deref().unwrap_or("none");
             let readout = md.frame_readout_time;
@@ -193,6 +194,9 @@ pub extern "C" fn gyrocore_load(
                 eprintln!("[gyrocore]   max |gyro|   : {:.4} rad/s ({:.2} deg/s)", max_gyro, max_gyro.to_degrees());
             }
             eprintln!("[gyrocore] ──────────────────────────────────────────────");
+        }
+        if !has_motion {
+            return Err("No motion/gyro data found in video".into());
         }
 
         // ── Lens profile + .gyroflow project ────────────────────────────────

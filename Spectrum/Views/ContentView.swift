@@ -62,10 +62,18 @@ struct GyroConfigBindingKey: FocusedValueKey {
     typealias Value = Binding<String?>
 }
 
+struct MpvControllerKey: FocusedValueKey {
+    typealias Value = MPVController
+}
+
 extension FocusedValues {
     var gyroConfigBinding: Binding<String?>? {
         get { self[GyroConfigBindingKey.self] }
         set { self[GyroConfigBindingKey.self] = newValue }
+    }
+    var mpvController: MPVController? {
+        get { self[MpvControllerKey.self] }
+        set { self[MpvControllerKey.self] = newValue }
     }
     var photoNavigation: PhotoNavigationAction? {
         get { self[PhotoNavigationKey.self] }

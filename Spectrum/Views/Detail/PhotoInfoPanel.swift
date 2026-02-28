@@ -4,6 +4,7 @@ struct PhotoInfoPanel: View {
     @Bindable var photo: Photo
     var isHDR: Bool = false
     @FocusedValue(\.gyroConfigBinding) var gyroConfigBinding
+    @FocusedValue(\.mpvController) var mpvController
 
     @State private var selectedTab: InspectorTab = .info
 
@@ -107,6 +108,22 @@ struct PhotoInfoPanel: View {
             }
             if let codec = photo.audioCodec {
                 LabeledContent("Audio Codec", value: codec)
+            }
+        }
+        if let mpv = mpvController {
+            Section("Gyro Debug") {
+                LabeledContent("dylibFound", value: GyroCore.dylibFound ? "YES" : "NO")
+                LabeledContent("gyroIsLoading", value: mpv.gyroIsLoading ? "YES" : "NO")
+                LabeledContent("gyroAvailable", value: mpv.gyroAvailable ? "YES" : "NO")
+                LabeledContent("gyroStabEnabled", value: mpv.gyroStabEnabled ? "YES" : "NO")
+                if let err = mpv.gyroLastError {
+                    LabeledContent("lastError") {
+                        Text(err)
+                            .foregroundStyle(.red)
+                            .font(.caption2)
+                    }
+                }
+                LabeledContent("computeMs", value: String(format: "%.2f", mpv.gyroComputeMs))
             }
         }
     }

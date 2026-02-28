@@ -47,7 +47,7 @@ struct PhotoDetailView: View {
     @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
     @AppStorage("playerForHLG") private var playerForHLG: String = "libmpv"
     @AppStorage("playerForHDR10") private var playerForHDR10: String = "libmpv"
-    @AppStorage("playerForDolbyVision") private var playerForDV: String = "avplayer"
+    @AppStorage("playerForDolbyVision") private var playerForDV: String = "libmpv"
     @AppStorage("playerForSLog2") private var playerForSLog2: String = "libmpv"
     @AppStorage("playerForSLog3") private var playerForSLog3: String = "libmpv"
     @AppStorage("gyroStabEnabled") private var gyroStabEnabled: Bool = true
@@ -87,6 +87,7 @@ struct PhotoDetailView: View {
         .background(.black)
         .focusedSceneValue(\.mpvPlayPause, useMPV ? mpvController.togglePlayPause : nil)
         .focusedSceneValue(\.gyroConfigBinding, $gyroConfigJson)
+        .focusedSceneValue(\.mpvController, useMPV ? mpvController : nil)
         .onChange(of: useMPV) { _, active in
             if active {
                 mpvController.diagnosticsEnabled = showMPVDiagBadge

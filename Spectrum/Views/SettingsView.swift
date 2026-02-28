@@ -80,14 +80,14 @@ private struct CacheSettingsTab: View {
 private struct PlaybackSettingsTab: View {
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
     @AppStorage("mpvHwdec") private var mpvHwdec: String = "auto"
-    @AppStorage("mpvAVSync") private var mpvAVSync: Bool = true
-    @AppStorage("mpvFrameDrop") private var mpvFrameDrop: Bool = true
+    @AppStorage("mpvVideoSync") private var mpvVideoSync: String = "display-resample"
+    @AppStorage("mpvFrameDrop") private var mpvFrameDrop: String = "vo"
 
     // Per-type player selection (no "default" indirection)
     @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
     @AppStorage("playerForHLG") private var playerForHLG: String = "libmpv"
     @AppStorage("playerForHDR10") private var playerForHDR10: String = "libmpv"
-    @AppStorage("playerForDolbyVision") private var playerForDV: String = "avplayer"
+    @AppStorage("playerForDolbyVision") private var playerForDV: String = "libmpv"
     @AppStorage("playerForSLog2") private var playerForSLog2: String = "libmpv"
     @AppStorage("playerForSLog3") private var playerForSLog3: String = "libmpv"
 
@@ -117,10 +117,42 @@ private struct PlaybackSettingsTab: View {
             }
 
             Section("Sync & Drop") {
-                Toggle("Video/Audio Sync", isOn: $mpvAVSync)
-                    .help("關閉後影音可不同步，不會為追趕 audio 而丟幀")
-                Toggle("Frame Drop", isOn: $mpvFrameDrop)
-                    .help("關閉後完全不丟幀（可能導致 audio 延遲）")
+                Picker("Video Sync", selection: $mpvVideoSync) {
+                    Text("display-resample (default)")
+                        .help("微調播放速度對齊 vsync，最流暢")
+                        .tag("display-resample")
+                    Text("display-vdrop")
+                        .help("丟影片幀對齊 vsync")
+                        .tag("display-vdrop")
+                    Text("display-adrop")
+                        .help("丟音訊幀對齊 vsync")
+                        .tag("display-adrop")
+                    Text("display-desync")
+                        .help("影片依 vsync 播放，不追趕音訊")
+                        .tag("display-desync")
+                    Text("audio")
+                        .help("影片依音訊時鐘播放，mpv 預設")
+                        .tag("audio")
+                    Text("desync")
+                        .help("影音完全獨立，不同步")
+                        .tag("desync")
+                }
+
+                Picker("Frame Drop", selection: $mpvFrameDrop) {
+                    Text("vo (default)")
+                        .help("在輸出層丟幀，解碼照常")
+                        .tag("vo")
+                    Text("decoder")
+                        .help("在解碼層丟幀，更省 CPU")
+                        .tag("decoder")
+                    Text("decoder+vo")
+                        .help("解碼層 + 輸出層都可丟幀")
+                        .tag("decoder+vo")
+                    Text("no")
+                        .help("完全不丟幀")
+                        .tag("no")
+                }
+
                 Text("變更於下次載入影片生效")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)
