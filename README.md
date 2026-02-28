@@ -50,9 +50,17 @@ Real-time video stabilization powered by [gyroflow-core](https://github.com/gyro
 - **HDR metadata** — Color profile, bit depth, headroom value, dynamic range indicator
 - **Video metadata** — Duration, video codec, audio codec
 
+### Non-Destructive Editing
+
+- **Rotate** — 90° counter-clockwise rotation
+- **Flip** — Horizontal mirror, composable with rotation (D4 group math)
+- **Crop** — Visual crop overlay with rule-of-thirds grid, drag handles, pixel dimensions
+- **XMP sidecar** — All edits stored in `{filename}.xmp` (EXIF orientation 1–8 + Camera Raw crop), never modifies original files
+- **Restore** — One-click reset to original
+
 ### Other
 
-- **Fullscreen mode** — `f` key or Cmd+F for distraction-free viewing
+- **Fullscreen mode** — `f` key for distraction-free viewing (photos and videos)
 - **Thumbnail caching** — Three-tier cache (memory + disk + on-demand), configurable size limit (100 MB – 2 GB), LRU eviction
 - **Security-scoped bookmarks** — macOS Sandbox compatible with persistent folder access
 - **File format support** — JPEG, HEIF/HEIC, PNG, TIFF, RAW (DNG, CR3, NEF, etc.), MP4, MOV, MKV
@@ -120,7 +128,9 @@ Spectrum/
 │   ├── MPVLib.swift             # libmpv runtime loader (dlopen)
 │   ├── GyroCore.swift           # gyroflow-core runtime loader
 │   ├── FolderScanner.swift      # Filesystem scanning (@ModelActor)
-│   └── ThumbnailService.swift   # Three-tier thumbnail cache
+│   ├── ThumbnailService.swift   # Three-tier thumbnail cache
+│   ├── XMPSidecarService.swift  # XMP sidecar read/write (edits + gyro config)
+│   └── CGImageRotation.swift    # CGImage rotate + flip
 ├── ViewModels/       # Timeline section logic
 └── Resources/        # App icon, bundled dylibs
 
@@ -133,4 +143,4 @@ gyroflow/             # Git submodule — gyroflow
 
 ## License
 
-MIT
+[GPL-3.0](LICENSE)
