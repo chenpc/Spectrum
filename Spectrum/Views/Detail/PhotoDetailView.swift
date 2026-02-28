@@ -22,6 +22,10 @@ struct PhotoDetailView: View {
     @State private var hlgCGImage: CGImage?
     @State private var useMPV = false
     @State private var mpvController = MPVController()
+    @State private var isCropMode = false
+    @State private var editingCropRect = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
+    @State private var activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+    @State private var activeRotation: Int = 0
     @State private var mpvControlsVisible = true
     @State private var mpvHideTask: Task<Void, Never>? = nil
     @State private var mpvBarOffset: CGSize = .zero
@@ -56,7 +60,8 @@ struct PhotoDetailView: View {
     @AppStorage("gyroMaxZoomIterations") private var gyroMaxZoomIterations: Int = 5
     @AppStorage("gyroUseGravityVectors") private var gyroUseGravityVectors: Bool = false
     @AppStorage("gyroVideoSpeed") private var gyroVideoSpeed: Double = 1.0
-    @AppStorage("gyroHorizonLockAmount") private var gyroHorizonLockAmount: Double = 0
+    @AppStorage("gyroHorizonLockEnabled") private var gyroHorizonLockEnabled: Bool = false
+    @AppStorage("gyroHorizonLockAmount") private var gyroHorizonLockAmount: Double = 1.0
     @AppStorage("gyroHorizonLockRoll") private var gyroHorizonLockRoll: Double = 0
     @AppStorage("gyroPerAxis") private var gyroPerAxis: Bool = false
     @AppStorage("gyroSmoothnessPitch") private var gyroSmoothnessPitch: Double = 0
@@ -99,6 +104,7 @@ struct PhotoDetailView: View {
             avController.detach()
         }
         .task(id: photo.filePath) {
+            isCropMode = false
             if photo.isVideo {
                 await loadVideo()
             } else {
@@ -142,6 +148,25 @@ struct PhotoDetailView: View {
                     }
                     .help("Zoom Out")
 
+                    Divider()
+
+                    Button { enterCropMode() } label: {
+                        Image(systemName: "crop")
+                    }
+                    .help("Crop")
+                    .disabled(isCropMode)
+
+                    Button { rotateLeft() } label: {
+                        Image(systemName: "rotate.left")
+                    }
+                    .help("Rotate Left")
+                    .disabled(isCropMode)
+
+                    Button { rotateRight() } label: {
+                        Image(systemName: "rotate.right")
+                    }
+                    .help("Rotate Right")
+                    .disabled(isCropMode)
                 }
 
                 Button {
@@ -252,42 +277,76 @@ struct PhotoDetailView: View {
         }
     }
 
+    private var isTransposed: Bool { activeRotation == 90 || activeRotation == 270 }
+
     @ViewBuilder
     private var imageContent: some View {
         GeometryReader { geometry in
             if let image {
                 let imageSize = image.size
-                let fitScale = min(
-                    geometry.size.width / imageSize.width,
-                    geometry.size.height / imageSize.height
-                )
-                let displayWidth = imageSize.width * fitScale * zoomLevel
-                let displayHeight = imageSize.height * fitScale * zoomLevel
+                // Rotated dimensions
+                let rotatedW = isTransposed ? imageSize.height : imageSize.width
+                let rotatedH = isTransposed ? imageSize.width : imageSize.height
+                let cropW = rotatedW * activeCrop.width
+                let cropH = rotatedH * activeCrop.height
+                let fitScale = min(geometry.size.width / cropW, geometry.size.height / cropH)
+                let displayZoom: CGFloat = isCropMode ? 1.0 : zoomLevel
+                // Original (pre-rotation) dimensions at fitScale
+                let origW = imageSize.width * fitScale * displayZoom
+                let origH = imageSize.height * fitScale * displayZoom
+                // Rotated dimensions at fitScale
+                let fullW = rotatedW * fitScale * displayZoom
+                let fullH = rotatedH * fitScale * displayZoom
+                let cropDisplayW = cropW * fitScale * displayZoom
+                let cropDisplayH = cropH * fitScale * displayZoom
 
-                ZStack(alignment: .topLeading) {
+                ZStack {
                     ScrollView([.horizontal, .vertical]) {
                         Group {
                             if let hlgCGImage, showHDR, hdrFormat == .hlg {
-                                // mpv-style: CALayer with explicit itur_2100_HLG colorspace + EDR hierarchy
                                 HLGImageView(cgImage: hlgCGImage)
                             } else {
-                                // Gain Map / SDR / HLG-SDR-toggle: NSImageView path
                                 HDRImageView(image: image, dynamicRange: imageDynamicRange)
                             }
                         }
-                        .frame(width: displayWidth, height: displayHeight)
+                        .frame(width: origW, height: origH)
+                        .rotationEffect(.degrees(Double(activeRotation)))
+                        .frame(width: fullW, height: fullH)
+                        .offset(
+                            x: -activeCrop.minX * fullW,
+                            y: -activeCrop.minY * fullH
+                        )
+                        .frame(width: cropDisplayW, height: cropDisplayH, alignment: .topLeading)
+                        .clipped()
+                        .contentShape(Rectangle())
                         .frame(
                             minWidth: geometry.size.width,
                             minHeight: geometry.size.height
                         )
                     }
+                    .scrollDisabled(isCropMode)
                     .contextMenu {
                         Button("Show in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: photo.filePath)])
                         }
                     }
 
-                    if isHDR && showMPVDiagBadge {
+                    if isCropMode {
+                        CropOverlayView(
+                            cropRect: $editingCropRect,
+                            imagePixelWidth: isTransposed ? photo.pixelHeight : photo.pixelWidth,
+                            imagePixelHeight: isTransposed ? photo.pixelWidth : photo.pixelHeight,
+                            hasExistingCrop: !photo.editOps.isEmpty,
+                            onApply: applyCrop,
+                            onCancel: cancelCrop,
+                            onRestore: restoreCrop
+                        )
+                        .frame(width: fullW, height: fullH)
+                        .transition(.opacity)
+                    }
+                }
+                .overlay(alignment: .topLeading) {
+                    if isHDR && showMPVDiagBadge && !isCropMode {
                         Button { showHDR.toggle() } label: { hdrBadge }
                             .buttonStyle(.plain)
                             .help(showHDR ? "Switch to SDR" : "Switch to HDR")
@@ -301,6 +360,97 @@ struct PhotoDetailView: View {
                     .frame(width: geometry.size.width, height: geometry.size.height)
                     .onAppear { containerSize = geometry.size }
             }
+        }
+    }
+
+    // MARK: - Rotate actions
+
+    private func rotateLeft() {
+        var ops = photo.editOps
+        ops.append(.rotate(-90))
+        photo.editOps = ops
+        let c = photo.compositeEdit
+        activeRotation = c.rotation
+        if let crop = c.crop {
+            activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
+        } else {
+            activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+    }
+
+    private func rotateRight() {
+        var ops = photo.editOps
+        ops.append(.rotate(90))
+        photo.editOps = ops
+        let c = photo.compositeEdit
+        activeRotation = c.rotation
+        if let crop = c.crop {
+            activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
+        } else {
+            activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
+    }
+
+    // MARK: - Crop actions
+
+    private func enterCropMode() {
+        if let existing = photo.compositeEdit.crop {
+            editingCropRect = CGRect(
+                x: existing.x, y: existing.y,
+                width: existing.width, height: existing.height
+            )
+        } else {
+            editingCropRect = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
+        }
+        zoomLevel = 1.0
+        withAnimation(.easeInOut(duration: 0.4)) {
+            activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+            isCropMode = true
+        }
+    }
+
+    private func applyCrop() {
+        let crop = CropRect(
+            x: editingCropRect.origin.x,
+            y: editingCropRect.origin.y,
+            width: editingCropRect.width,
+            height: editingCropRect.height
+        )
+        // Remove last .crop op if any, then append the new one
+        var ops = photo.editOps.filter { if case .crop = $0 { return false }; return true }
+        ops.append(.crop(crop))
+        photo.editOps = ops
+        zoomLevel = 1.0
+        withAnimation(.easeInOut(duration: 0.4)) {
+            activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
+            isCropMode = false
+        }
+    }
+
+    private func cancelCrop() {
+        zoomLevel = 1.0
+        let c = photo.compositeEdit
+        if let existing = c.crop {
+            withAnimation(.easeInOut(duration: 0.4)) {
+                activeCrop = CGRect(
+                    x: existing.x, y: existing.y,
+                    width: existing.width, height: existing.height
+                )
+                isCropMode = false
+            }
+        } else {
+            withAnimation(.easeInOut(duration: 0.25)) {
+                isCropMode = false
+            }
+        }
+    }
+
+    private func restoreCrop() {
+        photo.editOps = []
+        activeRotation = 0
+        activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+        withAnimation(.easeInOut(duration: 0.25)) {
+            isCropMode = false
         }
     }
 
@@ -445,6 +595,7 @@ struct PhotoDetailView: View {
             maxZoomIterations:    gyroMaxZoomIterations,
             useGravityVectors:    gyroUseGravityVectors,
             videoSpeed:           gyroVideoSpeed,
+            horizonLockEnabled:   gyroHorizonLockEnabled,
             horizonLockAmount:    gyroHorizonLockAmount,
             horizonLockRoll:      gyroHorizonLockRoll,
             perAxis:              gyroPerAxis,
@@ -670,6 +821,14 @@ struct PhotoDetailView: View {
         isHDR = false
         hdrFormat = nil
         hlgCGImage = nil
+
+        let c = photo.compositeEdit
+        activeRotation = c.rotation
+        if let crop = c.crop {
+            activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
+        } else {
+            activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
+        }
 
         let path = photo.filePath
 

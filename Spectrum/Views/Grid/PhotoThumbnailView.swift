@@ -71,10 +71,30 @@ struct PhotoThumbnailView: View {
         return photo.resolveBookmarkData(from: folders)
     }
 
+    private var displayThumbnail: NSImage? {
+        guard let thumbnail else { return nil }
+        let composite = photo.compositeEdit
+        // No edits — return thumbnail as-is
+        guard composite.rotation != 0 || composite.crop != nil else { return thumbnail }
+        guard var cg = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return thumbnail }
+        // 1. Rotate first
+        if composite.rotation != 0, let rotated = rotateCGImage(cg, degrees: composite.rotation) {
+            cg = rotated
+        }
+        // 2. Crop in rotated space
+        if let crop = composite.crop {
+            let pixelRect = crop.pixelRect(imageWidth: cg.width, imageHeight: cg.height)
+            if let cropped = cg.cropping(to: pixelRect) {
+                cg = cropped
+            }
+        }
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+    }
+
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
-            if let thumbnail {
-                HDRThumbnailImageView(image: thumbnail)
+            if let displayThumbnail {
+                HDRThumbnailImageView(image: displayThumbnail)
                     .frame(minWidth: 150, minHeight: 150)
                     .frame(height: 150)
                     .clipped()

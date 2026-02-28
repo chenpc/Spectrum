@@ -158,7 +158,8 @@ private struct GyroSettingsTab: View {
     @AppStorage("gyroMaxZoomIterations") private var maxZoomIterations: Int = 5
     @AppStorage("gyroUseGravityVectors") private var useGravityVectors: Bool = false
     @AppStorage("gyroVideoSpeed") private var videoSpeed: Double = 1.0
-    @AppStorage("gyroHorizonLockAmount") private var horizonLockAmount: Double = 0
+    @AppStorage("gyroHorizonLockEnabled") private var horizonLockEnabled: Bool = false
+    @AppStorage("gyroHorizonLockAmount") private var horizonLockAmount: Double = 1.0
     @AppStorage("gyroHorizonLockRoll") private var horizonLockRoll: Double = 0
     @AppStorage("gyroPerAxis") private var perAxis: Bool = false
     @AppStorage("gyroSmoothnessPitch") private var smoothnessPitch: Double = 0
@@ -208,12 +209,25 @@ private struct GyroSettingsTab: View {
                         maxZoomIterations = 5
                         useGravityVectors = false
                         videoSpeed = 1.0
-                        horizonLockAmount = 0
+                        horizonLockEnabled = false
+                        horizonLockAmount = 1.0
                         horizonLockRoll = 0
                         perAxis = false
                         smoothnessPitch = 0
                         smoothnessYaw = 0
                         smoothnessRoll = 0
+                    }
+                }
+
+                // MARK: Horizon Lock
+                Section("Horizon Lock") {
+                    Toggle("Enable Horizon Lock", isOn: $horizonLockEnabled)
+                        .onChange(of: horizonLockEnabled) { _, on in
+                            if on && horizonLockAmount < 0.01 { horizonLockAmount = 1.0 }
+                        }
+                    if horizonLockEnabled {
+                        sliderRow("Lock Amount", value: $horizonLockAmount, range: 0...1.0, step: 0.01)
+                        sliderRow("Roll (°)", value: $horizonLockRoll, range: -180...180, step: 0.1)
                     }
                 }
 
@@ -312,12 +326,6 @@ private struct GyroSettingsTab: View {
                     sliderRow("Max Zoom (%)", value: $maxZoom, range: 100...300, step: 1)
 
                     Stepper("Max Zoom Iterations: \(maxZoomIterations)", value: $maxZoomIterations, in: 1...20)
-                }
-
-                // MARK: Horizon Lock
-                Section("Horizon Lock") {
-                    sliderRow("Lock Amount", value: $horizonLockAmount, range: 0...1.0, step: 0.01)
-                    sliderRow("Roll (°)", value: $horizonLockRoll, range: -180...180, step: 0.1)
                 }
 
                 // MARK: Playback

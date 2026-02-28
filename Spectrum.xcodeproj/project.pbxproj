@@ -52,6 +52,10 @@
 		AA100015 /* sdr_photo.jpg in Resources */ = {isa = PBXBuildFile; fileRef = AB100015 /* sdr_photo.jpg */; };
 		AA000070 /* Log.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000070 /* Log.swift */; };
 		AA000071 /* FolderMonitor.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000071 /* FolderMonitor.swift */; };
+		AA000072 /* CropRect.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000072 /* CropRect.swift */; };
+		AA000073 /* CropOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000073 /* CropOverlayView.swift */; };
+		AA000074 /* EditOp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000074 /* EditOp.swift */; };
+		AA000075 /* CGImageRotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000075 /* CGImageRotation.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -114,6 +118,10 @@
 		AC100001 /* SpectrumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpectrumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		AB000070 /* Log.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = Log.swift; sourceTree = "<group>"; };
 		AB000071 /* FolderMonitor.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderMonitor.swift; sourceTree = "<group>"; };
+		AB000072 /* CropRect.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CropRect.swift; sourceTree = "<group>"; };
+		AB000073 /* CropOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CropOverlayView.swift; sourceTree = "<group>"; };
+		AB000074 /* EditOp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOp.swift; sourceTree = "<group>"; };
+		AB000075 /* CGImageRotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGImageRotation.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -166,6 +174,8 @@
 			children = (
 				AB000003 /* Photo.swift */,
 				AB000006 /* ScannedFolder.swift */,
+				AB000072 /* CropRect.swift */,
+				AB000074 /* EditOp.swift */,
 			);
 			path = Models;
 			sourceTree = "<group>";
@@ -198,6 +208,7 @@
 				AB000032 /* FolderListCache.swift */,
 				AB000031 /* NetworkVolumeService.swift */,
 				AB000071 /* FolderMonitor.swift */,
+				AB000075 /* CGImageRotation.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -248,6 +259,7 @@
 				AB000055 /* MPVController.swift */,
 				AB000056 /* MPVControlBar.swift */,
 				AB000052 /* AVPlayerControlBar.swift */,
+				AB000073 /* CropOverlayView.swift */,
 			);
 			path = Detail;
 			sourceTree = "<group>";
@@ -504,6 +516,10 @@
 				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
 				AA000070 /* Log.swift in Sources */,
 				AA000071 /* FolderMonitor.swift in Sources */,
+				AA000072 /* CropRect.swift in Sources */,
+				AA000073 /* CropOverlayView.swift in Sources */,
+				AA000074 /* EditOp.swift in Sources */,
+				AA000075 /* CGImageRotation.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

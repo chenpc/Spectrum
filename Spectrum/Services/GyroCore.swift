@@ -19,7 +19,8 @@ struct GyroConfig: Codable {
     var maxZoomIterations:    Int    = 5
     var useGravityVectors:    Bool   = false
     var videoSpeed:           Double = 1.0
-    var horizonLockAmount:    Double = 0      // 0.0–1.0
+    var horizonLockEnabled:   Bool   = false
+    var horizonLockAmount:    Double = 1.0    // 0.0–1.0
     var horizonLockRoll:      Double = 0      // Degrees
     var perAxis:              Bool   = false
     var smoothnessPitch:      Double = 0      // 0 = use global
@@ -40,6 +41,7 @@ struct GyroConfig: Codable {
         case maxZoomIterations    = "max_zoom_iterations"
         case useGravityVectors    = "use_gravity_vectors"
         case videoSpeed           = "video_speed"
+        case horizonLockEnabled   = "horizon_lock_enabled"
         case horizonLockAmount    = "horizon_lock_amount"
         case horizonLockRoll      = "horizon_lock_roll"
         case perAxis              = "per_axis"

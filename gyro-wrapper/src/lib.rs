@@ -54,6 +54,7 @@ struct Config {
     max_zoom_iterations:    i32,     // Iterations for max zoom computation
     use_gravity_vectors:    bool,    // Use accelerometer gravity for horizon
     video_speed:            f64,     // Playback speed (1.0 = normal)
+    horizon_lock_enabled:   bool,    // Enable horizon lock
     horizon_lock_amount:    f64,     // 0.0–1.0 horizon lock strength
     horizon_lock_roll:      f64,     // Additional roll correction in degrees
     per_axis:               bool,    // Enable per-axis smoothing
@@ -78,7 +79,8 @@ impl Default for Config {
             max_zoom_iterations:    5,
             use_gravity_vectors:    false,
             video_speed:            1.0,
-            horizon_lock_amount:    0.0,
+            horizon_lock_enabled:   false,
+            horizon_lock_amount:    1.0,
             horizon_lock_roll:      0.0,
             per_axis:               false,
             smoothness_pitch:       0.0,    // 0 = use global
@@ -293,8 +295,10 @@ pub extern "C" fn gyrocore_load(
         stab.set_video_speed(cfg.video_speed, true, true, true);
 
         // ── Horizon lock ────────────────────────────────────────────────────
-        if cfg.horizon_lock_amount > 0.0 || cfg.horizon_lock_roll.abs() > 0.001 {
-            stab.set_horizon_lock(cfg.horizon_lock_amount, cfg.horizon_lock_roll, false, 0.0);
+        // set_horizon_lock(lock_percent, roll, lock_pitch, pitch)
+        // lock_percent is 0–100 (not 0–1); lock_enabled is set internally when > 1e-6
+        if cfg.horizon_lock_enabled {
+            stab.set_horizon_lock(cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll, false, 0.0);
         }
 
         // ── Rolling shutter ──────────────────────────────────────────────────
@@ -318,8 +322,8 @@ pub extern "C" fn gyrocore_load(
         }
         eprintln!("[gyrocore]   fov: {:.2}  lens_correction: {:.2}  zoom_method: {}  zoom_window: {:.1}s  max_zoom: {:.0}%",
                   cfg.fov, cfg.lens_correction_amount, cfg.zooming_method, cfg.adaptive_zoom, cfg.max_zoom);
-        if cfg.horizon_lock_amount > 0.0 || cfg.horizon_lock_roll.abs() > 0.001 {
-            eprintln!("[gyrocore]   horizon_lock: amount={:.2}  roll={:.1}°", cfg.horizon_lock_amount, cfg.horizon_lock_roll);
+        if cfg.horizon_lock_enabled {
+            eprintln!("[gyrocore]   horizon_lock: ON  amount={:.0}%  roll={:.1}°", cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll);
         }
         eprintln!("[gyrocore]   readout_ms : {:.3} (metadata: {:?}, arg: {:.3})  gyro_offset: {:.3} ms",
                   eff_readout, stab.gyro.read().file_metadata.read().frame_readout_time, cfg.readout_ms, cfg.gyro_offset_ms);

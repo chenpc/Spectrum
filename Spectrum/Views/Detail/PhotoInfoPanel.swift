@@ -341,7 +341,8 @@ private struct GyroConfigSection: View {
     @AppStorage("gyroMaxZoomIterations") private var globalMaxZoomIterations: Int = 5
     @AppStorage("gyroUseGravityVectors") private var globalUseGravityVectors: Bool = false
     @AppStorage("gyroVideoSpeed") private var globalVideoSpeed: Double = 1.0
-    @AppStorage("gyroHorizonLockAmount") private var globalHorizonLockAmount: Double = 0
+    @AppStorage("gyroHorizonLockEnabled") private var globalHorizonLockEnabled: Bool = false
+    @AppStorage("gyroHorizonLockAmount") private var globalHorizonLockAmount: Double = 1.0
     @AppStorage("gyroHorizonLockRoll") private var globalHorizonLockRoll: Double = 0
     @AppStorage("gyroPerAxis") private var globalPerAxis: Bool = false
     @AppStorage("gyroSmoothnessPitch") private var globalSmoothnessPitch: Double = 0
@@ -396,6 +397,20 @@ private struct GyroConfigSection: View {
                         }
                     }
                     .font(.caption)
+                }
+
+                Section("Horizon Lock") {
+                    Toggle("Enable Horizon Lock", isOn: binding(\.horizonLockEnabled))
+                        .onChange(of: config.horizonLockEnabled) { _, on in
+                            if on && config.horizonLockAmount < 0.01 {
+                                config.horizonLockAmount = 1.0
+                                dirty = true
+                            }
+                        }
+                    if config.horizonLockEnabled {
+                        sliderRow("Lock Amount", value: binding(\.horizonLockAmount), range: 0...1.0, step: 0.01)
+                        sliderRow("Roll (°)", value: binding(\.horizonLockRoll), range: -180...180, step: 0.1)
+                    }
                 }
 
                 Section("Smoothing") {
@@ -457,11 +472,6 @@ private struct GyroConfigSection: View {
                             value: binding(\.maxZoomIterations), in: 1...20)
                 }
 
-                Section("Horizon Lock") {
-                    sliderRow("Lock Amount", value: binding(\.horizonLockAmount), range: 0...1.0, step: 0.01)
-                    sliderRow("Roll (°)", value: binding(\.horizonLockRoll), range: -180...180, step: 0.1)
-                }
-
                 Section("Video Speed") {
                     sliderRow("Speed", value: binding(\.videoSpeed), range: 0.1...4.0, step: 0.1)
                 }
@@ -487,6 +497,7 @@ private struct GyroConfigSection: View {
             maxZoomIterations: globalMaxZoomIterations,
             useGravityVectors: globalUseGravityVectors,
             videoSpeed: globalVideoSpeed,
+            horizonLockEnabled: globalHorizonLockEnabled,
             horizonLockAmount: globalHorizonLockAmount,
             horizonLockRoll: globalHorizonLockRoll,
             perAxis: globalPerAxis,
