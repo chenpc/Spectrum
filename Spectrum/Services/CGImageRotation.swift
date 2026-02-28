@@ -42,3 +42,29 @@ func rotateCGImage(_ image: CGImage, degrees: Int) -> CGImage? {
     ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
     return ctx.makeImage()
 }
+
+/// Flip a CGImage horizontally.
+func flipCGImage(_ image: CGImage, horizontal: Bool) -> CGImage? {
+    guard horizontal else { return image }
+
+    let w = image.width
+    let h = image.height
+
+    guard let colorSpace = image.colorSpace ?? CGColorSpace(name: CGColorSpace.sRGB),
+          let ctx = CGContext(
+              data: nil,
+              width: w,
+              height: h,
+              bitsPerComponent: image.bitsPerComponent,
+              bytesPerRow: 0,
+              space: colorSpace,
+              bitmapInfo: image.bitmapInfo.rawValue
+          )
+    else { return nil }
+
+    // Flip horizontally: mirror along vertical axis
+    ctx.translateBy(x: CGFloat(w), y: 0)
+    ctx.scaleBy(x: -1, y: 1)
+    ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+    return ctx.makeImage()
+}

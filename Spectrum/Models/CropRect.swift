@@ -16,6 +16,10 @@ struct CropRect: Codable, Equatable {
         )
     }
 
+    func flippedH() -> CropRect {
+        CropRect(x: 1 - x - width, y: y, width: width, height: height)
+    }
+
     /// Transform crop coordinates when the image is rotated by the given degrees.
     func rotated(by degrees: Int) -> CropRect {
         let norm = ((degrees % 360) + 360) % 360

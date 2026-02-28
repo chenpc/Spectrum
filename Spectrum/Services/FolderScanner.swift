@@ -171,6 +171,18 @@ actor FolderScanner {
 
                 photo.software = exif.software
                 photo.imageStabilization = exif.imageStabilization
+
+                // Read XMP sidecar for edits + gyro config
+                if let xmp = XMPSidecarService.read(
+                    for: fileURL,
+                    originalOrientation: photo.orientation ?? 1
+                ) {
+                    var ops: [EditOp] = []
+                    if xmp.flipH { ops.append(.flipH) }
+                    if xmp.rotation != 0 { ops.append(.rotate(xmp.rotation)) }
+                    if let crop = xmp.crop { ops.append(.crop(crop)) }
+                    if !ops.isEmpty { photo.editOps = ops }
+                }
             }
 
             modelContext.insert(photo)

@@ -61,40 +61,15 @@ final class Photo {
     var videoCodec: String?
     var audioCodec: String?
 
-    /// Per-video gyro config override (JSON-encoded GyroConfig). nil = use global settings.
-    var gyroConfigJson: String?
-
-    /// Non-destructive crop region (JSON-encoded CropRect). nil = no crop.
-    var cropRectJson: String?
-
     /// Ordered edit operations (JSON-encoded [EditOp]). nil = no edits.
     var editOpsJson: String?
 
-    var cropRect: CropRect? {
-        get {
-            guard let json = cropRectJson, let data = json.data(using: .utf8) else { return nil }
-            return try? JSONDecoder().decode(CropRect.self, from: data)
-        }
-        set {
-            if let newValue, let data = try? JSONEncoder().encode(newValue) {
-                cropRectJson = String(data: data, encoding: .utf8)
-            } else {
-                cropRectJson = nil
-            }
-        }
-    }
-
     var editOps: [EditOp] {
         get {
-            if let json = editOpsJson, let data = json.data(using: .utf8),
-               let ops = try? JSONDecoder().decode([EditOp].self, from: data) {
-                return ops
-            }
-            // Backward compatibility: convert legacy cropRectJson
-            if let crop = cropRect {
-                return [.crop(crop)]
-            }
-            return []
+            guard let json = editOpsJson, let data = json.data(using: .utf8),
+                  let ops = try? JSONDecoder().decode([EditOp].self, from: data)
+            else { return [] }
+            return ops
         }
         set {
             if let data = try? JSONEncoder().encode(newValue) {
@@ -102,7 +77,6 @@ final class Photo {
             } else {
                 editOpsJson = nil
             }
-            cropRectJson = nil
         }
     }
 

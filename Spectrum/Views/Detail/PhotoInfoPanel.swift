@@ -3,6 +3,7 @@ import SwiftUI
 struct PhotoInfoPanel: View {
     @Bindable var photo: Photo
     var isHDR: Bool = false
+    @FocusedValue(\.gyroConfigBinding) var gyroConfigBinding
 
     @State private var selectedTab: InspectorTab = .info
 
@@ -25,7 +26,13 @@ struct PhotoInfoPanel: View {
                 case .info:
                     infoForm
                 case .gyro:
-                    GyroConfigSection(photo: photo)
+                    if let binding = gyroConfigBinding {
+                        GyroConfigSection(gyroConfigJson: binding)
+                    } else {
+                        Text("No video selected")
+                            .foregroundStyle(.secondary)
+                            .frame(maxHeight: .infinity)
+                    }
                 }
             }
             .frame(minWidth: 250)
@@ -326,7 +333,7 @@ struct PhotoInfoPanel: View {
 // MARK: - Per-Video Gyro Config
 
 private struct GyroConfigSection: View {
-    @Bindable var photo: Photo
+    @Binding var gyroConfigJson: String?
 
     // Global settings (read-only, for "Copy from Global" and display)
     @AppStorage("gyroSmooth") private var globalSmooth: Double = 0.5
@@ -351,7 +358,7 @@ private struct GyroConfigSection: View {
 
     @State private var config = GyroConfig()
 
-    private var hasCustom: Bool { photo.gyroConfigJson != nil }
+    private var hasCustom: Bool { gyroConfigJson != nil }
 
     @State private var dirty = false
 
@@ -365,7 +372,7 @@ private struct GyroConfigSection: View {
                             config = globalConfig()
                             save()
                         } else {
-                            photo.gyroConfigJson = nil
+                            gyroConfigJson = nil
                             dirty = false
                         }
                     }
@@ -392,7 +399,7 @@ private struct GyroConfigSection: View {
                             dirty = true
                         }
                         Button("Reset to Global") {
-                            photo.gyroConfigJson = nil
+                            gyroConfigJson = nil
                             dirty = false
                         }
                     }
@@ -508,7 +515,7 @@ private struct GyroConfigSection: View {
     }
 
     private func load() {
-        guard let json = photo.gyroConfigJson,
+        guard let json = gyroConfigJson,
               let data = json.data(using: .utf8),
               let decoded = try? JSONDecoder().decode(GyroConfig.self, from: data)
         else { return }
@@ -517,7 +524,7 @@ private struct GyroConfigSection: View {
 
     private func save() {
         guard let data = try? JSONEncoder().encode(config) else { return }
-        photo.gyroConfigJson = String(data: data, encoding: .utf8)
+        gyroConfigJson = String(data: data, encoding: .utf8)
     }
 
     /// Two-way binding to a GyroConfig property. Only updates local state; user must press Apply.

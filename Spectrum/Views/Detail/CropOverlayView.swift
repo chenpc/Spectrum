@@ -4,10 +4,8 @@ struct CropOverlayView: View {
     @Binding var cropRect: CGRect // normalised 0~1
     let imagePixelWidth: Int
     let imagePixelHeight: Int
-    let hasExistingCrop: Bool
     var onApply: () -> Void
     var onCancel: () -> Void
-    var onRestore: () -> Void
 
     private let handleSize: CGFloat = 14
     private let edgeBarLen: CGFloat = 32
@@ -289,10 +287,6 @@ struct CropOverlayView: View {
                 .foregroundStyle(.secondary)
 
             Spacer()
-
-            if hasExistingCrop {
-                Button("Restore") { onRestore() }
-            }
 
             Button("Cancel") { onCancel() }
                 .keyboardShortcut(.cancelAction)

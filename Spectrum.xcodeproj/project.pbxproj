@@ -56,6 +56,7 @@
 		AA000073 /* CropOverlayView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000073 /* CropOverlayView.swift */; };
 		AA000074 /* EditOp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000074 /* EditOp.swift */; };
 		AA000075 /* CGImageRotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000075 /* CGImageRotation.swift */; };
+		AA000076 /* XMPSidecarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000076 /* XMPSidecarService.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -122,6 +123,7 @@
 		AB000073 /* CropOverlayView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CropOverlayView.swift; sourceTree = "<group>"; };
 		AB000074 /* EditOp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOp.swift; sourceTree = "<group>"; };
 		AB000075 /* CGImageRotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGImageRotation.swift; sourceTree = "<group>"; };
+		AB000076 /* XMPSidecarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPSidecarService.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -209,6 +211,7 @@
 				AB000031 /* NetworkVolumeService.swift */,
 				AB000071 /* FolderMonitor.swift */,
 				AB000075 /* CGImageRotation.swift */,
+				AB000076 /* XMPSidecarService.swift */,
 			);
 			path = Services;
 			sourceTree = "<group>";
@@ -520,6 +523,7 @@
 				AA000073 /* CropOverlayView.swift in Sources */,
 				AA000074 /* EditOp.swift in Sources */,
 				AA000075 /* CGImageRotation.swift in Sources */,
+				AA000076 /* XMPSidecarService.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

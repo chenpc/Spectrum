@@ -58,7 +58,15 @@ struct MpvPlayPauseKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
+struct GyroConfigBindingKey: FocusedValueKey {
+    typealias Value = Binding<String?>
+}
+
 extension FocusedValues {
+    var gyroConfigBinding: Binding<String?>? {
+        get { self[GyroConfigBindingKey.self] }
+        set { self[GyroConfigBindingKey.self] = newValue }
+    }
     var photoNavigation: PhotoNavigationAction? {
         get { self[PhotoNavigationKey.self] }
         set { self[PhotoNavigationKey.self] = newValue }

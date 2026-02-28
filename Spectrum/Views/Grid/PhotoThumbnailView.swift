@@ -75,13 +75,17 @@ struct PhotoThumbnailView: View {
         guard let thumbnail else { return nil }
         let composite = photo.compositeEdit
         // No edits — return thumbnail as-is
-        guard composite.rotation != 0 || composite.crop != nil else { return thumbnail }
+        guard composite.rotation != 0 || composite.flipH || composite.crop != nil else { return thumbnail }
         guard var cg = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return thumbnail }
-        // 1. Rotate first
+        // 1. Flip first (convention: flip before rotate)
+        if composite.flipH, let flipped = flipCGImage(cg, horizontal: true) {
+            cg = flipped
+        }
+        // 2. Rotate
         if composite.rotation != 0, let rotated = rotateCGImage(cg, degrees: composite.rotation) {
             cg = rotated
         }
-        // 2. Crop in rotated space
+        // 3. Crop in rotated space
         if let crop = composite.crop {
             let pixelRect = crop.pixelRect(imageWidth: cg.width, imageHeight: cg.height)
             if let cropped = cg.cropping(to: pixelRect) {

@@ -26,6 +26,7 @@ struct PhotoDetailView: View {
     @State private var editingCropRect = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
     @State private var activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var activeRotation: Int = 0
+    @State private var activeFlipH: Bool = false
     @State private var mpvControlsVisible = true
     @State private var mpvHideTask: Task<Void, Never>? = nil
     @State private var mpvBarOffset: CGSize = .zero
@@ -37,8 +38,11 @@ struct PhotoDetailView: View {
     @State private var avBarOffset: CGSize = .zero
     @State private var avBarDragStart: CGSize = .zero
     @State private var videoStarted = false
+    // Gyro config (stored in XMP sidecar, not DB)
+    @State private var gyroConfigJson: String?
     // Shared
     @State private var spaceKeyMonitor: Any?
+    @State private var cursorHidden = false
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
     @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
     @AppStorage("playerForHLG") private var playerForHLG: String = "libmpv"
@@ -82,6 +86,7 @@ struct PhotoDetailView: View {
         }
         .background(.black)
         .focusedSceneValue(\.mpvPlayPause, useMPV ? mpvController.togglePlayPause : nil)
+        .focusedSceneValue(\.gyroConfigBinding, $gyroConfigJson)
         .onChange(of: useMPV) { _, active in
             if active {
                 mpvController.diagnosticsEnabled = showMPVDiagBadge
@@ -90,7 +95,8 @@ struct PhotoDetailView: View {
         .onChange(of: showMPVDiagBadge) { _, enabled in
             mpvController.diagnosticsEnabled = enabled
         }
-        .onChange(of: photo.gyroConfigJson) { _, _ in
+        .onChange(of: gyroConfigJson) { _, _ in
+            writeXMPSidecar()
             guard useMPV, mpvController.gyroStabEnabled else { return }
             mpvController.stopGyroStab()
             let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
@@ -100,6 +106,7 @@ struct PhotoDetailView: View {
         }
         .onDisappear {
             removeSpaceMonitor()
+            showCursor()
             player?.pause()
             avController.detach()
         }
@@ -109,6 +116,7 @@ struct PhotoDetailView: View {
                 await loadVideo()
             } else {
                 await loadFullImage()
+                installImageKeyMonitor()
             }
         }
         .toolbar {
@@ -162,11 +170,19 @@ struct PhotoDetailView: View {
                     .help("Rotate Left")
                     .disabled(isCropMode)
 
-                    Button { rotateRight() } label: {
-                        Image(systemName: "rotate.right")
+                    Button { flipHorizontal() } label: {
+                        Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     }
-                    .help("Rotate Right")
+                    .help("Flip Horizontal")
                     .disabled(isCropMode)
+
+                    if !photo.editOps.isEmpty {
+                        Button { restoreEdits() } label: {
+                            Image(systemName: "arrow.uturn.backward")
+                        }
+                        .help("Restore Original")
+                        .disabled(isCropMode)
+                    }
                 }
 
                 Button {
@@ -310,6 +326,7 @@ struct PhotoDetailView: View {
                             }
                         }
                         .frame(width: origW, height: origH)
+                        .scaleEffect(x: activeFlipH ? -1 : 1, y: 1)
                         .rotationEffect(.degrees(Double(activeRotation)))
                         .frame(width: fullW, height: fullH)
                         .offset(
@@ -336,10 +353,8 @@ struct PhotoDetailView: View {
                             cropRect: $editingCropRect,
                             imagePixelWidth: isTransposed ? photo.pixelHeight : photo.pixelWidth,
                             imagePixelHeight: isTransposed ? photo.pixelWidth : photo.pixelHeight,
-                            hasExistingCrop: !photo.editOps.isEmpty,
                             onApply: applyCrop,
-                            onCancel: cancelCrop,
-                            onRestore: restoreCrop
+                            onCancel: cancelCrop
                         )
                         .frame(width: fullW, height: fullH)
                         .transition(.opacity)
@@ -369,21 +384,23 @@ struct PhotoDetailView: View {
         var ops = photo.editOps
         ops.append(.rotate(-90))
         photo.editOps = ops
-        let c = photo.compositeEdit
-        activeRotation = c.rotation
-        if let crop = c.crop {
-            activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
-        } else {
-            activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
-        }
+        writeXMPSidecar()
+        applyCompositeState()
     }
 
-    private func rotateRight() {
+    private func flipHorizontal() {
         var ops = photo.editOps
-        ops.append(.rotate(90))
+        ops.append(.flipH)
         photo.editOps = ops
+        writeXMPSidecar()
+        applyCompositeState()
+    }
+
+    /// Update active display state from the photo's composite edit.
+    private func applyCompositeState() {
         let c = photo.compositeEdit
         activeRotation = c.rotation
+        activeFlipH = c.flipH
         if let crop = c.crop {
             activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
         } else {
@@ -420,6 +437,7 @@ struct PhotoDetailView: View {
         var ops = photo.editOps.filter { if case .crop = $0 { return false }; return true }
         ops.append(.crop(crop))
         photo.editOps = ops
+        writeXMPSidecar()
         zoomLevel = 1.0
         withAnimation(.easeInOut(duration: 0.4)) {
             activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
@@ -445,12 +463,37 @@ struct PhotoDetailView: View {
         }
     }
 
-    private func restoreCrop() {
+    private func restoreEdits() {
         photo.editOps = []
+        writeXMPSidecar()
         activeRotation = 0
+        activeFlipH = false
         activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
         withAnimation(.easeInOut(duration: 0.25)) {
             isCropMode = false
+        }
+    }
+
+    // MARK: - XMP Sidecar
+
+    private func writeXMPSidecar() {
+        guard let data = bookmarkData else { return }
+        let edit = photo.compositeEdit
+        let ori = photo.orientation ?? 1
+        let gyro = gyroConfigJson
+        let filePath = photo.filePath
+        Task.detached {
+            guard let folderURL = try? BookmarkService.resolveBookmark(data) else { return }
+            BookmarkService.withSecurityScope(folderURL) {
+                let imageURL = URL(fileURLWithPath: filePath)
+                let hasEdits = edit.rotation != 0 || edit.flipH || edit.crop != nil
+                if !hasEdits && gyro == nil {
+                    XMPSidecarService.deleteSidecar(for: imageURL)
+                } else {
+                    try? XMPSidecarService.write(edit: edit, originalOrientation: ori,
+                                                  gyroConfig: gyro, for: imageURL)
+                }
+            }
         }
     }
 
@@ -576,7 +619,7 @@ struct PhotoDetailView: View {
 
     private func buildGyroConfig() -> GyroConfig {
         // Per-video override takes priority
-        if let json = photo.gyroConfigJson,
+        if let json = gyroConfigJson,
            let data = json.data(using: .utf8),
            let config = try? JSONDecoder().decode(GyroConfig.self, from: data) {
             return config
@@ -656,6 +699,7 @@ struct PhotoDetailView: View {
     /// Load video: reset state and immediately start the player.
     private func loadVideo() async {
         // Reset all player state from previous video
+        showCursor()
         player?.pause()
         avController.detach()
         player = nil
@@ -678,8 +722,22 @@ struct PhotoDetailView: View {
         avBarDragStart = .zero
         removeSpaceMonitor()
 
+        // Read gyro config from XMP sidecar
+        gyroConfigJson = readGyroConfigFromXMP()
+
         // Start playback immediately (no thumbnail preview phase)
         startPlayback()
+    }
+
+    /// Read gyroConfig JSON from XMP sidecar (security-scoped).
+    private func readGyroConfigFromXMP() -> String? {
+        guard let data = bookmarkData,
+              let folderURL = try? BookmarkService.resolveBookmark(data) else { return nil }
+        return BookmarkService.withSecurityScope(folderURL) {
+            let imageURL = URL(fileURLWithPath: photo.filePath)
+            let xmp = XMPSidecarService.read(for: imageURL, originalOrientation: photo.orientation ?? 1)
+            return xmp?.gyroConfig
+        }
     }
 
     /// Resolve per-type player preference: returns `"libmpv"` or `"avplayer"`.
@@ -741,6 +799,22 @@ struct PhotoDetailView: View {
         }
     }
 
+    /// Install key monitor for image viewing (f = fullscreen).
+    private func installImageKeyMonitor() {
+        removeSpaceMonitor()
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+            let bare = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
+            guard bare else { return event }
+            switch event.charactersIgnoringModifiers {
+            case "f":
+                NSApp.keyWindow?.toggleFullScreen(nil)
+                return nil
+            default:
+                return event
+            }
+        }
+    }
+
     /// Install key monitor with full playback controls (called after startPlayback).
     private func installActiveKeyMonitor() {
         removeSpaceMonitor()
@@ -786,8 +860,22 @@ struct PhotoDetailView: View {
         if let m = spaceKeyMonitor { NSEvent.removeMonitor(m); spaceKeyMonitor = nil }
     }
 
+    private func showCursor() {
+        if cursorHidden { NSCursor.unhide(); cursorHidden = false }
+    }
+
+    private var isFullScreen: Bool {
+        NSApp.keyWindow?.styleMask.contains(.fullScreen) == true
+    }
+
+    private func hideCursor() {
+        guard isFullScreen else { return }
+        if !cursorHidden { NSCursor.hide(); cursorHidden = true }
+    }
+
     private func resetAVControlsTimer() {
         avHideTask?.cancel()
+        showCursor()
         if !avControlsVisible {
             withAnimation(.easeIn(duration: 0.15)) { avControlsVisible = true }
         }
@@ -795,11 +883,13 @@ struct PhotoDetailView: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.5)) { avControlsVisible = false }
+            hideCursor()
         }
     }
 
     private func resetMPVControlsTimer() {
         mpvHideTask?.cancel()
+        showCursor()
         if !mpvControlsVisible {
             withAnimation(.easeIn(duration: 0.15)) { mpvControlsVisible = true }
         }
@@ -807,6 +897,7 @@ struct PhotoDetailView: View {
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
             withAnimation(.easeOut(duration: 0.5)) { mpvControlsVisible = false }
+            hideCursor()
         }
     }
 
@@ -824,6 +915,7 @@ struct PhotoDetailView: View {
 
         let c = photo.compositeEdit
         activeRotation = c.rotation
+        activeFlipH = c.flipH
         if let crop = c.crop {
             activeCrop = CGRect(x: crop.x, y: crop.y, width: crop.width, height: crop.height)
         } else {
