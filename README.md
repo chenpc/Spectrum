@@ -1,39 +1,48 @@
 # Spectrum
 
-A native macOS photo and video viewer built for **HDR content** — designed to correctly render Sony HLG, Apple Gain Map, and other HDR formats that macOS Preview/Photos cannot properly display.
+A native macOS photo and video viewer built with a **Sony camera workflow** in mind — correctly renders HLG HDR photos and videos, and plays back gyro-stabilized footage in real time, all things that macOS Preview/Photos cannot do.
 
 <img src="Spectrum/Resources/AppIcon.svg" width="250">
 
 ## Why Spectrum?
 
-Apple's built-in apps do not correctly tone-map Sony's HLG HDR images, resulting in washed-out or incorrectly exposed photos. Spectrum implements a dedicated HDR rendering pipeline with full Extended Dynamic Range (EDR) support, so your HDR photos and videos look the way they should on an HDR display.
+If you shoot with a Sony camera (ZV-E1, A7 series, etc.), you likely have:
+
+1. **HLG Still Images** (.HIF / HEIF) — Sony's HDR photo format. Apple Preview and Photos display them washed-out because they don't correctly tone-map HLG with BT.2020 gamut.
+2. **HLG / S-Log Video** — HDR video that needs proper color space handling for accurate playback.
+3. **Gyroscope data embedded in video** — Sony cameras record IMU sensor data for post-stabilization, but no viewer lets you preview the stabilized result without rendering first.
+
+Spectrum solves all three: HDR photos render with full EDR headroom, HDR video plays back correctly, and gyro-stabilized video previews in real time — powered by [gyroflow-core](https://github.com/gyroflow/gyroflow) running as an in-process library, not a subprocess.
 
 ## Features
 
-### HDR Photo Rendering
+### Sony HLG Still Image
 
-- **HLG (Hybrid Log-Gamma)** — Sony's HDR still image format, rendered via native `itur_2100_HLG` color space with proper BT.2020 gamut and EDR headroom
-- **Apple Gain Map HDR** — iPhone HDR photos with auxiliary gain map data
-- **HDR/SDR Toggle** — Click the HDR badge to instantly compare HDR vs SDR rendering
+- **Native HLG rendering** — Sony `.HIF` (HEIF with HLG transfer function) rendered via `itur_2100_HLG` color space with BT.2020 gamut and full EDR headroom on HDR displays
+- **10-bit 4:2:2** — Preserves the full dynamic range Sony cameras capture (PictureProfile 10, headroom ~4.93x)
+- **HDR/SDR Toggle** — Click the HDR badge to instantly compare HDR vs tone-mapped SDR
+- **Apple Gain Map HDR** — Also supports iPhone HDR photos with auxiliary gain map data
 
-### HDR Video Playback
+### Sony HLG / S-Log Video
 
+- **HLG video** — Correct BT.2100 HLG playback with HDR pass-through to display
+- **S-Log2 / S-Log3** — Sony's log gamma curves with proper EOTF rendering
 - **Dual player backends** — libmpv (OpenGL render API) and AVPlayer, selectable per HDR type
-- **HDR formats** — HLG, HDR10, Dolby Vision, S-Log2, S-Log3, SDR
-- **HDR/SDR composition switching** — Toggle HDR on/off during playback
-- **Hardware decoding** — VideoToolbox acceleration with configurable decode modes (auto, videotoolbox, videotoolbox-copy, software)
-- **Per-type player override** — Choose libmpv or AVPlayer independently for each HDR format (e.g. AVPlayer for Dolby Vision, mpv for HLG)
+- **All HDR formats** — HLG, HDR10, Dolby Vision, S-Log2, S-Log3, SDR
+- **HDR/SDR toggle** — Switch between HDR and SDR during playback
+- **Hardware decoding** — VideoToolbox acceleration with configurable decode modes
+- **Per-type player override** — Choose libmpv or AVPlayer independently for each format (e.g. AVPlayer for Dolby Vision, mpv for HLG)
 - **Playback diagnostics** — On-screen badge showing render FPS, stability metric, codec info, and dropped frame counts
 
-### Gyroscope Stabilization (Gyroflow)
+### Real-Time Gyro Stabilization (Gyroflow)
 
-Real-time video stabilization powered by [gyroflow-core](https://github.com/gyroflow/gyroflow), using embedded IMU (gyroscope/accelerometer) sensor data from the camera.
+Preview gyro-stabilized video without rendering — powered by [gyroflow-core](https://github.com/gyroflow/gyroflow) as an in-process library. Sony cameras (ZV-E1, A7C II, A7 IV, FX30, etc.) embed IMU gyroscope/accelerometer data in every video file; Spectrum reads this data and applies real-time 3D perspective correction during playback.
 
-- **In-process stabilization** — Per-frame 3D perspective correction via `libgyrocore_c.dylib` (no subprocess)
-- **Sony IBIS support** — Per-scanline in-body image stabilization data (tested with Sony ZV-E1)
-- **Configurable parameters** — Smoothing (global or per-axis pitch/yaw/roll), gyro sync offset, lens profile (.gyroflow), FOV scaling, horizon lock, adaptive zoom
-- **Per-video override** — Each video can have custom gyro config, independent of global settings
-- **Toggle on/off** — Press `s` during mpv playback to enable/disable stabilization in real time
+- **Zero-export preview** — See stabilized footage instantly while browsing, no need to render first
+- **Sony IBIS support** — Per-scanline in-body image stabilization data correction (tested with ZV-E1)
+- **Per-video config** — Each video can have custom gyro settings (smoothing, sync offset, horizon lock, etc.), stored in XMP sidecar
+- **Configurable parameters** — Smoothing (global or per-axis pitch/yaw/roll), gyro sync offset, lens profile, FOV scaling, horizon lock, adaptive zoom
+- **Toggle on/off** — Press `s` during playback to enable/disable stabilization in real time
 
 ### Browsing & Navigation
 
