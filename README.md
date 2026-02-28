@@ -64,7 +64,7 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 - **Rotate** — 90° counter-clockwise rotation
 - **Flip** — Horizontal mirror, composable with rotation (D4 group math)
 - **Crop** — Visual crop overlay with rule-of-thirds grid, drag handles, pixel dimensions
-- **XMP sidecar** — All edits stored in `{filename}.xmp` (EXIF orientation 1–8 + Camera Raw crop), never modifies original files
+- **XMP sidecar** — All edits stored in `{filename}.{ext}.xmp` (EXIF orientation 1–8 + Camera Raw crop), never modifies original files
 - **Restore** — One-click reset to original
 
 ### Other
