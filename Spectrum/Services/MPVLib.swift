@@ -8,7 +8,18 @@ let MPV_RC_OGL_INIT: Int32 = 2
 let MPV_RC_OGL_FBO:  Int32 = 3
 let MPV_RC_FLIP_Y:   Int32 = 4
 let MPV_RC_DEPTH:    Int32 = 5
+let MPV_RC_NEXT_FRAME_INFO: Int32 = 11
+let MPV_RC_BLOCK_FOR_TARGET_TIME: Int32 = 12
 let MPV_RC_ADVANCED: Int32 = 10
+
+/// mpv_render_context_update() return flags
+let MPV_RENDER_UPDATE_FRAME: UInt64 = 1 << 0
+
+// mpv_render_frame_info_flag
+let MPV_FRAME_INFO_PRESENT:     UInt64 = 1 << 0
+let MPV_FRAME_INFO_REDRAW:      UInt64 = 1 << 1
+let MPV_FRAME_INFO_REPEAT:      UInt64 = 1 << 2
+let MPV_FRAME_INFO_BLOCK_VSYNC: UInt64 = 1 << 3
 
 // MARK: - mpv event ID constants
 
@@ -41,6 +52,12 @@ struct MPVOpenGLInitParams {
 struct MPVEvent {
     var event_id: Int32; var error: Int32; var reply_userdata: UInt64
     var data: UnsafeMutableRawPointer?
+}
+
+/// mpv_render_frame_info: { uint64_t flags; int64_t target_time; } = 16 bytes
+struct MPVRenderFrameInfo {
+    var flags: UInt64 = 0
+    var targetTime: Int64 = 0   // microseconds, same time base as mpv_get_time_us()
 }
 
 // MARK: - GL proc address helper
@@ -87,6 +104,12 @@ class LibMPV: @unchecked Sendable {
     typealias FRCRender = @convention(c) (OpaquePointer, UnsafeMutableRawPointer) -> Int32
     typealias FRCSwap   = @convention(c) (OpaquePointer) -> Void
     typealias FRCFree   = @convention(c) (OpaquePointer) -> Void
+    /// mpv_render_context_update(ctx) → UInt64 flags  (MPV_RENDER_UPDATE_FRAME = 1)
+    typealias FRCUpdate = @convention(c) (OpaquePointer) -> UInt64
+    // mpv_render_context_get_info(ctx, mpv_render_param{type,data}) — struct passed by value
+    // arm64 ABI: 16-byte struct → first 8 bytes (type+pad) in x1, next 8 bytes (data*) in x2
+    typealias FRCGetInfo = @convention(c) (OpaquePointer, Int64, UnsafeMutableRawPointer?) -> Int32
+    typealias FGetTimeUs = @convention(c) (OpaquePointer) -> Int64
 
     var create:     FCreate?
     var initialize: FInit?
@@ -102,6 +125,9 @@ class LibMPV: @unchecked Sendable {
     var rcRender:   FRCRender?
     var rcSwap:     FRCSwap?
     var rcFree:     FRCFree?
+    var rcUpdate:   FRCUpdate?
+    var rcGetInfo:  FRCGetInfo?
+    var getTimeUs:  FGetTimeUs?
 
     private init() {
         // Build bundle path first (sandbox-compatible; copied by "Bundle libmpv" build phase)
@@ -110,11 +136,12 @@ class LibMPV: @unchecked Sendable {
             searchPaths.append("\(resPath)/lib/libmpv.dylib")
         }
         // External fallbacks for non-sandbox development builds
+        // Homebrew first: mpv 0.41+ supports rcGetInfo (frame timing for gyro sync)
         searchPaths += [
-            "/Applications/IINA.app/Contents/Frameworks/libmpv.dylib",
-            "/Applications/IINA.app/Contents/Frameworks/libmpv.2.dylib",
             "/opt/homebrew/lib/libmpv.dylib",
             "/usr/local/lib/libmpv.dylib",
+            "/Applications/IINA.app/Contents/Frameworks/libmpv.dylib",
+            "/Applications/IINA.app/Contents/Frameworks/libmpv.2.dylib",
         ]
         for path in searchPaths {
             handle = dlopen(path, RTLD_LAZY | RTLD_LOCAL)
@@ -136,6 +163,9 @@ class LibMPV: @unchecked Sendable {
         rcRender   = dlsym(h, "mpv_render_context_render")               .map { unsafeBitCast($0, to: FRCRender.self) }
         rcSwap     = dlsym(h, "mpv_render_context_report_swap")          .map { unsafeBitCast($0, to: FRCSwap.self)  }
         rcFree     = dlsym(h, "mpv_render_context_free")                 .map { unsafeBitCast($0, to: FRCFree.self)  }
+        rcUpdate   = dlsym(h, "mpv_render_context_update")             .map { unsafeBitCast($0, to: FRCUpdate.self) }
+        rcGetInfo  = dlsym(h, "mpv_render_context_get_info")           .map { unsafeBitCast($0, to: FRCGetInfo.self) }
+        getTimeUs  = dlsym(h, "mpv_get_time_us")                      .map { unsafeBitCast($0, to: FGetTimeUs.self) }
 
         ok = create != nil
     }

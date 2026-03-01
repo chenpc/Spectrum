@@ -40,6 +40,26 @@ final class MPVController: @unchecked Sendable {
     private(set) var gyroIsLoading: Bool = false
     /// Retained during loading and playback; nil = stab off.
     private var activeGyroCore: GyroCore?
+    /// Debug lens profile summary for diagnostics badge.
+    var gyroLensInfo: String {
+        guard let c = activeGyroCore else { return "" }
+        let modelName: String
+        switch c.distortionModel {
+        case 1:  modelName = "OpenCVFish"
+        case 3:  modelName = "Poly3"
+        case 4:  modelName = "Poly5"
+        case 7:  modelName = "Sony"
+        default: modelName = "none(\(c.distortionModel))"
+        }
+        let k = (0..<4).map { String(format: "%.4f", c.distortionK[$0]) }.joined(separator: ",")
+        let f = String(format: "%.1f,%.1f", c.gyroFx, c.gyroFy)
+        let cx = String(format: "%.1f,%.1f", c.gyroCx, c.gyroCy)
+        let lca = String(format: "%.2f", c.lensCorrectionAmount)
+        let fov = String(format: "%.4f", c.frameFov)
+        let fovRange = String(format: "[%.4f-%.4f]", c.fovMin, c.fovMax)
+        let lens = c.lensProfileName
+        return "\(modelName) f=[\(f)] c=[\(cx)]\nk=[\(k)]\nlens=\(lens)\nlca=\(lca) fov=\(fov) \(fovRange)"
+    }
     /// When true, the user pressed play while gyro was loading — defer actual unpause
     /// until gyro is ready. This prevents mpv from decoding (and dropping) frames
     /// while `waitingForGyro` suppresses draw().
@@ -139,7 +159,7 @@ final class MPVController: @unchecked Sendable {
                 self.gyroLastError = msg
                 self.gyroAvailable = false
                 self.activeGyroCore = nil
-                self.nsView?.setWaitingForGyro(false)  // 失敗也要解除抑制
+                self.nsView?.setWaitingForGyro(false)  // Release suppression on failure too
                 // Still start playback if user pressed play during gyro load
                 if self.deferredPlay {
                     self.deferredPlay = false

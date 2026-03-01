@@ -54,11 +54,12 @@ struct PhotoDetailView: View {
     @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
     @AppStorage("gyroOffsetMs") private var gyroOffsetMs: Double = 0
     @AppStorage("gyroLensPath") private var gyroLensPath: String = ""
-    @AppStorage("gyroIntegrationMethod") private var gyroIntegrationMethod: Int = 2
-    @AppStorage("gyroImuOrientation") private var gyroImuOrientation: String = "YXz"
+    @AppStorage("gyroIntegrationMethod") private var gyroIntegrationMethod: Int = -1
+    @AppStorage("gyroImuOrientation") private var gyroImuOrientation: String = ""
     @AppStorage("gyroFov") private var gyroFov: Double = 1.0
     @AppStorage("gyroLensCorrectionAmount") private var gyroLensCorrectionAmount: Double = 1.0
     @AppStorage("gyroZoomingMethod") private var gyroZoomingMethod: Int = 1
+    @AppStorage("gyroZoomingAlgorithm") private var gyroZoomingAlgorithm: Int = 1
     @AppStorage("gyroAdaptiveZoom") private var gyroAdaptiveZoom: Double = 4.0
     @AppStorage("gyroMaxZoom") private var gyroMaxZoom: Double = 130.0
     @AppStorage("gyroMaxZoomIterations") private var gyroMaxZoomIterations: Int = 5
@@ -596,6 +597,10 @@ struct PhotoDetailView: View {
             if mpvController.gyroStabEnabled {
                 Text("gyro \(String(format: "%.2f", mpvController.gyroComputeMs))ms")
                     .foregroundStyle(.secondary)
+                if !mpvController.gyroLensInfo.isEmpty {
+                    Text(mpvController.gyroLensInfo)
+                        .foregroundStyle(.secondary)
+                }
             }
         }
         .font(.caption2.monospacedDigit())
@@ -629,11 +634,12 @@ struct PhotoDetailView: View {
         return GyroConfig(
             smooth:               gyroSmooth,
             gyroOffsetMs:         gyroOffsetMs,
-            integrationMethod:    gyroIntegrationMethod,
-            imuOrientation:       gyroImuOrientation,
+            integrationMethod:    gyroIntegrationMethod == -1 ? nil : gyroIntegrationMethod,
+            imuOrientation:       gyroImuOrientation.isEmpty ? nil : gyroImuOrientation,
             fov:                  gyroFov,
             lensCorrectionAmount: gyroLensCorrectionAmount,
             zoomingMethod:        gyroZoomingMethod,
+            zoomingAlgorithm:     gyroZoomingAlgorithm,
             adaptiveZoom:         gyroAdaptiveZoom,
             maxZoom:              gyroMaxZoom,
             maxZoomIterations:    gyroMaxZoomIterations,

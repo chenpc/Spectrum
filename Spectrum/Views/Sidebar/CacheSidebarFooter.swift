@@ -17,12 +17,12 @@ struct CacheSidebarFooter: View {
                     }
                     pickerRow("Limit") {
                         Picker("", selection: $thumbnailCacheLimitMB) {
-                            Text("100 MB").tag(100)
-                            Text("250 MB").tag(250)
-                            Text("500 MB").tag(500)
-                            Text("1 GB").tag(1000)
-                            Text("2 GB").tag(2000)
-                            Text("∞").tag(0)
+                            Text(verbatim: "100 MB").tag(100)
+                            Text(verbatim: "250 MB").tag(250)
+                            Text(verbatim: "500 MB").tag(500)
+                            Text(verbatim: "1 GB").tag(1000)
+                            Text(verbatim: "2 GB").tag(2000)
+                            Text(verbatim: "∞").tag(0)
                         }
                     }
                 }
@@ -42,7 +42,7 @@ struct CacheSidebarFooter: View {
     // MARK: - Sub-views
 
     @ViewBuilder
-    private func groupHeader(_ title: String) -> some View {
+    private func groupHeader(_ title: LocalizedStringKey) -> some View {
         Text(title)
             .font(.caption2)
             .foregroundStyle(.tertiary)
@@ -52,7 +52,7 @@ struct CacheSidebarFooter: View {
     }
 
     @ViewBuilder
-    private func pickerRow<P: View>(_ label: String, @ViewBuilder picker: () -> P) -> some View {
+    private func pickerRow<P: View>(_ label: LocalizedStringKey, @ViewBuilder picker: () -> P) -> some View {
         HStack {
             Text(label).foregroundStyle(.secondary)
             Spacer()

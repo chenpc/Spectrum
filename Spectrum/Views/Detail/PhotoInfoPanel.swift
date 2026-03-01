@@ -112,18 +112,14 @@ struct PhotoInfoPanel: View {
         }
         if let mpv = mpvController {
             Section("Gyro Debug") {
-                LabeledContent("dylibFound", value: GyroCore.dylibFound ? "YES" : "NO")
-                LabeledContent("gyroIsLoading", value: mpv.gyroIsLoading ? "YES" : "NO")
-                LabeledContent("gyroAvailable", value: mpv.gyroAvailable ? "YES" : "NO")
-                LabeledContent("gyroStabEnabled", value: mpv.gyroStabEnabled ? "YES" : "NO")
+                LabeledContent { Text(verbatim: GyroCore.dylibFound ? "YES" : "NO") } label: { Text(verbatim: "dylibFound") }
+                LabeledContent { Text(verbatim: mpv.gyroIsLoading ? "YES" : "NO") } label: { Text(verbatim: "gyroIsLoading") }
+                LabeledContent { Text(verbatim: mpv.gyroAvailable ? "YES" : "NO") } label: { Text(verbatim: "gyroAvailable") }
+                LabeledContent { Text(verbatim: mpv.gyroStabEnabled ? "YES" : "NO") } label: { Text(verbatim: "gyroStabEnabled") }
                 if let err = mpv.gyroLastError {
-                    LabeledContent("lastError") {
-                        Text(err)
-                            .foregroundStyle(.red)
-                            .font(.caption2)
-                    }
+                    LabeledContent { Text(verbatim: err).foregroundStyle(.red).font(.caption2) } label: { Text(verbatim: "lastError") }
                 }
-                LabeledContent("computeMs", value: String(format: "%.2f", mpv.gyroComputeMs))
+                LabeledContent { Text(verbatim: String(format: "%.2f", mpv.gyroComputeMs)) } label: { Text(verbatim: "computeMs") }
             }
         }
     }
@@ -186,7 +182,7 @@ struct PhotoInfoPanel: View {
                     LabeledContent("Flash", value: formatFlash(flash))
                 }
                 if let wb = photo.whiteBalance {
-                    LabeledContent("White Balance", value: wb == 0 ? "Auto" : "Manual")
+                    LabeledContent("White Balance", value: wb == 0 ? String(localized: "Auto") : String(localized: "Manual"))
                 }
                 if let brightness = photo.brightnessValue {
                     LabeledContent("Brightness", value: String(format: "%.2f", brightness))
@@ -228,7 +224,7 @@ struct PhotoInfoPanel: View {
                     LabeledContent("EXIF Version", value: ver)
                 }
                 if let stab = photo.imageStabilization {
-                    LabeledContent("Image Stabilization", value: stab == 1 ? "On" : "Off")
+                    LabeledContent("Image Stabilization", value: stab == 1 ? String(localized: "On") : String(localized: "Off"))
                 }
                 if let c = photo.contrast {
                     LabeledContent("Contrast", value: formatLevel(c))
@@ -265,28 +261,28 @@ struct PhotoInfoPanel: View {
 
     private func formatExposureProgram(_ value: Int) -> String {
         switch value {
-        case 0: return "Not Defined"
-        case 1: return "Manual"
-        case 2: return "Program AE"
-        case 3: return "Aperture Priority"
-        case 4: return "Shutter Priority"
-        case 5: return "Creative"
-        case 6: return "Action"
-        case 7: return "Portrait"
-        case 8: return "Landscape"
+        case 0: return String(localized: "Not Defined")
+        case 1: return String(localized: "Manual")
+        case 2: return String(localized: "Program AE")
+        case 3: return String(localized: "Aperture Priority")
+        case 4: return String(localized: "Shutter Priority")
+        case 5: return String(localized: "Creative")
+        case 6: return String(localized: "Action")
+        case 7: return String(localized: "Portrait")
+        case 8: return String(localized: "Landscape")
         default: return "Unknown (\(value))"
         }
     }
 
     private func formatMeteringMode(_ value: Int) -> String {
         switch value {
-        case 0: return "Unknown"
-        case 1: return "Average"
-        case 2: return "Center-weighted"
-        case 3: return "Spot"
-        case 4: return "Multi-spot"
-        case 5: return "Multi-segment"
-        case 6: return "Partial"
+        case 0: return String(localized: "Unknown")
+        case 1: return String(localized: "Average")
+        case 2: return String(localized: "Center-weighted")
+        case 3: return String(localized: "Spot")
+        case 4: return String(localized: "Multi-spot")
+        case 5: return String(localized: "Multi-segment")
+        case 6: return String(localized: "Partial")
         default: return "Other (\(value))"
         }
     }
@@ -295,11 +291,11 @@ struct PhotoInfoPanel: View {
         let fired = (value & 0x01) != 0
         let mode = (value >> 3) & 0x03
         var parts: [String] = []
-        parts.append(fired ? "Fired" : "No Flash")
+        parts.append(fired ? String(localized: "Fired") : String(localized: "No Flash"))
         switch mode {
-        case 1: parts.append("Compulsory")
-        case 2: parts.append("Suppressed")
-        case 3: parts.append("Auto")
+        case 1: parts.append(String(localized: "Compulsory"))
+        case 2: parts.append(String(localized: "Suppressed"))
+        case 3: parts.append(String(localized: "Auto"))
         default: break
         }
         return parts.joined(separator: ", ")
@@ -307,41 +303,41 @@ struct PhotoInfoPanel: View {
 
     private func formatSceneCaptureType(_ value: Int) -> String {
         switch value {
-        case 0: return "Standard"
-        case 1: return "Landscape"
-        case 2: return "Portrait"
-        case 3: return "Night"
+        case 0: return String(localized: "Standard")
+        case 1: return String(localized: "Landscape")
+        case 2: return String(localized: "Portrait")
+        case 3: return String(localized: "Night")
         default: return "Unknown (\(value))"
         }
     }
 
     private func formatLightSource(_ value: Int) -> String {
         switch value {
-        case 0: return "Unknown"
-        case 1: return "Daylight"
-        case 2: return "Fluorescent"
-        case 3: return "Tungsten"
-        case 4: return "Flash"
-        case 9: return "Fine Weather"
-        case 10: return "Cloudy"
-        case 11: return "Shade"
-        case 17: return "Standard Light A"
-        case 18: return "Standard Light B"
-        case 19: return "Standard Light C"
+        case 0: return String(localized: "Unknown")
+        case 1: return String(localized: "Daylight")
+        case 2: return String(localized: "Fluorescent")
+        case 3: return String(localized: "Tungsten")
+        case 4: return String(localized: "Flash")
+        case 9: return String(localized: "Fine Weather")
+        case 10: return String(localized: "Cloudy")
+        case 11: return String(localized: "Shade")
+        case 17: return String(localized: "Standard Light A")
+        case 18: return String(localized: "Standard Light B")
+        case 19: return String(localized: "Standard Light C")
         case 20: return "D55"
         case 21: return "D65"
         case 22: return "D75"
         case 23: return "D50"
-        case 255: return "Other"
+        case 255: return String(localized: "Other")
         default: return "Unknown (\(value))"
         }
     }
 
     private func formatLevel(_ value: Int) -> String {
         switch value {
-        case 0: return "Normal"
-        case 1: return "Low"
-        case 2: return "High"
+        case 0: return String(localized: "Normal")
+        case 1: return String(localized: "Low")
+        case 2: return String(localized: "High")
         default: return "Unknown (\(value))"
         }
     }
@@ -355,11 +351,12 @@ private struct GyroConfigSection: View {
     // Global settings (read-only, for "Copy from Global" and display)
     @AppStorage("gyroSmooth") private var globalSmooth: Double = 0.5
     @AppStorage("gyroOffsetMs") private var globalOffsetMs: Double = 0
-    @AppStorage("gyroIntegrationMethod") private var globalIntegrationMethod: Int = 2
-    @AppStorage("gyroImuOrientation") private var globalImuOrientation: String = "YXz"
+    @AppStorage("gyroIntegrationMethod") private var globalIntegrationMethod: Int = -1
+    @AppStorage("gyroImuOrientation") private var globalImuOrientation: String = ""
     @AppStorage("gyroFov") private var globalFov: Double = 1.0
     @AppStorage("gyroLensCorrectionAmount") private var globalLensCorrectionAmount: Double = 1.0
     @AppStorage("gyroZoomingMethod") private var globalZoomingMethod: Int = 1
+    @AppStorage("gyroZoomingAlgorithm") private var globalZoomingAlgorithm: Int = 1
     @AppStorage("gyroAdaptiveZoom") private var globalAdaptiveZoom: Double = 4.0
     @AppStorage("gyroMaxZoom") private var globalMaxZoom: Double = 130.0
     @AppStorage("gyroMaxZoomIterations") private var globalMaxZoomIterations: Int = 5
@@ -396,7 +393,7 @@ private struct GyroConfigSection: View {
                 ))
 
                 if !hasCustom {
-                    Text("使用全域設定")
+                    Text("Using global settings")
                         .foregroundStyle(.secondary)
                         .font(.caption)
                 }
@@ -461,15 +458,30 @@ private struct GyroConfigSection: View {
 
                 Section("IMU") {
                     Picker("Integration", selection: binding(\.integrationMethod)) {
-                        Text("Complementary").tag(0)
-                        Text("Complementary2").tag(1)
-                        Text("VQF").tag(2)
+                        Text("Auto").tag(nil as Int?)
+                        Text("Built-in Quaternions").tag(0 as Int?)
+                        Text(verbatim: "Complementary").tag(1 as Int?)
+                        Text(verbatim: "VQF").tag(2 as Int?)
+                        Text("Simple Gyro").tag(3 as Int?)
+                        Text("Simple Gyro + Accel").tag(4 as Int?)
+                        Text(verbatim: "Mahony").tag(5 as Int?)
+                        Text(verbatim: "Madgwick").tag(6 as Int?)
                     }
 
                     HStack {
                         Text("IMU Orientation")
                         Spacer()
-                        TextField("", text: binding(\.imuOrientation))
+                        if config.imuOrientation == nil || config.imuOrientation?.isEmpty == true {
+                            Text("Auto")
+                                .foregroundStyle(.secondary)
+                        }
+                        TextField("", text: Binding(
+                            get: { config.imuOrientation ?? "" },
+                            set: { newValue in
+                                config.imuOrientation = newValue.isEmpty ? nil : newValue
+                                dirty = true
+                            }
+                        ))
                             .frame(width: 80)
                             .multilineTextAlignment(.trailing)
                     }
@@ -483,10 +495,15 @@ private struct GyroConfigSection: View {
 
                     Picker("Zooming Method", selection: binding(\.zoomingMethod)) {
                         Text("None").tag(0)
-                        Text("Envelope Follower").tag(1)
+                        Text("Dynamic").tag(1)
+                        Text("Static").tag(2)
                     }
 
                     if config.zoomingMethod == 1 {
+                        Picker("Zooming Algorithm", selection: binding(\.zoomingAlgorithm)) {
+                            Text("Gaussian Filter").tag(0)
+                            Text("Envelope Follower").tag(1)
+                        }
                         sliderRow("Adaptive Zoom (s)", value: binding(\.adaptiveZoom), range: 0.1...15.0, step: 0.1)
                     }
 
@@ -511,11 +528,12 @@ private struct GyroConfigSection: View {
         GyroConfig(
             smooth: globalSmooth,
             gyroOffsetMs: globalOffsetMs,
-            integrationMethod: globalIntegrationMethod,
-            imuOrientation: globalImuOrientation,
+            integrationMethod: globalIntegrationMethod == -1 ? nil : globalIntegrationMethod,
+            imuOrientation: globalImuOrientation.isEmpty ? nil : globalImuOrientation,
             fov: globalFov,
             lensCorrectionAmount: globalLensCorrectionAmount,
             zoomingMethod: globalZoomingMethod,
+            zoomingAlgorithm: globalZoomingAlgorithm,
             adaptiveZoom: globalAdaptiveZoom,
             maxZoom: globalMaxZoom,
             maxZoomIterations: globalMaxZoomIterations,
@@ -555,13 +573,13 @@ private struct GyroConfigSection: View {
         )
     }
 
-    private func sliderRow(_ label: String, value: Binding<Double>,
+    private func sliderRow(_ label: LocalizedStringKey, value: Binding<Double>,
                            range: ClosedRange<Double>, step: Double) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)
                 Spacer()
-                Text(step >= 1 ? String(format: "%.0f", value.wrappedValue)
+                Text(verbatim: step >= 1 ? String(format: "%.0f", value.wrappedValue)
                      : step >= 0.1 ? String(format: "%.1f", value.wrappedValue)
                      : String(format: "%.2f", value.wrappedValue))
                     .foregroundStyle(.secondary)

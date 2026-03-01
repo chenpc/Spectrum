@@ -1,18 +1,34 @@
 import SwiftUI
 
 struct TimelineSectionHeader: View {
-    let label: String
+    var localizedLabel: LocalizedStringKey? = nil
+    var verbatimLabel: String? = nil
     let count: Int
-    var unit: String = "photos"
+    var unit: HeaderUnit = .photos
+
+    enum HeaderUnit { case photos, folders }
 
     var body: some View {
         HStack {
-            Text(label)
-                .font(.title2)
-                .fontWeight(.bold)
-            Text("\(count) \(unit)")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
+            if let localizedLabel {
+                Text(localizedLabel)
+                    .font(.title2)
+                    .fontWeight(.bold)
+            } else if let verbatimLabel {
+                Text(verbatim: verbatimLabel)
+                    .font(.title2)
+                    .fontWeight(.bold)
+            }
+            switch unit {
+            case .photos:
+                Text("\(count) photos")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            case .folders:
+                Text("\(count) folders")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
             Spacer()
         }
         .padding(.horizontal, 12)

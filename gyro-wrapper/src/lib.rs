@@ -44,12 +44,13 @@ struct Config {
     readout_ms:             f64,     // Rolling shutter readout time (0 = skip RS correction)
     smooth:                 f64,     // Global smoothness 0.001–1.0 (0 = default 0.5)
     gyro_offset_ms:         f64,     // Gyro-video sync offset in ms
-    integration_method:     i32,     // 0=Complementary 1=Complementary2 2=VQF
-    imu_orientation:        String,  // e.g. "YXz"
+    integration_method:     Option<i32>,    // None=auto (VQF), 0=Complementary 1=Complementary2 2=VQF
+    imu_orientation:        Option<String>, // None=auto from video metadata
     fov:                    f64,     // FOV scale (1.0 = nominal)
     lens_correction_amount: f64,     // 0.0–1.0 (1.0 = full correction)
-    zooming_method:         i32,     // 0=None 1=EnvelopeFollower
-    adaptive_zoom:          f64,     // Adaptive zoom window in seconds
+    zooming_method:         i32,     // 0=None 1=Dynamic 2=Static
+    zooming_algorithm:      i32,     // 0=GaussianFilter 1=EnvelopeFollower (only for Dynamic)
+    adaptive_zoom:          f64,     // Adaptive zoom window in seconds (only for Dynamic)
     max_zoom:               f64,     // Max zoom percentage
     max_zoom_iterations:    i32,     // Iterations for max zoom computation
     use_gravity_vectors:    bool,    // Use accelerometer gravity for horizon
@@ -69,11 +70,12 @@ impl Default for Config {
             readout_ms:             0.0,
             smooth:                 0.0,    // 0 → will be treated as 0.5
             gyro_offset_ms:         0.0,
-            integration_method:     2,      // VQF
-            imu_orientation:        "YXz".into(),
+            integration_method:     None,   // auto (VQF by default in gyroflow-core)
+            imu_orientation:        None,   // auto from video metadata
             fov:                    1.0,
             lens_correction_amount: 1.0,
-            zooming_method:         1,      // EnvelopeFollower
+            zooming_method:         1,      // Dynamic
+            zooming_algorithm:      1,      // EnvelopeFollower
             adaptive_zoom:          4.0,    // seconds
             max_zoom:               130.0,  // percent
             max_zoom_iterations:    5,
@@ -99,6 +101,10 @@ struct State {
     fps:            f64,
     fx: f32, fy: f32,
     cx: f32, cy: f32,
+    k:              [f32; 12],  // distortion coefficients
+    distortion_model: i32,     // DistortionModel enum as i32
+    r_limit:        f32,       // radial distortion limit
+    lens_info:      String,    // "brand model lens" from auto-detect or loaded profile
     compute_params: ComputeParams,
 }
 
@@ -270,11 +276,14 @@ pub extern "C" fn gyrocore_load(
         }
 
         // ── IMU integration (must set BEFORE recompute_blocking) ────────────
-        {
+        // Only override when explicitly set; otherwise gyroflow-core uses auto-detected values.
+        if let Some(method) = cfg.integration_method {
             let mut gyro = stab.gyro.write();
-            gyro.integration_method = cfg.integration_method as usize;
+            gyro.integration_method = method as usize;
         }
-        stab.set_imu_orientation(cfg.imu_orientation.clone());
+        if let Some(ref orient) = cfg.imu_orientation {
+            stab.set_imu_orientation(orient.clone());
+        }
 
         // ── Smoothing (method: "Default" = 1) ────────────────────────────────
         stab.set_smoothing_method(1);
@@ -292,8 +301,24 @@ pub extern "C" fn gyrocore_load(
         stab.set_fov(cfg.fov);
         stab.set_stab_enabled(true);
         stab.set_lens_correction_amount(cfg.lens_correction_amount);
-        stab.set_zooming_method(cfg.zooming_method);
-        stab.set_adaptive_zoom(cfg.adaptive_zoom);
+        // zooming_method: 0=None, 1=Dynamic, 2=Static
+        // adaptive_zoom_window: 0.0=disabled, >0=dynamic(seconds), <-0.9=static
+        // zooming_algorithm: 0=GaussianFilter, 1=EnvelopeFollower (only for dynamic)
+        match cfg.zooming_method {
+            0 => {
+                // No zooming
+                stab.set_adaptive_zoom(0.0);
+            }
+            2 => {
+                // Static zoom: use minimum FOV across entire video
+                stab.set_adaptive_zoom(-1.0);
+            }
+            _ => {
+                // Dynamic zoom: algorithm + window
+                stab.set_zooming_method(cfg.zooming_algorithm);
+                stab.set_adaptive_zoom(cfg.adaptive_zoom);
+            }
+        }
         stab.set_max_zoom(cfg.max_zoom, cfg.max_zoom_iterations as usize);
         stab.set_use_gravity_vectors(cfg.use_gravity_vectors);
         stab.set_video_speed(cfg.video_speed, true, true, true);
@@ -315,17 +340,37 @@ pub extern "C" fn gyrocore_load(
             stab.set_frame_readout_time(eff_readout);
         }
 
+        // Read back actual values after auto-detection
+        let actual_integration = stab.gyro.read().integration_method;
+        let actual_orientation = {
+            let gyro = stab.gyro.read();
+            let md = gyro.file_metadata.read();
+            md.imu_orientation.clone().unwrap_or_else(|| "unknown".into())
+        };
         eprintln!("[gyrocore] ── Settings ──────────────────────────────────");
-        eprintln!("[gyrocore]   integration: {} ({})  orientation: {}",
-                  cfg.integration_method,
-                  match cfg.integration_method { 0 => "Complementary", 1 => "Complementary2", 2 => "VQF", _ => "?" },
-                  cfg.imu_orientation);
+        eprintln!("[gyrocore]   integration: {} ({}) [{}]  orientation: {} [{}]",
+                  actual_integration,
+                  match actual_integration { 0 => "BuiltIn", 1 => "Complementary", 2 => "VQF", 3 => "SimpleGyro", 4 => "SimpleGyro+Accel", 5 => "Mahony", 6 => "Madgwick", _ => "?" },
+                  if cfg.integration_method.is_some() { "manual" } else { "auto" },
+                  actual_orientation,
+                  if cfg.imu_orientation.is_some() { "manual" } else { "auto" });
         eprintln!("[gyrocore]   method     : 1 (Default)  smoothness: {:.3}  per_axis: {}", eff_smooth, cfg.per_axis);
         if cfg.per_axis {
             eprintln!("[gyrocore]   pitch={:.3}  yaw={:.3}  roll={:.3}", cfg.smoothness_pitch, cfg.smoothness_yaw, cfg.smoothness_roll);
         }
-        eprintln!("[gyrocore]   fov: {:.2}  lens_correction: {:.2}  zoom_method: {}  zoom_window: {:.1}s  max_zoom: {:.0}%",
-                  cfg.fov, cfg.lens_correction_amount, cfg.zooming_method, cfg.adaptive_zoom, cfg.max_zoom);
+        let zoom_mode = match cfg.zooming_method {
+            0 => "None".to_string(),
+            2 => "Static".to_string(),
+            _ => {
+                let algo = match cfg.zooming_algorithm {
+                    0 => "GaussianFilter",
+                    _ => "EnvelopeFollower",
+                };
+                format!("Dynamic({}, {:.1}s)", algo, cfg.adaptive_zoom)
+            }
+        };
+        eprintln!("[gyrocore]   fov: {:.2}  lens_correction: {:.2}  zoom: {}  max_zoom: {:.0}%",
+                  cfg.fov, cfg.lens_correction_amount, zoom_mode, cfg.max_zoom);
         if cfg.horizon_lock_enabled {
             eprintln!("[gyrocore]   horizon_lock: ON  amount={:.0}%  roll={:.1}°", cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll);
         }
@@ -397,9 +442,60 @@ pub extern "C" fn gyrocore_load(
             p.fps * p.fps_scale.unwrap_or(1.0)
         };
 
+        // Scan FOV range over all frames (adaptive zoom breathing diagnostic)
+        {
+            let mut fov_min = f32::MAX;
+            let mut fov_max = f32::MIN;
+            let step = if frame_count > 200 { frame_count / 100 } else { 1 };
+            for fi in (0..frame_count).step_by(step) {
+                let ts = timestamp_at_frame(fi as i32, scaled_fps);
+                let ft = FrameTransform::at_timestamp(&compute_params, ts, fi);
+                let fov = ft.kernel_params.fov;
+                if fov < fov_min { fov_min = fov; }
+                if fov > fov_max { fov_max = fov; }
+            }
+            eprintln!("[gyrocore] ── FOV range (adaptive zoom) ────────────────");
+            eprintln!("[gyrocore]   fov min={:.6}  max={:.6}  range={:.6}  ({:.2}%)",
+                      fov_min, fov_max, fov_max - fov_min,
+                      (fov_max - fov_min) / fov_min * 100.0);
+            eprintln!("[gyrocore] ──────────────────────────────────────────────");
+        }
+
         let ts0 = timestamp_at_frame(0, scaled_fps);
         let ft0 = FrameTransform::at_timestamp(&compute_params, ts0, 0);
         let kp  = &ft0.kernel_params;
+
+        let mut dm = kp.distortion_model as i32;
+        eprintln!("[gyrocore] distortion_model={} r_limit={:.4}", dm, kp.r_limit);
+        eprintln!("[gyrocore] k[0..7]=[{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}]",
+                  kp.k[0], kp.k[1], kp.k[2], kp.k[3], kp.k[4], kp.k[5], kp.k[6], kp.k[7]);
+
+        // Check lens profile note for in-camera distortion compensation.
+        // Sony cameras with "Distortion Comp.: On" already correct lens distortion
+        // in the output video — applying distort_point would re-distort the image.
+        let lens_note = stab.lens.read().note.clone();
+        if !lens_note.is_empty() {
+            eprintln!("[gyrocore] lens note: {}", lens_note);
+        }
+        if lens_note.contains("Distortion comp.: On") {
+            eprintln!("[gyrocore] in-camera distortion compensation detected → forcing identity distortion");
+            dm = 0; // None — skip distort_point in shader
+        }
+
+        let lens_info = {
+            let l = stab.lens.read();
+            let id = &l.identifier;
+            let setting = &l.camera_setting;
+            let cw = l.calib_dimension.w;
+            let ch = l.calib_dimension.h;
+            let name = format!("{} {} {}", l.camera_brand, l.camera_model, l.lens_model).trim().to_string();
+            if id.is_empty() {
+                format!("{} | {}x{} | {}", name, cw, ch, setting)
+            } else {
+                format!("{} | {}x{} | {} | id={}", name, cw, ch, setting, id)
+            }
+        };
+        eprintln!("[gyrocore] lens_info: \"{}\"", lens_info);
 
         let state = Box::new(State {
             frame_count,
@@ -408,6 +504,10 @@ pub extern "C" fn gyrocore_load(
             vid_w, vid_h, fps,
             fx: kp.f[0], fy: kp.f[1],
             cx: kp.c[0], cy: kp.c[1],
+            k: kp.k,
+            distortion_model: dm,
+            r_limit: kp.r_limit,
+            lens_info,
             compute_params,
         });
         eprintln!("[gyrocore] f=[{:.2},{:.2}] c=[{:.2},{:.2}] rows={}",
@@ -424,9 +524,20 @@ pub extern "C" fn gyrocore_load(
 
 // ─── Get params ───────────────────────────────────────────────────────────────
 
-/// Write 40-byte params blob into buf. Returns 0 on success, -1 on error.
-/// Layout: frame_count(u32) row_count(u32) video_w(u32) video_h(u32)
-///         fps(f64) fx(f32) fy(f32) cx(f32) cy(f32)  — all little-endian
+/// Write 96-byte params blob into buf. Returns 0 on success, -1 on error.
+/// Layout (all little-endian):
+///   [0..4]   frame_count (u32)
+///   [4..8]   row_count   (u32)
+///   [8..12]  video_w     (u32)
+///   [12..16] video_h     (u32)
+///   [16..24] fps         (f64)
+///   [24..28] fx          (f32)
+///   [28..32] fy          (f32)
+///   [32..36] cx          (f32)
+///   [36..40] cy          (f32)
+///   [40..88] k[12]       (12 × f32 = 48 bytes) — distortion coefficients
+///   [88..92] distortion_model (i32)
+///   [92..96] r_limit     (f32)
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gyrocore_get_params(
     handle: *const State,
@@ -434,7 +545,7 @@ pub unsafe extern "C" fn gyrocore_get_params(
 ) -> c_int {
     if handle.is_null() || buf.is_null() { return -1; }
     let s   = &*handle;
-    let out = std::slice::from_raw_parts_mut(buf, 40);
+    let out = std::slice::from_raw_parts_mut(buf, 96);
     let mut w = std::io::Cursor::new(out);
     let _ = w.write_all(&(s.frame_count as u32).to_le_bytes());
     let _ = w.write_all(&(s.row_count   as u32).to_le_bytes());
@@ -445,14 +556,22 @@ pub unsafe extern "C" fn gyrocore_get_params(
     let _ = w.write_all(&s.fy.to_le_bytes());
     let _ = w.write_all(&s.cx.to_le_bytes());
     let _ = w.write_all(&s.cy.to_le_bytes());
+    // Distortion parameters (bytes 40..96)
+    for ki in &s.k {
+        let _ = w.write_all(&ki.to_le_bytes());
+    }
+    let _ = w.write_all(&s.distortion_model.to_le_bytes());
+    let _ = w.write_all(&s.r_limit.to_le_bytes());
     0
 }
 
 // ─── Get frame ────────────────────────────────────────────────────────────────
 
-/// Compute matrices for frame_idx. output must hold ≥ row_count * 14 floats.
-/// Each row: [mat3×3 (9 floats), sx, sy, ra (IBIS shift/rotation), ox, oy (OIS offset)]
-/// Returns row_count * 14 on success, -1 on error.
+/// Compute matrices for frame_idx. output must hold ≥ row_count * 14 + 9 floats.
+/// Layout:
+///   [0 .. row_count*14] — per-row matrices: [mat3×3(9), sx, sy, ra, ox, oy]
+///   [row_count*14 .. +9] — per-frame params: [fx, fy, cx, cy, k0, k1, k2, k3, fov]
+/// Returns row_count * 14 + 9 on success, -1 on error.
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gyrocore_get_frame(
     handle:    *const State,
@@ -466,8 +585,8 @@ pub unsafe extern "C" fn gyrocore_get_frame(
     let ts_ms   = timestamp_at_frame(fi as i32, s.scaled_fps);
     let ft      = FrameTransform::at_timestamp(&s.compute_params, ts_ms, fi);
     let mat_len = ft.matrices.len();
-    let count   = s.row_count * 14;
-    let out     = std::slice::from_raw_parts_mut(output, count);
+    let total   = s.row_count * 14 + 9;
+    let out     = std::slice::from_raw_parts_mut(output, total);
 
     for row in 0..s.row_count {
         let m = if mat_len > 1 {
@@ -479,21 +598,122 @@ pub unsafe extern "C" fn gyrocore_get_frame(
         out[base..base + 14].copy_from_slice(&m[..14]);
     }
 
-    // One-time IBIS diagnostics: print scaled matrix values for frame 0
-    static DIAG_DONE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-    if frame_idx == 0 && !DIAG_DONE.swap(true, std::sync::atomic::Ordering::Relaxed) {
-        if let Some(m0) = ft.matrices.first() {
-            eprintln!("[gyrocore] frame0 row0 IBIS(scaled): sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
-                      m0[9], m0[10], m0[11], m0[12], m0[13]);
-        }
-        let mid = s.row_count / 2;
-        if let Some(mm) = ft.matrices.get(mid) {
-            eprintln!("[gyrocore] frame0 row{} IBIS(scaled): sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
-                      mid, mm[9], mm[10], mm[11], mm[12], mm[13]);
+    // Append per-frame lens params after matrices (9 floats)
+    let kp = &ft.kernel_params;
+    let pf_base = s.row_count * 14;
+    out[pf_base]     = kp.f[0];  // fx
+    out[pf_base + 1] = kp.f[1];  // fy
+    out[pf_base + 2] = kp.c[0];  // cx
+    out[pf_base + 3] = kp.c[1];  // cy
+    out[pf_base + 4] = kp.k[0];  // k0
+    out[pf_base + 5] = kp.k[1];  // k1
+    out[pf_base + 6] = kp.k[2];  // k2
+    out[pf_base + 7] = kp.k[3];  // k3
+    out[pf_base + 8] = kp.fov;   // per-frame fov
+
+    // Diagnostics: print per-frame lens params for first 5 frames
+    static DIAG_COUNT: std::sync::atomic::AtomicU32 = std::sync::atomic::AtomicU32::new(0);
+    let diag_n = DIAG_COUNT.load(std::sync::atomic::Ordering::Relaxed);
+    if diag_n < 5 {
+        DIAG_COUNT.store(diag_n + 1, std::sync::atomic::Ordering::Relaxed);
+        eprintln!("[gyrocore] frame{} f=[{:.4},{:.4}] c=[{:.4},{:.4}] k=[{:.8},{:.8},{:.8},{:.8}] fov={:.6}",
+                  frame_idx, kp.f[0], kp.f[1], kp.c[0], kp.c[1],
+                  kp.k[0], kp.k[1], kp.k[2], kp.k[3], kp.fov);
+        if frame_idx == 0 {
+            if let Some(m0) = ft.matrices.first() {
+                eprintln!("[gyrocore] frame0 row0 mat3x3: [{:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}]",
+                          m0[0], m0[1], m0[2], m0[3], m0[4], m0[5], m0[6], m0[7], m0[8]);
+                eprintln!("[gyrocore] frame0 row0 IBIS: sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
+                          m0[9], m0[10], m0[11], m0[12], m0[13]);
+            }
+            let mid = s.row_count / 2;
+            if let Some(mm) = ft.matrices.get(mid) {
+                eprintln!("[gyrocore] frame0 row{} mat3x3: [{:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}]",
+                          mid, mm[0], mm[1], mm[2], mm[3], mm[4], mm[5], mm[6], mm[7], mm[8]);
+                eprintln!("[gyrocore] frame0 row{} IBIS: sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
+                          mid, mm[9], mm[10], mm[11], mm[12], mm[13]);
+            }
         }
     }
 
-    count as c_int
+    total as c_int
+}
+
+// ─── Get frame at timestamp ──────────────────────────────────────────────────
+
+/// Like gyrocore_get_frame but takes a continuous timestamp (seconds) instead of
+/// a discrete frame index. This eliminates quantization error from frame-index
+/// rounding, which is critical for accurate rolling-shutter correction.
+///
+/// The timestamp is used directly for FrameTransform::at_timestamp(), while the
+/// frame index is computed internally as round(ts_sec * fps).
+///
+/// Same output layout as gyrocore_get_frame:
+///   [0 .. row_count*14] — per-row matrices
+///   [row_count*14 .. +9] — per-frame params: [fx, fy, cx, cy, k0..k3, fov]
+/// Returns row_count * 14 + 9 on success, -1 on error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyrocore_get_frame_at_ts(
+    handle: *const State,
+    ts_sec: f64,
+    output: *mut f32,
+) -> c_int {
+    if handle.is_null() || output.is_null() { return -1; }
+    let s = &*handle;
+
+    let ts_ms = ts_sec * 1000.0;
+    let fi = ((ts_ms * s.scaled_fps / 1000.0).round() as i64)
+        .max(0).min(s.frame_count as i64 - 1) as usize;
+
+    let ft      = FrameTransform::at_timestamp(&s.compute_params, ts_ms, fi);
+    let mat_len = ft.matrices.len();
+    let total   = s.row_count * 14 + 9;
+    let out     = std::slice::from_raw_parts_mut(output, total);
+
+    for row in 0..s.row_count {
+        let m = if mat_len > 1 {
+            ft.matrices.get(row).or_else(|| ft.matrices.last()).unwrap()
+        } else {
+            ft.matrices.first().unwrap_or(&[0.0_f32; 14])
+        };
+        let base = row * 14;
+        out[base..base + 14].copy_from_slice(&m[..14]);
+    }
+
+    let kp = &ft.kernel_params;
+    let pf_base = s.row_count * 14;
+    out[pf_base]     = kp.f[0];
+    out[pf_base + 1] = kp.f[1];
+    out[pf_base + 2] = kp.c[0];
+    out[pf_base + 3] = kp.c[1];
+    out[pf_base + 4] = kp.k[0];
+    out[pf_base + 5] = kp.k[1];
+    out[pf_base + 6] = kp.k[2];
+    out[pf_base + 7] = kp.k[3];
+    out[pf_base + 8] = kp.fov;
+
+    total as c_int
+}
+
+// ─── Lens info ────────────────────────────────────────────────────────────────
+
+/// Copy lens info string into buf (up to buf_len-1 bytes, null-terminated).
+/// Returns actual string length (excluding null), or -1 on error.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyrocore_get_lens_info(
+    handle: *const State,
+    buf:    *mut u8,
+    buf_len: c_int,
+) -> c_int {
+    if handle.is_null() || buf.is_null() || buf_len <= 0 { return -1; }
+    let s = unsafe { &*handle };
+    let bytes = s.lens_info.as_bytes();
+    let copy_len = bytes.len().min((buf_len - 1) as usize);
+    unsafe {
+        std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, copy_len);
+        *buf.add(copy_len) = 0; // null terminator
+    }
+    copy_len as c_int
 }
 
 // ─── Free ─────────────────────────────────────────────────────────────────────

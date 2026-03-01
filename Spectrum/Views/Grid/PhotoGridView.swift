@@ -162,7 +162,7 @@ struct PhotoGridView: View {
                                 }
                                 .padding(.horizontal, 2)
                             } header: {
-                                TimelineSectionHeader(label: "Folders", count: subfolders.count, unit: "folders")
+                                TimelineSectionHeader(localizedLabel: "Folders", count: subfolders.count, unit: .folders)
                             }
                         }
 
@@ -178,7 +178,7 @@ struct PhotoGridView: View {
                                 }
                                 .padding(.horizontal, 2)
                             } header: {
-                                TimelineSectionHeader(label: "Indexing", count: pendingPaths.count)
+                                TimelineSectionHeader(localizedLabel: "Indexing", count: pendingPaths.count)
                             }
                         }
 
@@ -221,7 +221,7 @@ struct PhotoGridView: View {
                                 .padding(.horizontal, 2)
                             } header: {
                                 TimelineSectionHeader(
-                                    label: section.label,
+                                    verbatimLabel: section.label,
                                     count: section.photos.count
                                 )
                             }
@@ -473,7 +473,7 @@ struct PhotoGridView: View {
 
         guard let srcRootURL = try? BookmarkService.resolveBookmark(item.bookmarkData),
               let dstRootURL = try? BookmarkService.resolveBookmark(dstBM) else {
-            errorMessage = "Cannot access folder. Remove and re-add it in the sidebar."
+            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
             return
         }
 
@@ -493,7 +493,7 @@ struct PhotoGridView: View {
 
         // fileExists check must happen inside the security scope
         guard !FileManager.default.fileExists(atPath: dst.path) else {
-            errorMessage = "\"\(src.lastPathComponent)\" already exists in this folder."
+            errorMessage = String(localized: "\"\(src.lastPathComponent)\" already exists in this folder.")
             return
         }
 
@@ -533,7 +533,7 @@ struct PhotoGridView: View {
                 scopeURL = resolved
                 didStart = resolved.startAccessingSecurityScopedResource()
             } catch {
-                errorMessage = "Cannot access folder. Remove and re-add it in the sidebar."
+                errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
                 return
             }
         }
@@ -570,7 +570,7 @@ struct PhotoGridView: View {
              nsError.code == NSFileReadNoPermissionError)) ||
             (nsError.domain == NSPOSIXErrorDomain && nsError.code == Int(EACCES))
         if isPermission {
-            return "Write permission denied. Remove and re-add this folder in the sidebar to enable write operations."
+            return String(localized: "Write permission denied. Remove and re-add this folder in the sidebar to enable write operations.")
         }
         return error.localizedDescription
     }
@@ -586,7 +586,8 @@ private struct SubfolderTileView: View {
 
     private static let dateFormatter: DateFormatter = {
         let f = DateFormatter()
-        f.dateFormat = "yyyy/MM/dd"
+        f.dateStyle = .medium
+        f.timeStyle = .none
         return f
     }()
 

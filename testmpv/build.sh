@@ -7,18 +7,19 @@ set -e
 cd "$(dirname "$0")"
 
 # ── Build libgyrocore_c.dylib (Rust) ──────────────────
-GYRO_DIR="$HOME/gyroflow"
-PLAYER_DIR="$GYRO_DIR/player"
+WRAPPER_DIR="$(dirname "$0")/../gyro-wrapper"
 echo "Building libgyrocore_c.dylib..."
-if [ -d "$PLAYER_DIR" ]; then
-    (cd "$PLAYER_DIR" && cargo build --release --lib 2>&1 | tail -3)
-    # workspace 層級 target 目錄
-    if [ -f "$GYRO_DIR/target/release/libgyrocore_c.dylib" ]; then
-        cp "$GYRO_DIR/target/release/libgyrocore_c.dylib" "$(dirname "$0")/libgyrocore_c.dylib"
+if [ -d "$WRAPPER_DIR" ]; then
+    (cd "$WRAPPER_DIR" && cargo build --release 2>&1 | tail -3)
+    DYLIB="$WRAPPER_DIR/target/release/libgyrocore_c.dylib"
+    if [ -f "$DYLIB" ]; then
+        cp "$DYLIB" "$(dirname "$0")/libgyrocore_c.dylib"
         echo "  ✅ libgyrocore_c.dylib copied"
     else
         echo "  ⚠️  libgyrocore_c.dylib build failed"
     fi
+else
+    echo "  ⚠️  gyro-wrapper not found at $WRAPPER_DIR"
 fi
 
 echo "Building testmpv..."

@@ -205,8 +205,8 @@ struct SidebarView: View {
         panel.canChooseFiles = false
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = true
-        panel.message = "Select a folder to scan for photos"
-        panel.prompt = "Scan"
+        panel.message = String(localized: "Select a folder to scan for photos")
+        panel.prompt = String(localized: "Scan")
 
         guard panel.runModal() == .OK else { return }
 

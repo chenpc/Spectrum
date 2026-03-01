@@ -3,7 +3,8 @@ import Foundation
 extension Date {
     var timelineLabel: String {
         let formatter = DateFormatter()
-        formatter.dateFormat = "yyyy/MM/dd"
+        formatter.dateStyle = .medium
+        formatter.timeStyle = .none
         return formatter.string(from: self)
     }
 

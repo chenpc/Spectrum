@@ -2,10 +2,10 @@ import CoreGraphics
 import Foundation
 
 struct CropRect: Codable, Equatable {
-    var x: Double      // 左上角 x (0~1)
-    var y: Double      // 左上角 y (0~1)
-    var width: Double  // 寬度 (0~1)
-    var height: Double // 高度 (0~1)
+    var x: Double      // top-left x (0~1)
+    var y: Double      // top-left y (0~1)
+    var width: Double  // width (0~1)
+    var height: Double // height (0~1)
 
     func pixelRect(imageWidth: Int, imageHeight: Int) -> CGRect {
         CGRect(

@@ -57,6 +57,7 @@
 		AA000074 /* EditOp.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000074 /* EditOp.swift */; };
 		AA000075 /* CGImageRotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000075 /* CGImageRotation.swift */; };
 		AA000076 /* XMPSidecarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000076 /* XMPSidecarService.swift */; };
+		AA000080 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = AB000080 /* Localizable.xcstrings */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -124,6 +125,7 @@
 		AB000074 /* EditOp.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOp.swift; sourceTree = "<group>"; };
 		AB000075 /* CGImageRotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGImageRotation.swift; sourceTree = "<group>"; };
 		AB000076 /* XMPSidecarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPSidecarService.swift; sourceTree = "<group>"; };
+		AB000080 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -160,6 +162,7 @@
 				AB000001 /* SpectrumApp.swift */,
 				AB000017 /* Spectrum.entitlements */,
 				AB00001C /* Assets.xcassets */,
+				AB000080 /* Localizable.xcstrings */,
 				AE000003 /* Models */,
 				AE000004 /* Views */,
 				AE000005 /* Services */,
@@ -383,6 +386,9 @@
 			knownRegions = (
 				en,
 				Base,
+				"zh-Hant",
+				"zh-Hans",
+				ja,
 			);
 			mainGroup = AE000001;
 			productRefGroup = AE000099 /* Products */;
@@ -401,6 +407,7 @@
 			buildActionMask = 2147483647;
 			files = (
 				AA00001C /* Assets.xcassets in Resources */,
+				AA000080 /* Localizable.xcstrings in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

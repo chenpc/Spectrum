@@ -61,12 +61,12 @@ private struct CacheSettingsTab: View {
                 }
 
                 Picker("Size Limit", selection: $thumbnailCacheLimitMB) {
-                    Text("100 MB").tag(100)
-                    Text("250 MB").tag(250)
-                    Text("500 MB").tag(500)
-                    Text("1 GB").tag(1000)
-                    Text("2 GB").tag(2000)
-                    Text("∞").tag(0)
+                    Text(verbatim: "100 MB").tag(100)
+                    Text(verbatim: "250 MB").tag(250)
+                    Text(verbatim: "500 MB").tag(500)
+                    Text(verbatim: "1 GB").tag(1000)
+                    Text(verbatim: "2 GB").tag(2000)
+                    Text(verbatim: "∞").tag(0)
                 }
             }
         }
@@ -80,8 +80,6 @@ private struct CacheSettingsTab: View {
 private struct PlaybackSettingsTab: View {
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
     @AppStorage("mpvHwdec") private var mpvHwdec: String = "auto"
-    @AppStorage("mpvVideoSync") private var mpvVideoSync: String = "display-resample"
-    @AppStorage("mpvFrameDrop") private var mpvFrameDrop: String = "vo"
 
     // Per-type player selection (no "default" indirection)
     @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
@@ -105,57 +103,15 @@ private struct PlaybackSettingsTab: View {
 
                 Section("Hardware Decode") {
                     Picker("hwdec", selection: $mpvHwdec) {
-                        Text("auto").tag("auto")
-                        Text("videotoolbox").tag("videotoolbox")
-                        Text("videotoolbox-copy").tag("videotoolbox-copy")
-                        Text("no (software)").tag("no")
+                        Text(verbatim: "auto").tag("auto")
+                        Text(verbatim: "videotoolbox").tag("videotoolbox")
+                        Text(verbatim: "videotoolbox-copy").tag("videotoolbox-copy")
+                        Text(verbatim: "no (software)").tag("no")
                     }
-                    Text("變更於下次載入影片生效")
+                    Text("Changes take effect on next video load")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
                 }
-            }
-
-            Section("Sync & Drop") {
-                Picker("Video Sync", selection: $mpvVideoSync) {
-                    Text("display-resample (default)")
-                        .help("微調播放速度對齊 vsync，最流暢")
-                        .tag("display-resample")
-                    Text("display-vdrop")
-                        .help("丟影片幀對齊 vsync")
-                        .tag("display-vdrop")
-                    Text("display-adrop")
-                        .help("丟音訊幀對齊 vsync")
-                        .tag("display-adrop")
-                    Text("display-desync")
-                        .help("影片依 vsync 播放，不追趕音訊")
-                        .tag("display-desync")
-                    Text("audio")
-                        .help("影片依音訊時鐘播放，mpv 預設")
-                        .tag("audio")
-                    Text("desync")
-                        .help("影音完全獨立，不同步")
-                        .tag("desync")
-                }
-
-                Picker("Frame Drop", selection: $mpvFrameDrop) {
-                    Text("vo (default)")
-                        .help("在輸出層丟幀，解碼照常")
-                        .tag("vo")
-                    Text("decoder")
-                        .help("在解碼層丟幀，更省 CPU")
-                        .tag("decoder")
-                    Text("decoder+vo")
-                        .help("解碼層 + 輸出層都可丟幀")
-                        .tag("decoder+vo")
-                    Text("no")
-                        .help("完全不丟幀")
-                        .tag("no")
-                }
-
-                Text("變更於下次載入影片生效")
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
 
             Section("Diagnostics") {
@@ -165,10 +121,10 @@ private struct PlaybackSettingsTab: View {
         .formStyle(.grouped)
     }
 
-    private func perTypePicker(_ label: String, selection: Binding<String>) -> some View {
+    private func perTypePicker(_ label: LocalizedStringKey, selection: Binding<String>) -> some View {
         Picker(label, selection: selection) {
-            Text("libmpv").tag("libmpv")
-            Text("AVPlayer").tag("avplayer")
+            Text(verbatim: "libmpv").tag("libmpv")
+            Text(verbatim: "AVPlayer").tag("avplayer")
         }
     }
 }
@@ -180,11 +136,12 @@ private struct GyroSettingsTab: View {
     @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
     @AppStorage("gyroOffsetMs") private var gyroOffsetMs: Double = 0
     @AppStorage("gyroLensPath") private var gyroLensPath: String = ""
-    @AppStorage("gyroIntegrationMethod") private var integrationMethod: Int = 2
-    @AppStorage("gyroImuOrientation") private var imuOrientation: String = "YXz"
+    @AppStorage("gyroIntegrationMethod") private var integrationMethod: Int = -1
+    @AppStorage("gyroImuOrientation") private var imuOrientation: String = ""
     @AppStorage("gyroFov") private var fov: Double = 1.0
     @AppStorage("gyroLensCorrectionAmount") private var lensCorrectionAmount: Double = 1.0
     @AppStorage("gyroZoomingMethod") private var zoomingMethod: Int = 1
+    @AppStorage("gyroZoomingAlgorithm") private var zoomingAlgorithm: Int = 1
     @AppStorage("gyroAdaptiveZoom") private var adaptiveZoom: Double = 4.0
     @AppStorage("gyroMaxZoom") private var maxZoom: Double = 130.0
     @AppStorage("gyroMaxZoomIterations") private var maxZoomIterations: Int = 5
@@ -197,27 +154,26 @@ private struct GyroSettingsTab: View {
     @AppStorage("gyroSmoothnessPitch") private var smoothnessPitch: Double = 0
     @AppStorage("gyroSmoothnessYaw") private var smoothnessYaw: Double = 0
     @AppStorage("gyroSmoothnessRoll") private var smoothnessRoll: Double = 0
-
     @State private var gyroDylibFound: Bool = false
 
     var body: some View {
         Form {
             // MARK: Enable + dylib status
             Section {
-                Toggle("啟用 Gyroflow 校正（mpv 播放時）", isOn: $gyroStabEnabled)
+                Toggle("Enable Gyroflow stabilization (during mpv playback)", isOn: $gyroStabEnabled)
 
                 HStack(spacing: 5) {
                     Image(systemName: gyroDylibFound ? "checkmark.circle.fill" : "xmark.circle.fill")
                         .foregroundStyle(gyroDylibFound ? .green : .red)
-                    Text(gyroDylibFound
-                         ? "libgyrocore_c.dylib 已找到"
-                         : "找不到 libgyrocore_c.dylib")
+                    Text(verbatim: gyroDylibFound
+                         ? "libgyrocore_c.dylib found"
+                         : "libgyrocore_c.dylib not found")
                         .foregroundStyle(gyroDylibFound ? Color.secondary : Color.red)
                 }
                 .font(.caption)
 
                 if !gyroDylibFound {
-                    Text("cd MyPhoto/gyro-wrapper && cargo build --release")
+                    Text(verbatim: "cd MyPhoto/gyro-wrapper && cargo build --release")
                         .font(.caption2.monospaced())
                         .foregroundStyle(.secondary)
                         .textSelection(.enabled)
@@ -231,11 +187,12 @@ private struct GyroSettingsTab: View {
                         gyroSmooth = 0.5
                         gyroOffsetMs = 0
                         gyroLensPath = ""
-                        integrationMethod = 2
-                        imuOrientation = "YXz"
+                        integrationMethod = -1
+                        imuOrientation = ""
                         fov = 1.0
                         lensCorrectionAmount = 1.0
                         zoomingMethod = 1
+                        zoomingAlgorithm = 1
                         adaptiveZoom = 4.0
                         maxZoom = 130.0
                         maxZoomIterations = 5
@@ -273,7 +230,7 @@ private struct GyroSettingsTab: View {
                         sliderRow("Pitch", value: $smoothnessPitch, range: 0...1.0, step: 0.01)
                         sliderRow("Yaw", value: $smoothnessYaw, range: 0...1.0, step: 0.01)
                         sliderRow("Roll", value: $smoothnessRoll, range: 0...1.0, step: 0.01)
-                        Text("0 = 使用全域 Smoothness 值")
+                        Text("0 = use global Smoothness value")
                             .font(.caption2)
                             .foregroundStyle(.tertiary)
                     }
@@ -288,7 +245,7 @@ private struct GyroSettingsTab: View {
                             .frame(width: 80)
                             .multilineTextAlignment(.trailing)
                     }
-                    Text("正值 = gyro 超前影像")
+                    Text("Positive = gyro leads video")
                         .font(.caption2)
                         .foregroundStyle(.tertiary)
 
@@ -296,7 +253,7 @@ private struct GyroSettingsTab: View {
                         Text("Lens Profile")
                         Spacer()
                         if gyroLensPath.isEmpty {
-                            Text("未設定")
+                            Text("Auto-detect")
                                 .foregroundStyle(.secondary)
                         } else {
                             Text(URL(fileURLWithPath: gyroLensPath).lastPathComponent)
@@ -306,7 +263,7 @@ private struct GyroSettingsTab: View {
                         }
                     }
                     HStack {
-                        Button("選擇 .gyroflow 檔案…") {
+                        Button("Choose .gyroflow file...") {
                             let panel = NSOpenPanel()
                             panel.allowedContentTypes = [.init(filenameExtension: "gyroflow")!]
                             panel.allowsMultipleSelection = false
@@ -316,7 +273,7 @@ private struct GyroSettingsTab: View {
                             }
                         }
                         if !gyroLensPath.isEmpty {
-                            Button("清除") { gyroLensPath = "" }
+                            Button("Clear") { gyroLensPath = "" }
                         }
                     }
                 }
@@ -324,17 +281,30 @@ private struct GyroSettingsTab: View {
                 // MARK: IMU
                 Section("IMU") {
                     Picker("Integration Method", selection: $integrationMethod) {
-                        Text("Complementary").tag(0)
-                        Text("Complementary2").tag(1)
-                        Text("VQF").tag(2)
+                        Text("Auto").tag(-1)
+                        Text("Built-in Quaternions").tag(0)
+                        Text(verbatim: "Complementary").tag(1)
+                        Text(verbatim: "VQF").tag(2)
+                        Text("Simple Gyro").tag(3)
+                        Text("Simple Gyro + Accel").tag(4)
+                        Text(verbatim: "Mahony").tag(5)
+                        Text(verbatim: "Madgwick").tag(6)
                     }
 
                     HStack {
                         Text("IMU Orientation")
                         Spacer()
+                        if imuOrientation.isEmpty {
+                            Text("Auto")
+                                .foregroundStyle(.secondary)
+                        }
                         TextField("", text: $imuOrientation)
                             .frame(width: 80)
                             .multilineTextAlignment(.trailing)
+                    }
+                    if !imuOrientation.isEmpty {
+                        Button("Reset to Auto") { imuOrientation = "" }
+                            .font(.caption)
                     }
 
                     Toggle("Use gravity vectors", isOn: $useGravityVectors)
@@ -348,10 +318,15 @@ private struct GyroSettingsTab: View {
 
                     Picker("Zooming Method", selection: $zoomingMethod) {
                         Text("None").tag(0)
-                        Text("Envelope Follower").tag(1)
+                        Text("Dynamic").tag(1)
+                        Text("Static").tag(2)
                     }
 
                     if zoomingMethod == 1 {
+                        Picker("Zooming Algorithm", selection: $zoomingAlgorithm) {
+                            Text("Gaussian Filter").tag(0)
+                            Text("Envelope Follower").tag(1)
+                        }
                         sliderRow("Adaptive Zoom (s)", value: $adaptiveZoom, range: 0.1...15.0, step: 0.1)
                     }
 
@@ -370,13 +345,13 @@ private struct GyroSettingsTab: View {
         .task { gyroDylibFound = GyroCore.dylibFound }
     }
 
-    private func sliderRow(_ label: String, value: Binding<Double>,
+    private func sliderRow(_ label: LocalizedStringKey, value: Binding<Double>,
                            range: ClosedRange<Double>, step: Double) -> some View {
         VStack(alignment: .leading, spacing: 4) {
             HStack {
                 Text(label)
                 Spacer()
-                Text(step >= 1 ? String(format: "%.0f", value.wrappedValue)
+                Text(verbatim: step >= 1 ? String(format: "%.0f", value.wrappedValue)
                      : step >= 0.1 ? String(format: "%.1f", value.wrappedValue)
                      : String(format: "%.2f", value.wrappedValue))
                     .foregroundStyle(.secondary)

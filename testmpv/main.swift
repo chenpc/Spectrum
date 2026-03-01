@@ -41,11 +41,12 @@ struct GyroConfig: Codable {
     var readoutMs:            Double = 0
     var smooth:               Double = 0
     var gyroOffsetMs:         Double = 0
-    var integrationMethod:    Int    = 2
-    var imuOrientation:       String = "YXz"
+    var integrationMethod:    Int?   = nil    // nil=auto
+    var imuOrientation:       String? = nil   // nil=auto
     var fov:                  Double = 1.0
     var lensCorrectionAmount: Double = 1.0
-    var zoomingMethod:        Int    = 1
+    var zoomingMethod:        Int    = 1      // 0=None 1=Dynamic 2=Static
+    var zoomingAlgorithm:     Int    = 1      // 0=GaussianFilter 1=EnvelopeFollower
     var adaptiveZoom:         Double = 4.0
     var maxZoom:              Double = 130.0
     var maxZoomIterations:    Int    = 5
@@ -68,6 +69,7 @@ struct GyroConfig: Codable {
         case fov
         case lensCorrectionAmount = "lens_correction_amount"
         case zoomingMethod        = "zooming_method"
+        case zoomingAlgorithm     = "zooming_algorithm"
         case adaptiveZoom         = "adaptive_zoom"
         case maxZoom              = "max_zoom"
         case maxZoomIterations    = "max_zoom_iterations"
@@ -86,13 +88,14 @@ struct GyroConfig: Codable {
 // GyroCore: in-process gyroflow-core 矩陣計算
 // 用 dlopen 載入 libgyrocore_c.dylib（與 libmpv 相同模式），無 subprocess
 class GyroCore {
-    // ── C function pointer types ──────────────────────────────────────────────
+    // ── C function pointer types (matches Spectrum/Services/GyroCore.swift) ──
     private typealias FnLoad      = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
     private typealias FnGetParams = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
     private typealias FnGetFrame  = @convention(c) (UnsafeMutableRawPointer, UInt32, UnsafeMutablePointer<Float>) -> Int32
+    private typealias FnGetFrameTs = @convention(c) (UnsafeMutableRawPointer, Double, UnsafeMutablePointer<Float>) -> Int32
     private typealias FnFree      = @convention(c) (UnsafeMutableRawPointer) -> Void
 
-    // ── 公開元數據 ────────────────────────────────────────────────────────────
+    // ── Public metadata ─────────────────────────────────────────────────────
     private(set) var frameCount:  Int    = 0
     private(set) var rowCount:    Int    = 1
     private(set) var gyroFx:      Float  = 0
@@ -102,6 +105,20 @@ class GyroCore {
     private(set) var gyroVideoW:  Float  = 0
     private(set) var gyroVideoH:  Float  = 0
     private(set) var gyroFps:     Double = 30
+    // Distortion parameters (from gyroflow-core KernelParams)
+    private(set) var distortionK: [Float] = [Float](repeating: 0, count: 12)
+    private(set) var distortionModel: Int32 = 0   // 0=None 1=OpenCVFisheye 3=Poly3 4=Poly5 7=Sony
+    private(set) var rLimit:      Float  = 0
+    // Per-frame lens params (updated each computeMatrix call)
+    private(set) var frameFx: Float = 0
+    private(set) var frameFy: Float = 0
+    private(set) var frameCx: Float = 0
+    private(set) var frameCy: Float = 0
+    private(set) var frameK: [Float] = [0, 0, 0, 0]
+    private(set) var frameFov: Float = 1.0
+    private(set) var fovMin: Float = 1.0
+    private(set) var fovMax: Float = 1.0
+    private(set) var lensCorrectionAmount: Float = 1.0
 
     private var _isReady  = false
     private let readyLock = NSLock()
@@ -109,17 +126,25 @@ class GyroCore {
         readyLock.lock(); defer { readyLock.unlock() }; return _isReady
     }
 
-    // ── Rust handle 鎖（保護 computeMatrix 與 stop() 並發）─────────────────────
     private let coreLock   = NSLock()
 
-    // ── 內部狀態 ──────────────────────────────────────────────────────────────
     private let ioQueue    = DispatchQueue(label: "gyrocore.init", qos: .userInteractive)
-    private var libHandle:  UnsafeMutableRawPointer?   // dlopen handle
-    private var coreHandle: UnsafeMutableRawPointer?   // *mut State (Rust Box)
-    private var fnLoad:     FnLoad?
+    private var libHandle:  UnsafeMutableRawPointer?
+    private var coreHandle: UnsafeMutableRawPointer?
+    private var fnLoad:      FnLoad?
     private var fnGetParams: FnGetParams?
-    private var fnGetFrame: FnGetFrame?
-    private var fnFree:     FnFree?
+    private var fnGetFrame:  FnGetFrame?
+    private var fnGetFrameTs: FnGetFrameTs?
+    private var fnFree:      FnFree?
+
+    /// 最近一次 computeMatrix 的耗時（ms）
+    private(set) var lastFetchMs: Double = 0
+
+    // Pre-allocated buffers
+    private var rawBuf:  [Float] = []
+    private var matsBuf: [Float] = []
+    private var cachedFrameIdx: Int = -1
+    private var fovHistory: [Float] = []
 
     static var dylibPath: String {
         URL(fileURLWithPath: CommandLine.arguments[0])
@@ -133,14 +158,13 @@ class GyroCore {
         return 20.0
     }
 
-    // ── 載入 dylib 並在背景執行 gyrocore_load ────────────────────────────────
     func start(videoPath: String, lensPath: String? = nil,
                config: GyroConfig = GyroConfig(),
                onReady: @escaping () -> Void,
                onError: @escaping (String) -> Void) {
         let path = Self.dylibPath
         guard let lib = dlopen(path, RTLD_NOW | RTLD_LOCAL) else {
-            onError("dlopen 失敗：\(String(cString: dlerror()))"); return
+            onError("dlopen failed: \(String(cString: dlerror()))"); return
         }
         libHandle = lib
 
@@ -148,12 +172,16 @@ class GyroCore {
               let s2 = dlsym(lib, "gyrocore_get_params"),
               let s3 = dlsym(lib, "gyrocore_get_frame"),
               let s4 = dlsym(lib, "gyrocore_free") else {
-            onError("dlsym 失敗：找不到 gyrocore 符號"); return
+            onError("dlsym failed: gyrocore symbols not found"); return
         }
         fnLoad      = unsafeBitCast(s1, to: FnLoad.self)
         fnGetParams = unsafeBitCast(s2, to: FnGetParams.self)
         fnGetFrame  = unsafeBitCast(s3, to: FnGetFrame.self)
         fnFree      = unsafeBitCast(s4, to: FnFree.self)
+        // Optional: timestamp-based frame query
+        if let s5 = dlsym(lib, "gyrocore_get_frame_at_ts") {
+            fnGetFrameTs = unsafeBitCast(s5, to: FnGetFrameTs.self)
+        }
 
         ioQueue.async { [weak self] in
             self?.loadCore(videoPath: videoPath, lensPath: lensPath, config: config,
@@ -161,7 +189,6 @@ class GyroCore {
         }
     }
 
-    /// ioQueue 上執行：呼叫 gyrocore_load（阻塞 ~0.3s）→ 讀取參數 → 標記 ready
     private func loadCore(videoPath: String, lensPath: String?, config: GyroConfig,
                           onReady: @escaping () -> Void,
                           onError: @escaping (String) -> Void) {
@@ -175,22 +202,22 @@ class GyroCore {
         }
 
         let lensDesc = lensPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "none"
-        print("[gyro] 載入 \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  config=\(configJSON)")
+        print("[gyro] Loading \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  config=\(configJSON)")
         let handle: UnsafeMutableRawPointer?
         if let lp = lensPath {
             handle = videoPath.withCString { vp in lp.withCString { lpp in configJSON.withCString { cj in fn(vp, lpp, cj) } } }
         } else {
             handle = videoPath.withCString { vp in configJSON.withCString { cj in fn(vp, nil, cj) } }
         }
-        guard let handle else { onError("gyrocore_load 失敗（無 gyro 資料？）"); return }
+        guard let handle else { onError("gyrocore_load failed"); return }
         coreHandle = handle
 
-        // 讀取 40-byte 參數 blob（同 GRDY header 的 offset 排列）
-        var buf = Data(count: 40)
+        // Read 96-byte params blob (matches Spectrum)
+        var buf = Data(count: 96)
         let rc = buf.withUnsafeMutableBytes { ptr in
             fnGetParams?(handle, ptr.baseAddress!) ?? -1
         }
-        guard rc == 0 else { onError("gyrocore_get_params 失敗"); return }
+        guard rc == 0 else { onError("gyrocore_get_params failed"); return }
 
         frameCount = Int(buf.withUnsafeBytes { $0.load(fromByteOffset:  0, as: UInt32.self) })
         rowCount   = Int(buf.withUnsafeBytes { $0.load(fromByteOffset:  4, as: UInt32.self) })
@@ -201,63 +228,102 @@ class GyroCore {
         gyroFy     = buf.withUnsafeBytes { $0.load(fromByteOffset: 28, as: Float32.self) }
         gyroCx     = buf.withUnsafeBytes { $0.load(fromByteOffset: 32, as: Float32.self) }
         gyroCy     = buf.withUnsafeBytes { $0.load(fromByteOffset: 36, as: Float32.self) }
+        // Distortion parameters (bytes 40..96)
+        buf.withUnsafeBytes { ptr in
+            for i in 0..<12 {
+                distortionK[i] = ptr.load(fromByteOffset: 40 + i * 4, as: Float32.self)
+            }
+        }
+        distortionModel = buf.withUnsafeBytes { $0.load(fromByteOffset: 88, as: Int32.self) }
+        rLimit          = buf.withUnsafeBytes { $0.load(fromByteOffset: 92, as: Float32.self) }
+        lensCorrectionAmount = Float(config.lensCorrectionAmount)
+        print("[gyro] distortion_model=\(distortionModel) k=[\(distortionK[0]),\(distortionK[1]),\(distortionK[2]),\(distortionK[3])] r_limit=\(rLimit)")
+
+        // Pre-allocate per-frame buffers
+        rawBuf  = [Float](repeating: 0, count: rowCount * 14 + 9)
+        matsBuf = [Float](repeating: 0, count: Int(gyroVideoH) * 16)
+        cachedFrameIdx = -1
 
         readyLock.lock(); _isReady = true; readyLock.unlock()
-        print(String(format: "[gyro] ✅ Ready: %d 幀×%d 行  f=[%.1f,%.1f]  c=[%.1f,%.1f]  %dx%d@%.3ffps",
+        print(String(format: "[gyro] Ready: %d frames x %d rows  f=[%.1f,%.1f]  c=[%.1f,%.1f]  %dx%d@%.3ffps",
                      frameCount, rowCount, gyroFx, gyroFy, gyroCx, gyroCy,
                      Int(gyroVideoW), Int(gyroVideoH), gyroFps))
         DispatchQueue.main.async { onReady() }
     }
 
-    // ── Per-frame 矩陣（同步，直接在 render thread 呼叫，~0.5ms）────────────
+    // MARK: - Per-frame matrix at timestamp (matches Spectrum)
 
-    /// 最近一次 computeMatrix 的耗時（ms）；供 draw() 印出，無需加鎖（精度已足）
-    private(set) var lastFetchMs: Double = 0
-
-    /// 同步計算 frameIdx 的矩陣並展開為 vH×16 floats。
-    /// 每行 4 texels (RGBA32F)：
-    ///   texel 0: mat row 0 [m00, m01, m02, sx]
-    ///   texel 1: mat row 1 [m10, m11, m12, sy]
-    ///   texel 2: mat row 2 [m20, m21, m22, ra]
-    ///   texel 3: OIS       [ox,  oy,  0,   0]
-    /// render thread 呼叫；coreLock 保護並發的 stop()。
-    func computeMatrix(frameIdx: Int) -> [Float]? {
+    /// Compute matrices using continuous timestamp (no frame-index quantization).
+    /// Returns (UnsafeBufferPointer<Float>, changed) or nil.
+    func computeMatrixAtTime(timeSec: Double) -> (UnsafeBufferPointer<Float>, Bool)? {
         guard isReady else { return nil }
         coreLock.lock(); defer { coreLock.unlock() }
-        guard let handle = coreHandle, let fn = fnGetFrame else { return nil }
+        guard let handle = coreHandle else { return nil }
 
-        let vH     = Int(gyroVideoH)
-        let rawLen = rowCount * 14
-        var rawBuf = [Float](repeating: 0, count: rawLen)
+        let fi = max(0, min(Int((timeSec * gyroFps).rounded()), frameCount - 1))
 
+        if fi == cachedFrameIdx {
+            lastFetchMs = 0
+            return matsBuf.withUnsafeBufferPointer { ($0, false) }
+        }
+
+        let expectedLen = rowCount * 14 + 9
         let t0 = CACurrentMediaTime()
-        let result = rawBuf.withUnsafeMutableBufferPointer {
-            fn(handle, UInt32(frameIdx), $0.baseAddress!)
+        let result: Int32
+        if let fnTs = fnGetFrameTs {
+            result = rawBuf.withUnsafeMutableBufferPointer {
+                fnTs(handle, timeSec, $0.baseAddress!)
+            }
+        } else if let fn = fnGetFrame {
+            result = rawBuf.withUnsafeMutableBufferPointer {
+                fn(handle, UInt32(fi), $0.baseAddress!)
+            }
+        } else {
+            return nil
         }
         lastFetchMs = (CACurrentMediaTime() - t0) * 1000
-        guard result == Int32(rawLen) else { return nil }
+        guard result == Int32(expectedLen) else { return nil }
 
-        // 展開 rowCount×14 → vH×16 floats (matTex width=4, RGBA32F)
-        var mats = [Float](repeating: 0, count: vH * 16)
-        for y in 0..<vH {
-            let r = rowCount == 1 ? 0 : min(y * rowCount / max(vH, 1), rowCount - 1)
-            let s = r * 14; let b = y * 16
-            // texel 0: matrix row 0 + sx
-            mats[b+0]  = rawBuf[s+0]; mats[b+1]  = rawBuf[s+1]; mats[b+2]  = rawBuf[s+2]; mats[b+3]  = rawBuf[s+9]
-            // texel 1: matrix row 1 + sy
-            mats[b+4]  = rawBuf[s+3]; mats[b+5]  = rawBuf[s+4]; mats[b+6]  = rawBuf[s+5]; mats[b+7]  = rawBuf[s+10]
-            // texel 2: matrix row 2 + ra
-            mats[b+8]  = rawBuf[s+6]; mats[b+9]  = rawBuf[s+7]; mats[b+10] = rawBuf[s+8]; mats[b+11] = rawBuf[s+11]
-            // texel 3: ox, oy
-            mats[b+12] = rawBuf[s+12]; mats[b+13] = rawBuf[s+13]; mats[b+14] = 0; mats[b+15] = 0
-        }
-        return mats
+        // Extract per-frame lens params
+        let pfBase = rowCount * 14
+        frameFx = rawBuf[pfBase]
+        frameFy = rawBuf[pfBase + 1]
+        frameCx = rawBuf[pfBase + 2]
+        frameCy = rawBuf[pfBase + 3]
+        frameK[0] = rawBuf[pfBase + 4]
+        frameK[1] = rawBuf[pfBase + 5]
+        frameK[2] = rawBuf[pfBase + 6]
+        frameK[3] = rawBuf[pfBase + 7]
+        frameFov = rawBuf[pfBase + 8]
+
+        fovHistory.append(frameFov)
+        if fovHistory.count > 120 { fovHistory.removeFirst() }
+        fovMin = fovHistory.min() ?? frameFov
+        fovMax = fovHistory.max() ?? frameFov
+
+        // Expand rowCount x 14 -> vH x 16 floats
+        let vH = Int(gyroVideoH)
+        rawBuf.withUnsafeBufferPointer { raw in
+        matsBuf.withUnsafeMutableBufferPointer { mats in
+            let rp = raw.baseAddress!
+            let mp = mats.baseAddress!
+            let rc = rowCount
+            for y in 0..<vH {
+                let r = rc == 1 ? 0 : min(y &* rc / max(vH, 1), rc &- 1)
+                let sp = rp + r &* 14
+                let dp = mp + y &* 16
+                dp[0]  = sp[0]; dp[1]  = sp[1]; dp[2]  = sp[2]; dp[3]  = sp[9]
+                dp[4]  = sp[3]; dp[5]  = sp[4]; dp[6]  = sp[5]; dp[7]  = sp[10]
+                dp[8]  = sp[6]; dp[9]  = sp[7]; dp[10] = sp[8]; dp[11] = sp[11]
+                dp[12] = sp[12]; dp[13] = sp[13]; dp[14] = 0; dp[15] = 0
+            }
+        }}
+        cachedFrameIdx = fi
+        return matsBuf.withUnsafeBufferPointer { ($0, true) }
     }
 
-    // ── 停止並釋放資源 ────────────────────────────────────────────────────────
     func stop() {
         readyLock.lock(); _isReady = false; readyLock.unlock()
-        // 等待 ioQueue 排空（loadCore 執行完畢後才 free）
         ioQueue.sync { }
         coreLock.lock()
         if let handle = coreHandle, let fn = fnFree { fn(handle) }
@@ -279,6 +345,7 @@ private let RC_OGL_FBO: Int32     = 3
 private let RC_FLIP_Y: Int32      = 4
 private let RC_DEPTH: Int32       = 5
 private let RC_ADVANCED: Int32    = 10
+private let RC_BLOCK_FOR_TARGET: Int32 = 12
 
 // mpv_event_id
 private let EV_NONE: Int32          = 0
@@ -307,6 +374,16 @@ private struct RParam {
     init(_ t: Int32, _ d: UnsafeMutableRawPointer?) { type = t; _pad = 0; data = d }
     init() { type = 0; _pad = 0; data = nil }
 }
+
+// mpv_render_frame_info: { uint64_t flags; int64_t target_time; }
+private struct RenderFrameInfo {
+    var flags: UInt64 = 0
+    var targetTime: Int64 = 0   // microseconds, same time base as mpv_get_time_us()
+}
+private let RC_NEXT_FRAME_INFO: Int32 = 11
+private let FRAME_INFO_PRESENT:     UInt64 = 1 << 0
+private let FRAME_INFO_REDRAW:      UInt64 = 1 << 1
+private let FRAME_INFO_REPEAT:      UInt64 = 1 << 2
 
 // mpv_opengl_fbo
 private struct OGLFBO {
@@ -371,9 +448,14 @@ private class LibMPV {
     typealias FRCCb     = @convention(c) (OpaquePointer,
                                           (@convention(c) (UnsafeMutableRawPointer?) -> Void)?,
                                           UnsafeMutableRawPointer?) -> Void
-    typealias FRCRender = @convention(c) (OpaquePointer, UnsafeMutableRawPointer) -> Int32
-    typealias FRCSwap   = @convention(c) (OpaquePointer) -> Void
-    typealias FRCFree   = @convention(c) (OpaquePointer) -> Void
+    typealias FRCRender  = @convention(c) (OpaquePointer, UnsafeMutableRawPointer) -> Int32
+    typealias FRCSwap    = @convention(c) (OpaquePointer) -> Void
+    typealias FRCFree    = @convention(c) (OpaquePointer) -> Void
+    typealias FRCUpdate  = @convention(c) (OpaquePointer) -> UInt64
+    // mpv_render_context_get_info(ctx, mpv_render_param{type,data}) — struct passed by value
+    // arm64 ABI: 16-byte struct → first 8 bytes (type+pad) in x1, next 8 bytes (data*) in x2
+    typealias FRCGetInfo = @convention(c) (OpaquePointer, Int64, UnsafeMutableRawPointer?) -> Int32
+    typealias FGetTimeUs = @convention(c) (OpaquePointer) -> Int64
 
     var create:    FCreate?;    var initialize: FInit?;    var setStr:  FSetStr?
     var getStr:    FGetStr?;    var command:    FCmd?;     var observe: FObs?
@@ -381,12 +463,14 @@ private class LibMPV {
     var destroy:   FDestroy?;   var free:       FFree?
     var rcCreate:  FRCCreate?;  var rcSetCb:    FRCCb?
     var rcRender:  FRCRender?;  var rcSwap:     FRCSwap?; var rcFree: FRCFree?
+    var rcUpdate:  FRCUpdate?
+    var rcGetInfo: FRCGetInfo?; var getTimeUs:  FGetTimeUs?
 
     func load() -> Bool {
         let paths = [
+            "/opt/homebrew/lib/libmpv.dylib",       // Homebrew 0.41.0 (supports rcGetInfo)
             "/Applications/IINA.app/Contents/Frameworks/libmpv.2.dylib",
             "/Applications/IINA.app/Contents/Frameworks/libmpv.dylib",
-            "/opt/homebrew/lib/libmpv.dylib",
             "/usr/local/lib/libmpv.dylib",
         ]
         for p in paths {
@@ -414,8 +498,14 @@ private class LibMPV {
         rcRender  = dlsym(h, "mpv_render_context_render")             .map { unsafeBitCast($0, to: FRCRender.self) }
         rcSwap    = dlsym(h, "mpv_render_context_report_swap")        .map { unsafeBitCast($0, to: FRCSwap.self)  }
         rcFree    = dlsym(h, "mpv_render_context_free")               .map { unsafeBitCast($0, to: FRCFree.self)  }
+        rcUpdate  = dlsym(h, "mpv_render_context_update")            .map { unsafeBitCast($0, to: FRCUpdate.self) }
+        rcGetInfo = dlsym(h, "mpv_render_context_get_info")           .map { unsafeBitCast($0, to: FRCGetInfo.self) }
+        getTimeUs = dlsym(h, "mpv_get_time_us")                      .map { unsafeBitCast($0, to: FGetTimeUs.self) }
 
         ok = create != nil
+        if ok {
+            print("[libmpv] rcGetInfo=\(rcGetInfo != nil ? "✅" : "❌")  getTimeUs=\(getTimeUs != nil ? "✅" : "❌")")
+        }
         return ok
     }
 
@@ -503,6 +593,11 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     private var uMatCount:  GLint = -1
     private var uFIn:       GLint = -1
     private var uCIn:       GLint = -1
+    private var uDistK:     GLint = -1
+    private var uDistModel: GLint = -1
+    private var uRLimit:    GLint = -1
+    private var uFrameFov:  GLint = -1
+    private var uLensCorr:  GLint = -1
     var gyroCore: GyroCore?            // non-nil → real-time warp active
 
     // 保留 NSString 確保 utf8String 指標在 render context 建立期間有效
@@ -625,6 +720,8 @@ void main() {
     gl_Position = vec4(pos, 0.0, 1.0);
 }
 """
+            // Fragment shader: gyroflow-core pipeline with lens distortion + IBIS/OIS + RS.
+            // (Matches Spectrum/Views/Detail/MPVPlayerView.swift exactly)
             fsSrc = """
 #version 150
 in vec2 uv;
@@ -635,6 +732,87 @@ uniform vec2  videoSize;
 uniform float matCount;
 uniform vec2  fIn;
 uniform vec2  cIn;
+uniform vec4  distK[3];
+uniform int   distModel;
+uniform float rLimit;
+uniform float frameFov;
+uniform float lensCorr;
+
+vec2 undistort_point(vec2 pos) {
+    if (distModel == 1) {
+        if (distK[0].x == 0.0 && distK[0].y == 0.0 && distK[0].z == 0.0 && distK[0].w == 0.0) return pos;
+        float theta_d = clamp(length(pos), -1.5707963, 1.5707963);
+        float theta = theta_d; float scale = 0.0; bool converged = false;
+        if (abs(theta_d) > 1e-6) {
+            for (int i = 0; i < 10; i++) {
+                float t2 = theta*theta; float t4 = t2*t2;
+                float t6 = t4*t2; float t8 = t6*t2;
+                float k0t2 = distK[0].x*t2; float k1t4 = distK[0].y*t4;
+                float k2t6 = distK[0].z*t6; float k3t8 = distK[0].w*t8;
+                float theta_fix = (theta*(1.0+k0t2+k1t4+k2t6+k3t8) - theta_d)
+                                / (1.0+3.0*k0t2+5.0*k1t4+7.0*k2t6+9.0*k3t8);
+                theta -= theta_fix;
+                if (abs(theta_fix) < 1e-6) { converged = true; break; }
+            }
+            scale = tan(theta) / theta_d;
+        } else { converged = true; }
+        bool flipped = (theta_d < 0.0 && theta > 0.0) || (theta_d > 0.0 && theta < 0.0);
+        if (converged && !flipped) return pos * scale;
+        return vec2(0.0);
+    }
+    if (distModel == 7) {
+        if (distK[0].x == 0.0 && distK[0].y == 0.0 && distK[0].z == 0.0 && distK[0].w == 0.0) return pos;
+        vec2 post_scale = distK[1].zw;
+        if (post_scale.x == 0.0 && post_scale.y == 0.0) post_scale = vec2(1.0);
+        vec2 p = pos / post_scale;
+        float theta_d = length(p); float theta = theta_d; float scale = 0.0; bool converged = false;
+        if (abs(theta_d) > 1e-6) {
+            for (int i = 0; i < 10; i++) {
+                float t2 = theta*theta; float t3 = t2*theta;
+                float t4 = t2*t2; float t5 = t4*theta;
+                float k0 = distK[0].x; float k1t = distK[0].y*theta;
+                float k2t2 = distK[0].z*t2; float k3t3 = distK[0].w*t3;
+                float k4t4 = distK[1].x*t4; float k5t5 = distK[1].y*t5;
+                float theta_fix = (theta*(k0+k1t+k2t2+k3t3+k4t4+k5t5) - theta_d)
+                                / (k0+2.0*k1t+3.0*k2t2+4.0*k3t3+5.0*k4t4+6.0*k5t5);
+                theta -= theta_fix;
+                if (abs(theta_fix) < 1e-6) { converged = true; break; }
+            }
+            scale = tan(theta) / theta_d;
+        } else { converged = true; }
+        bool flipped = (theta_d < 0.0 && theta > 0.0) || (theta_d > 0.0 && theta < 0.0);
+        if (converged && !flipped) return p * scale;
+        return vec2(0.0);
+    }
+    return pos;
+}
+
+vec2 distort_point(float x, float y, float w) {
+    vec2 pos = vec2(x, y) / w;
+    if (distModel == 0) return pos;
+    float r = length(pos);
+    if (rLimit > 0.0 && r > rLimit) return vec2(-99999.0);
+    if (distModel == 1) {
+        if (distK[0].x == 0.0 && distK[0].y == 0.0 && distK[0].z == 0.0 && distK[0].w == 0.0) return pos;
+        float theta = atan(r);
+        float t2 = theta*theta; float t4 = t2*t2; float t6 = t4*t2; float t8 = t4*t4;
+        float theta_d = theta * (1.0 + distK[0].x*t2 + distK[0].y*t4 + distK[0].z*t6 + distK[0].w*t8);
+        float scale = (r == 0.0) ? 1.0 : theta_d / r;
+        return pos * scale;
+    }
+    if (distModel == 7) {
+        if (distK[0].x == 0.0 && distK[0].y == 0.0 && distK[0].z == 0.0 && distK[0].w == 0.0) return pos;
+        float theta = atan(r);
+        float t2 = theta*theta; float t3 = t2*theta; float t4 = t2*t2; float t5 = t4*theta; float t6 = t3*t3;
+        float theta_d = distK[0].x*theta + distK[0].y*t2 + distK[0].z*t3 + distK[0].w*t4 + distK[1].x*t5 + distK[1].y*t6;
+        float scale = (r == 0.0) ? 1.0 : theta_d / r;
+        vec2 post_scale = distK[1].zw;
+        if (post_scale.x == 0.0 && post_scale.y == 0.0) post_scale = vec2(1.0);
+        return pos * scale * post_scale;
+    }
+    return pos;
+}
+
 vec2 rotate_and_distort(vec2 out_px, float texY) {
     vec4 m0 = texture(matTex, vec2(0.125, texY));
     vec4 m1 = texture(matTex, vec2(0.375, texY));
@@ -644,7 +822,9 @@ vec2 rotate_and_distort(vec2 out_px, float texY) {
     float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
     float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
     if (_w <= 0.0) return vec2(-99999.0);
-    vec2 pt = fIn * vec2(_x / _w, _y / _w);
+    vec2 dp = distort_point(_x, _y, _w);
+    if (dp.x < -99998.0) return dp;
+    vec2 pt = fIn * dp;
     float sx = m0.a; float sy = m1.a; float ra = m2.a;
     float ox = m3.r; float oy = m3.g;
     if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
@@ -657,6 +837,15 @@ vec2 rotate_and_distort(vec2 out_px, float texY) {
 }
 void main() {
     vec2 out_px = vec2(uv.x * videoSize.x, (1.0 - uv.y) * videoSize.y);
+    if (distModel != 0 && frameFov > 0.0 && lensCorr < 1.0) {
+        float factor = max(1.0 - lensCorr, 0.001);
+        vec2 out_c = videoSize * 0.5;
+        vec2 out_f = fIn / frameFov / factor;
+        vec2 norm  = (out_px - out_c) / out_f;
+        vec2 corr  = undistort_point(norm);
+        vec2 undist = corr * out_f + out_c;
+        out_px = undist * (1.0 - lensCorr) + out_px * lensCorr;
+    }
     float sy = clamp(out_px.y, 0.0, matCount - 1.0);
     if (matCount > 1.0) {
         float midTexY = (floor(matCount * 0.5) + 0.5) / matCount;
@@ -669,11 +858,8 @@ void main() {
     vec2 src_px = rotate_and_distort(out_px, texY);
     if (src_px.x < -99998.0) { fragColor = vec4(0.0,0.0,0.0,1.0); return; }
     vec2 src = vec2(src_px.x / videoSize.x, 1.0 - src_px.y / videoSize.y);
-    if (any(lessThan(src, vec2(0.0))) || any(greaterThan(src, vec2(1.0)))) {
-        fragColor = vec4(0.0,0.0,0.0,1.0);
-    } else {
-        fragColor = texture(tex, src);
-    }
+    src = clamp(src, vec2(0.0), vec2(1.0));
+    fragColor = texture(tex, src);
 }
 """
         } else {
@@ -686,6 +872,7 @@ void main() {
     gl_Position = vec4(pos, 0.0, 1.0);
 }
 """
+            // Legacy fallback (rarely used on Apple Silicon)
             fsSrc = """
 #version 120
 varying vec2 uv;
@@ -695,6 +882,26 @@ uniform vec2  videoSize;
 uniform float matCount;
 uniform vec2  fIn;
 uniform vec2  cIn;
+uniform vec4  distK[3];
+uniform int   distModel;
+uniform float rLimit;
+uniform float frameFov;
+uniform float lensCorr;
+vec2 distort_point(float x, float y, float w) {
+    vec2 pos = vec2(x, y) / w;
+    if (distModel == 0) return pos;
+    float r = length(pos);
+    if (rLimit > 0.0 && r > rLimit) return vec2(-99999.0);
+    if (distModel == 1) {
+        if (distK[0].x == 0.0 && distK[0].y == 0.0 && distK[0].z == 0.0 && distK[0].w == 0.0) return pos;
+        float theta = atan(r);
+        float t2 = theta*theta; float t4 = t2*t2; float t6 = t4*t2; float t8 = t4*t4;
+        float theta_d = theta * (1.0 + distK[0].x*t2 + distK[0].y*t4 + distK[0].z*t6 + distK[0].w*t8);
+        float scale = (r == 0.0) ? 1.0 : theta_d / r;
+        return pos * scale;
+    }
+    return pos;
+}
 vec2 rotate_and_distort(vec2 out_px, float texY) {
     vec4 m0 = texture2D(matTex, vec2(0.125, texY));
     vec4 m1 = texture2D(matTex, vec2(0.375, texY));
@@ -704,7 +911,9 @@ vec2 rotate_and_distort(vec2 out_px, float texY) {
     float _y = m1.r*out_px.x + m1.g*out_px.y + m1.b;
     float _w = m2.r*out_px.x + m2.g*out_px.y + m2.b;
     if (_w <= 0.0) return vec2(-99999.0);
-    vec2 pt = fIn * vec2(_x / _w, _y / _w);
+    vec2 dp = distort_point(_x, _y, _w);
+    if (dp.x < -99998.0) return dp;
+    vec2 pt = fIn * dp;
     float sx = m0.a; float sy = m1.a; float ra = m2.a;
     float ox = m3.r; float oy = m3.g;
     if (sx != 0.0 || sy != 0.0 || ra != 0.0 || ox != 0.0 || oy != 0.0) {
@@ -729,11 +938,8 @@ void main() {
     vec2 src_px = rotate_and_distort(out_px, texY);
     if (src_px.x < -99998.0) { gl_FragColor = vec4(0.0,0.0,0.0,1.0); return; }
     vec2 src = vec2(src_px.x / videoSize.x, 1.0 - src_px.y / videoSize.y);
-    if (any(lessThan(src, vec2(0.0))) || any(greaterThan(src, vec2(1.0)))) {
-        gl_FragColor = vec4(0.0,0.0,0.0,1.0);
-    } else {
-        gl_FragColor = texture2D(tex, src);
-    }
+    src = clamp(src, vec2(0.0), vec2(1.0));
+    gl_FragColor = texture2D(tex, src);
 }
 """
         }
@@ -760,6 +966,11 @@ void main() {
         uMatCount  = glGetUniformLocation(warpProg, "matCount")
         uFIn       = glGetUniformLocation(warpProg, "fIn")
         uCIn       = glGetUniformLocation(warpProg, "cIn")
+        uDistK     = glGetUniformLocation(warpProg, "distK")
+        uDistModel = glGetUniformLocation(warpProg, "distModel")
+        uRLimit    = glGetUniformLocation(warpProg, "rLimit")
+        uFrameFov  = glGetUniformLocation(warpProg, "frameFov")
+        uLensCorr  = glGetUniformLocation(warpProg, "lensCorr")
         let profile = useCoreProfile ? "GL 3.2 Core (#version 150)" : "Legacy (#version 120)"
         print("[Warp] ✅ gyroflow shader compiled (\(profile), uMatTex=\(uMatTex) uVideoSize=\(uVideoSize))")
 
@@ -837,9 +1048,11 @@ void main() {
         // 預設靜音
         lib.set(ctx, "mute", "yes")
 
-        // video-sync=display-resample：微調影片速度匹配顯示器刷新率，
-        // 減少 time-pos 抖動（預設 audio 模式下 time-pos 有 ±幾 ms 波動）。
-        lib.set(ctx, "video-sync", "display-resample")
+        // video-sync=audio + framedrop=vo：gyro stabilization 最佳組合。
+        // audio：time-pos 直接對應 rendered frame，delay=1 準確。
+        // vo：負載過重時丟幀，防止 audio-video desync 累積。
+        lib.set(ctx, "video-sync", "audio")
+        lib.set(ctx, "framedrop", "vo")
 
         // ══ IINA 風格 PQ/HDR 設定 ══
         //   mpv 輸出 PQ，CALayer 用 itur_2100_PQ colorspace
@@ -892,7 +1105,7 @@ void main() {
         var initParams = OGLInit(get_proc_address: glProcAddr, get_proc_address_ctx: nil)
         // ADVANCED_CONTROL=0：讓 mpv 管理自己的顯示時序（較簡單）
         // ADVANCED_CONTROL=1：由渲染端管理，需配合 mpv_render_context_update()
-        var advanced: Int32 = 0
+        var advanced: Int32 = 1   // Required for rcGetInfo (frame timing)
 
         withUnsafeMutablePointer(to: &initParams) { initPtr in
         withUnsafeMutablePointer(to: &advanced)   { advPtr  in
@@ -1281,18 +1494,34 @@ void main() {
             print("[GL] draw() #\(frameCount): w=\(w) h=\(h) fbo=\(displayFBO) float=\(isFloat)\(fetchStr)")
         }
 
+        // ── Frame info: update + get frame info ──
+        var updateFlags: UInt64 = 0
+        if let rcUpdateFn = lib.rcUpdate, let rc = renderCtx {
+            updateFlags = rcUpdateFn(rc)
+        }
+        var frameInfo = RenderFrameInfo()
+        var hasFrameInfo = false
+        var getInfoRC: Int32 = -999
+        if let rcGetInfoFn = lib.rcGetInfo, let rc = renderCtx {
+            withUnsafeMutablePointer(to: &frameInfo) { ptr in
+                let typeField = Int64(RC_NEXT_FRAME_INFO)
+                getInfoRC = rcGetInfoFn(rc, typeField, UnsafeMutableRawPointer(ptr))
+                hasFrameInfo = getInfoRC == 0
+            }
+        }
+
         // ── 同步計算當前幀矩陣（~0.5ms，直接在 render thread 呼叫）──────────
-        // Spectrum 方式：固定 half-frame 偏移讓取樣點落在幀區間中央，遠離邊界。
-        // 120Hz 顯示器 + 60fps 內容時，同一影片幀會 draw 兩次 → 重用已有的 matTex。
-        var currentMatrix: [Float]? = nil
-        var gyroFrameIdx = 0
+        var gyroResult: (UnsafeBufferPointer<Float>, Bool)? = nil
         var gyroFrameRepeated = false
         if let core = gyroCore, core.isReady, let mpvCtx {
+            // advanced_control=1：每個 draw 對應一個 decoded frame。
+            // time-pos 就是當前幀的近似 PTS。frameDelay 可由 - / = 鍵微調。
             let timeSec = Double(lib.getString(mpvCtx, "time-pos") ?? "0") ?? 0
-            // 固定半幀偏移：讓 floor(t × fps) 落在幀區間中央，避免邊界抖動
-            let halfFrame = 0.5 / core.gyroFps
-            let adjustedTime = max(0, timeSec - halfFrame)
-            var fi = max(0, min(Int(adjustedTime * core.gyroFps),
+            let delayFrames = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 1.0
+            let videoPTS = timeSec - delayFrames / core.gyroFps
+            let renderTime = max(0, videoPTS)
+            // Frame index for repeat detection only (not passed to gyroflow-core)
+            var fi = max(0, min(Int((renderTime * core.gyroFps).rounded()),
                                 core.frameCount - 1))
             // 手動微調（, / . 鍵）
             let syncOffset = (NSApp.delegate as? AppDelegate)?.gyroFrameSync ?? 0
@@ -1303,7 +1532,6 @@ void main() {
                 if delta < 0 && delta >= -2 {
                     fi = lastFi  // 抑制抖動
                 }
-                // delta < -2（seek）或 delta > 0（前進）都允許
             }
 
             if fi == lastGyroFrameIdx {
@@ -1311,12 +1539,12 @@ void main() {
                 gyroFrameRepeated = true
             } else {
                 lastGyroFrameIdx = fi
-                currentMatrix = core.computeMatrix(frameIdx: fi)
+                // Use timestamp-based API for accurate RS correction (no quantization)
+                gyroResult = core.computeMatrixAtTime(timeSec: renderTime)
             }
-            gyroFrameIdx = fi
         }
 
-        let hasStab = (currentMatrix != nil || gyroFrameRepeated) && warpProg != 0
+        let hasStab = (gyroResult != nil || gyroFrameRepeated) && warpProg != 0
 
         // 穩定化時 mpv 渲染到影片原始解析度的 FBO，warp 在全解析度執行後才 downsample
         let vidW: GLsizei = hasStab ? GLsizei(gyroCore!.gyroVideoW) : w
@@ -1335,27 +1563,32 @@ void main() {
             print("[Warp] stabFBO resized to \(vidW)×\(vidH) (video native resolution)")
         }
 
-        // ── Pass 1：mpv render（gyroFrameRepeated 時跳過）──────────────
-        if !gyroFrameRepeated {
+        // ── Pass 1：mpv render ──────────────────────────────────────────
+        // advanced_control=1 模式下 mpv 追蹤 frame 消費，必須每次 draw 都呼叫 rcRender
+        // 否則 mpv 不會送出下一個 callback → fps 降到極低
+        do {
             let mpvTargetFBO = hasStab ? GLint(stabFBO) : displayFBO
             var fbo   = OGLFBO(fbo: mpvTargetFBO, w: vidW, h: vidH, internal_format: 0)
             var flipY = Int32(1)
             var depth = Int32(isFloat ? 16 : 8)
+            var block = Int32(0)  // BLOCK_FOR_TARGET_TIME=0: don't block in advanced mode
 
             withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
             withUnsafeMutablePointer(to: &flipY) { flipPtr in
             withUnsafeMutablePointer(to: &depth) { depthPtr in
+            withUnsafeMutablePointer(to: &block) { blockPtr in
                 var params: [RParam] = [
                     RParam(RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
                     RParam(RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
                     RParam(RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
+                    RParam(RC_BLOCK_FOR_TARGET, UnsafeMutableRawPointer(blockPtr)),
                     RParam()
                 ]
                 let err = params.withUnsafeMutableBufferPointer { buf in
                     renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
                 }
                 if err != 0 { print("[GL] mpv_render_context_render error: \(err)") }
-            }}}
+            }}}}
         }
 
         // ── Pass 2：gyroflow per-row warp ──────────────────
@@ -1364,7 +1597,7 @@ void main() {
             let vW = server.gyroVideoW
 
             // 新幀：上傳矩陣；repeated 幀：重用已有的 matTex
-            if let matrices = currentMatrix {
+            if let (matBuf, _) = gyroResult {
                 // 若 matTex 尺寸改變，重新配置
                 if matTexH != vH {
                     matTexH = vH
@@ -1379,12 +1612,10 @@ void main() {
 
                 // 矩陣就緒：上傳
                 glBindTexture(GLenum(GL_TEXTURE_2D), matTexId)
-                matrices.withUnsafeBytes { ptr in
-                    glTexSubImage2D(GLenum(GL_TEXTURE_2D), 0,
-                                    0, 0, 4, GLsizei(vH),
-                                    GLenum(GL_RGBA), GLenum(GL_FLOAT),
-                                    ptr.baseAddress)
-                }
+                glTexSubImage2D(GLenum(GL_TEXTURE_2D), 0,
+                                0, 0, 4, GLsizei(vH),
+                                GLenum(GL_RGBA), GLenum(GL_FLOAT),
+                                matBuf.baseAddress)
                 glBindTexture(GLenum(GL_TEXTURE_2D), 0)
             }
 
@@ -1406,15 +1637,34 @@ void main() {
             glUniform2f(uVideoSize, vW, server.gyroVideoH)
             glUniform1f(uMatCount,  Float(vH))
 
-            // gyrocore kernel params
-            glUniform2f(uFIn, server.gyroFx, server.gyroFy)
-            glUniform2f(uCIn, server.gyroCx, server.gyroCy)
+            // Per-frame f, c (may change due to adaptive zoom or per-frame lens telemetry)
+            glUniform2f(uFIn, server.frameFx, server.frameFy)
+            glUniform2f(uCIn, server.frameCx, server.frameCy)
+            // Per-frame distortion k[0..3] + static k[4..11] (merged into 3 × vec4)
+            var mergedK: [Float] = [Float](repeating: 0, count: 12)
+            mergedK[0] = server.frameK[0]
+            mergedK[1] = server.frameK[1]
+            mergedK[2] = server.frameK[2]
+            mergedK[3] = server.frameK[3]
+            for i in 4..<12 { mergedK[i] = server.distortionK[i] }
+            mergedK.withUnsafeBufferPointer { kPtr in
+                glUniform4fv(uDistK, 3, kPtr.baseAddress)
+            }
+            glUniform1i(uDistModel, server.distortionModel)
+            glUniform1f(uRLimit, server.rLimit)
+            glUniform1f(uFrameFov, server.frameFov)
+            glUniform1f(uLensCorr, server.lensCorrectionAmount)
 
-            if frameCount <= 60 && frameCount % 10 == 0 {
-                let ts = Double(lib.getString(mpvCtx!, "time-pos") ?? "?") ?? 0
-                print(String(format: "[GL] draw#%d → fi=%d  tp=%.4f  repeated=%@",
-                             frameCount, gyroFrameIdx, ts,
-                             gyroFrameRepeated ? "yes" : "no"))
+            if frameCount <= 300 && frameCount % 30 == 0 {
+                let tp = Double(lib.getString(mpvCtx!, "time-pos") ?? "0") ?? 0
+                let fpsStr = renderFPS > 0 ? String(format: "%.1ffps", renderFPS) : "?"
+                let fiStr = lastGyroFrameIdx.map { String($0) } ?? "nil"
+                let delayF = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 0
+                print(String(format: "[GL] draw#%d  tp=%.4f  delay=%.1f  %@  fi=%@  fov=%.3f  %@",
+                             frameCount, tp, delayF,
+                             gyroFrameRepeated ? "rep" : "NEW",
+                             fiStr,
+                             server.frameFov, fpsStr))
             }
 
             // Draw fullscreen quad (VAO 包含 VBO 綁定 + attrib 設定)
@@ -1665,6 +1915,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var gyroSmoothness: Double = 0.5  // 平滑度 (0.01–3.0)
     var gyroRSEnabled: Bool = true    // Rolling shutter 修正
     var gyroFrameSync: Int = 0       // Frame sync offset (+/- frames, 即時微調用)
+    var frameDelayFrames: Double = 1.0  // Render pipeline latency (frames)
     var stabManager = StabilizationManager()
     var keyMonitor: Any?
 
@@ -1788,6 +2039,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ] (30)     : 提高平滑度 (+0.1)
         // ↑ (126)   : offset +5ms（Shift: +1ms）
         // ↓ (125)   : offset -5ms（Shift: -1ms）
+        // - (27)     : frame delay -0.25（Shift: -0.05）
+        // = (24)     : frame delay +0.25（Shift: +0.05）
         // ← (123)   : 倒退 5 秒
         // → (124)   : 快進 5 秒
         // M (46)     : toggle mute
@@ -1891,6 +2144,18 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 if let path = self.originalPath, self.gyroCore != nil {
                     self.restartGyro(for: path)
                 }
+                return nil
+            case 27:                                         // -：frame delay -
+                let step = event.modifierFlags.contains(.shift) ? 0.05 : 0.25
+                self.frameDelayFrames -= step
+                print(String(format: "[gyro] frameDelay = %.2f frames", self.frameDelayFrames))
+                self.updateTitle()
+                return nil
+            case 24:                                         // =：frame delay +
+                let step = event.modifierFlags.contains(.shift) ? 0.05 : 0.25
+                self.frameDelayFrames += step
+                print(String(format: "[gyro] frameDelay = %.2f frames", self.frameDelayFrames))
+                self.updateTitle()
                 return nil
             case 43:                                         // ,：frame sync -1
                 self.gyroFrameSync -= 1
@@ -2078,8 +2343,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             window.title = "\(name)  [渲染中…]"
         } else if let srv = gyroCore {
             let syncStr = gyroFrameSync != 0 ? "  sync=\(gyroFrameSync > 0 ? "+" : "")\(gyroFrameSync)f" : ""
+            let ptsStr = lib.rcGetInfo != nil ? "  pts=frame_info" : String(format: "  delay=%.2ff", frameDelayFrames)
             let params = String(format: "smooth=%.2f  RS=%@  offset=%dms",
-                                gyroSmoothness, gyroRSEnabled ? "ON" : "OFF", Int(gyroOffsetMs)) + syncStr
+                                gyroSmoothness, gyroRSEnabled ? "ON" : "OFF", Int(gyroOffsetMs)) + syncStr + ptsStr
             window.title = srv.isReady
                 ? "\(name)  [gyro \(params)]  \(color)"
                 : "\(name)  [gyrocore 初始化中…]"
