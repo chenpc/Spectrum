@@ -58,6 +58,7 @@
 		AA000075 /* CGImageRotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000075 /* CGImageRotation.swift */; };
 		AA000076 /* XMPSidecarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000076 /* XMPSidecarService.swift */; };
 		AA000080 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = AB000080 /* Localizable.xcstrings */; };
+		AA000090 /* MDKLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000090 /* MDKLib.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -126,6 +127,8 @@
 		AB000075 /* CGImageRotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGImageRotation.swift; sourceTree = "<group>"; };
 		AB000076 /* XMPSidecarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPSidecarService.swift; sourceTree = "<group>"; };
 		AB000080 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
+		AB000090 /* MDKLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MDKLib.swift; sourceTree = "<group>"; };
+		AB000091 /* Spectrum-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Spectrum-Bridging-Header.h"; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -161,6 +164,7 @@
 			children = (
 				AB000001 /* SpectrumApp.swift */,
 				AB000017 /* Spectrum.entitlements */,
+				AB000091 /* Spectrum-Bridging-Header.h */,
 				AB00001C /* Assets.xcassets */,
 				AB000080 /* Localizable.xcstrings */,
 				AE000003 /* Models */,
@@ -202,6 +206,7 @@
 			children = (
 				AB000070 /* Log.swift */,
 				AB000050 /* MPVLib.swift */,
+				AB000090 /* MDKLib.swift */,
 				AB000053 /* GyroCore.swift */,
 				AB000010 /* FolderScanner.swift */,
 				AB000011 /* EXIFService.swift */,
@@ -513,6 +518,7 @@
 				AA000016 /* Date+Formatting.swift in Sources */,
 				AA000017 /* VideoMetadataService.swift in Sources */,
 				AA000050 /* MPVLib.swift in Sources */,
+				AA000090 /* MDKLib.swift in Sources */,
 				AA000053 /* GyroCore.swift in Sources */,
 				AA000051 /* MPVPlayerView.swift in Sources */,
 				AA000052 /* AVPlayerControlBar.swift in Sources */,
@@ -708,13 +714,16 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = "-undefined dynamic_lookup";
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Spectrum/Spectrum-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 			};
@@ -735,13 +744,16 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0;
+				OTHER_LDFLAGS = "-undefined dynamic_lookup";
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
+				SWIFT_OBJC_BRIDGING_HEADER = "Spectrum/Spectrum-Bridging-Header.h";
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 			};

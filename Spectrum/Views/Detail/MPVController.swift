@@ -26,6 +26,12 @@ final class MPVController: @unchecked Sendable {
     private(set) var decoderDroppedFrames: Int = 0
     /// Reflects the actual hardware decoder in use after file load (e.g. "videotoolbox").
     private(set) var hwdecInfo: String = "-"
+    /// CALayer colorspace display name (e.g. "PQ", "HLG", "sRGB").
+    private(set) var layerColorspaceInfo: String = "-"
+    /// MDK setColorSpace value (e.g. "PQ", "HLG", "BT.709").
+    private(set) var mdkColorspaceInfo: String = "-"
+    /// Backend name ("mpv" or "MDK").
+    private(set) var backendName: String = "mpv"
     /// Latest gyro computeMatrix time in ms (0 when gyro inactive).
     private(set) var gyroComputeMs: Double = 0
 
@@ -106,6 +112,9 @@ final class MPVController: @unchecked Sendable {
         droppedFrames = 0
         decoderDroppedFrames = 0
         hwdecInfo = "-"
+        layerColorspaceInfo = "-"
+        mdkColorspaceInfo = "-"
+        backendName = "mpv"
         gyroComputeMs = 0
         hwdecCheckTask?.cancel()
     }
@@ -228,6 +237,9 @@ final class MPVController: @unchecked Sendable {
         let dropped = diag ? v.droppedFrames : 0
         let decDropped = diag ? v.decoderDroppedFrames : 0
         let gyroMs = diag ? (activeGyroCore?.lastFetchMs ?? 0) : 0
+        let csInfo  = diag ? v.layerColorspaceInfo : "-"
+        let mdkCS   = diag ? v.mdkColorspaceInfo : "-"
+        let backend = diag ? v.backendName : "mpv"
 
         // Main thread only does fast property assignments — no mpv API calls here.
         DispatchQueue.main.async { [weak self] in
@@ -248,6 +260,9 @@ final class MPVController: @unchecked Sendable {
                 self.droppedFrames = dropped
                 self.decoderDroppedFrames = decDropped
                 self.gyroComputeMs = gyroMs
+                self.layerColorspaceInfo = csInfo
+                self.mdkColorspaceInfo = mdkCS
+                self.backendName = backend
             }
         }
 

@@ -91,7 +91,7 @@ private struct PlaybackSettingsTab: View {
 
     var body: some View {
         Form {
-            if LibMPV.shared.ok {
+            if LibMPV.shared.ok || LibMDK.shared.ok {
                 Section("Video Player") {
                     perTypePicker("SDR", selection: $playerForSDR)
                     perTypePicker("HLG", selection: $playerForHLG)
@@ -123,7 +123,8 @@ private struct PlaybackSettingsTab: View {
 
     private func perTypePicker(_ label: LocalizedStringKey, selection: Binding<String>) -> some View {
         Picker(label, selection: selection) {
-            Text(verbatim: "libmpv").tag("libmpv")
+            if LibMPV.shared.ok { Text(verbatim: "libmpv").tag("libmpv") }
+            if LibMDK.shared.ok { Text(verbatim: "MDK").tag("mdk") }
             Text(verbatim: "AVPlayer").tag("avplayer")
         }
     }
