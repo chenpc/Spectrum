@@ -195,6 +195,10 @@ final class MPVController: @unchecked Sendable {
         if gyroLoadPending {
             view.setWaitingForGyro(true)
         }
+        // If gyro already finished loading before the view existed, pass it now.
+        if gyroStabEnabled, let core = activeGyroCore {
+            view.loadGyroCore(core)
+        }
         // After 1 s the file should be open; read the actual decoder for diagnostics.
         hwdecCheckTask?.cancel()
         if diagnosticsEnabled {
