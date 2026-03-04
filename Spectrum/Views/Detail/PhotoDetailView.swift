@@ -21,6 +21,7 @@ struct PhotoDetailView: View {
     @State private var hdrFormat: HDRFormat?
     @State private var hlgCGImage: CGImage?
     @State private var useMPV = false
+    @State private var selectedBackend: MPVOpenGLLayer.PlayerBackend = .mpv
     @State private var mpvController = MPVController()
     @State private var isCropMode = false
     @State private var editingCropRect = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
@@ -38,6 +39,8 @@ struct PhotoDetailView: View {
     @State private var avBarOffset: CGSize = .zero
     @State private var avBarDragStart: CGSize = .zero
     @State private var videoStarted = false
+    @State private var posterFrame: CGImage?
+    @State private var mpvPlaybackStarted = false
     // Gyro config (stored in XMP sidecar, not DB)
     @State private var gyroConfigJson: String?
     // Shared
@@ -96,6 +99,11 @@ struct PhotoDetailView: View {
         }
         .onChange(of: showMPVDiagBadge) { _, enabled in
             mpvController.diagnosticsEnabled = enabled
+        }
+        .onChange(of: mpvController.isPlaying) { _, playing in
+            if playing && !mpvPlaybackStarted {
+                mpvPlaybackStarted = true
+            }
         }
         .onChange(of: gyroConfigJson) { _, _ in
             writeXMPSidecar()
@@ -208,10 +216,21 @@ struct PhotoDetailView: View {
     private var activeVideoContent: some View {
         if useMPV {
             ZStack(alignment: .bottom) {
-                MPVPlayerView(path: photo.filePath, bookmarkData: bookmarkData,
-                              controller: mpvController,
-                              hdrType: videoHDRType,
-                              showHDR: showHDR)
+                if mpvPlaybackStarted {
+                    MPVPlayerView(path: photo.filePath, bookmarkData: bookmarkData,
+                                  controller: mpvController,
+                                  hdrType: videoHDRType,
+                                  showHDR: showHDR,
+                                  backend: selectedBackend)
+                } else if let posterFrame {
+                    Image(decorative: posterFrame, scale: 1)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    ProgressView()
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                }
 
                 if showMPVDiagBadge {
                     mpvDiagBadge
@@ -523,6 +542,8 @@ struct PhotoDetailView: View {
                     Text(avController.codecInfo)
                 }
 
+                Text("AVPlayer · CALayer:\(showHDR && videoHDRType != nil ? "HDR" : "sRGB")")
+
                 // Bottom line: render fps / video fps + CV dot
                 HStack(spacing: 4) {
                     Circle()
@@ -573,7 +594,11 @@ struct PhotoDetailView: View {
                 }
             }
 
-            Text(mpvController.hwdecInfo)
+            if mpvController.backendName == "MDK" {
+                Text("MDK:\(mpvController.mdkColorspaceInfo) · CALayer:\(mpvController.layerColorspaceInfo)")
+            } else {
+                Text("mpv · \(mpvController.hwdecInfo) · CALayer:\(mpvController.layerColorspaceInfo)")
+            }
 
             HStack(spacing: 4) {
                 Circle()
@@ -588,11 +613,13 @@ struct PhotoDetailView: View {
                     .foregroundStyle(dotColor)
             }
 
-            Text("↓ vo:\(mpvController.droppedFrames) dec:\(mpvController.decoderDroppedFrames)")
-                .foregroundStyle(
-                    mpvController.droppedFrames > 0 || mpvController.decoderDroppedFrames > 0
-                    ? .orange : .secondary
-                )
+            if mpvController.backendName != "MDK" {
+                Text("↓ vo:\(mpvController.droppedFrames) dec:\(mpvController.decoderDroppedFrames)")
+                    .foregroundStyle(
+                        mpvController.droppedFrames > 0 || mpvController.decoderDroppedFrames > 0
+                        ? .orange : .secondary
+                    )
+            }
 
             if mpvController.gyroStabEnabled {
                 Text("gyro \(String(format: "%.2f", mpvController.gyroComputeMs))ms")
@@ -717,7 +744,10 @@ struct PhotoDetailView: View {
         videoHDRComposition = nil
         videoSDRComposition = nil
         useMPV = false
+        selectedBackend = .mpv
         videoStarted = false
+        posterFrame = nil
+        mpvPlaybackStarted = false
         mpvController.reset()
         mpvHideTask?.cancel()
         mpvControlsVisible = true
@@ -747,7 +777,7 @@ struct PhotoDetailView: View {
         }
     }
 
-    /// Resolve per-type player preference: returns `"libmpv"` or `"avplayer"`.
+    /// Resolve per-type player preference: returns `"libmpv"`, `"mdk"`, or `"avplayer"`.
     private func resolvedPlayer(for hdrType: VideoHDRType?) -> String {
         switch hdrType {
         case .hlg:          return playerForHLG
@@ -776,14 +806,29 @@ struct PhotoDetailView: View {
             // 2. Resolve which player to use based on per-type setting
             let resolved = resolvedPlayer(for: detectedType)
             let preferMPV = resolved == "libmpv" && LibMPV.shared.ok
+            let preferMDK = resolved == "mdk" && LibMDK.shared.ok
 
-            if preferMPV {
+            if preferMPV || preferMDK {
+                // Generate poster frame (first video frame) for static display
+                if let data = bookmark,
+                   let folderURL = try? BookmarkService.resolveBookmark(data) {
+                    let gotAccess = folderURL.startAccessingSecurityScopedResource()
+                    defer { if gotAccess { folderURL.stopAccessingSecurityScopedResource() } }
+                    let asset = AVURLAsset(url: URL(fileURLWithPath: path))
+                    let gen = AVAssetImageGenerator(asset: asset)
+                    gen.appliesPreferredTrackTransform = true
+                    gen.requestedTimeToleranceBefore = .zero
+                    gen.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
+                    if let (cgImage, _) = try? await gen.image(at: .zero) {
+                        posterFrame = cgImage
+                    }
+                }
+
+                selectedBackend = preferMDK ? .mdk : .mpv
                 mpvController.diagnosticsEnabled = showMPVDiagBadge
-                useMPV = true
-                // Start gyro loading immediately (in parallel with SwiftUI creating
-                // the MPVPlayerView). By the time the user presses Space, gyro will
-                // already be ready. Previously gyro only started on first Space press,
-                // which had a one-shot gyroLaunched flag that prevented retries on failure.
+                useMPV = true   // shared MPVPlayerView (supports both backends)
+                // Start gyro loading immediately (in parallel). By the time the
+                // user presses Space, gyro will already be ready.
                 if gyroStabEnabled && GyroCore.dylibFound {
                     let cfg = buildGyroConfig()
                     let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
