@@ -531,6 +531,37 @@ private class LibMPV {
 private let lib = LibMPV.shared
 
 // ════════════════════════════════════════════════════════
+// MARK: - LibMDK
+// ════════════════════════════════════════════════════════
+
+private class LibMDK {
+    static let shared = LibMDK()
+    private var h: UnsafeMutableRawPointer?
+    private(set) var ok = false
+
+    func load() -> Bool {
+        let paths = [
+            "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Versions/A/mdk",
+            "/opt/homebrew/lib/mdk.framework/mdk",
+            "/usr/local/lib/mdk.framework/mdk",
+        ]
+        for p in paths {
+            h = dlopen(p, RTLD_LAZY | RTLD_GLOBAL)
+            if h != nil { print("[mdk] ✅ Loaded: \(p)"); break }
+        }
+        guard h != nil else {
+            print("[mdk] ❌ mdk not found")
+            return false
+        }
+        let ver = MDK_version()
+        print("[mdk] version: \((ver >> 16) & 0xFF).\((ver >> 8) & 0xFF).\(ver & 0xFF)")
+        ok = true
+        return true
+    }
+}
+private let mdkLib = LibMDK.shared
+
+// ════════════════════════════════════════════════════════
 // MARK: - MPVOpenGLLayer
 // ════════════════════════════════════════════════════════
 
@@ -546,6 +577,19 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     // mpv 有新 frame 時由 callback 設為 true；draw() 開頭清除。
     // arm64 Bool store/load 為單一指令，無需 lock。
     var hasPendingFrame = false
+
+    // ── MDK backend state ────────────────────────────────
+    private var mdkAPI: UnsafePointer<mdkPlayerAPI>?
+    private var mdkGLAPI = mdkGLRenderAPI()
+    private var mdkReady = false
+    private var mdkMuted = true
+    private var mdkDuration: Double = 0  // seconds
+    /// Timestamp (seconds) of the last frame rendered by MDK's renderVideo()
+    private var mdkRenderedTime: Double = 0
+
+    /// true = mpv, false = MDK
+    var useMpvBackend: Bool = true
+
     // update callback 觸發時間；draw() 用此計算 vsync 延遲並補償 time-pos。
     // 注意：callback 中不可呼叫任何 mpv API（會死鎖），只記錄時間戳。
     var callbackTime: CFTimeInterval = 0
@@ -567,12 +611,25 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     private(set) var stabilityScore: Float = -1
 
     var videoFPS: Double {
-        guard let ctx = mpvCtx else { return 0 }
-        return Double(lib.getString(ctx, "container-fps") ?? "0") ?? 0
+        if useMpvBackend {
+            guard let ctx = mpvCtx else { return 0 }
+            return Double(lib.getString(ctx, "container-fps") ?? "0") ?? 0
+        } else {
+            guard let api = mdkAPI else { return 0 }
+            let obj = api.pointee.object!
+            guard let info = api.pointee.mediaInfo(obj), info.pointee.nb_video > 0 else { return 0 }
+            var codec = mdkVideoCodecParameters()
+            MDK_VideoStreamCodecParameters(&info.pointee.video[0], &codec)
+            return Double(codec.frame_rate)
+        }
     }
     var droppedFrames: Int {
-        guard let ctx = mpvCtx else { return 0 }
-        return Int(lib.getString(ctx, "frame-drop-count") ?? "0") ?? 0
+        if useMpvBackend {
+            guard let ctx = mpvCtx else { return 0 }
+            return Int(lib.getString(ctx, "frame-drop-count") ?? "0") ?? 0
+        } else {
+            return 0  // MDK does not expose drop count
+        }
     }
 
     // ── Warp pipeline (gyroflow-style per-row matrix) ────────
@@ -605,12 +662,13 @@ class MPVOpenGLLayer: CAOpenGLLayer {
 
     override init() {
         super.init()
-        guard lib.ok else { return }
         // isAsynchronous = true：CAOpenGLLayer 在專屬 rendering thread 以 vsync 驅動 draw()
         // 主執行緒完全不參與 render，與 Spectrum 同步的修正。
         isAsynchronous = true
         setupGL()
-        setupMPV()
+        // Initialize both backends if available; toggle with P key
+        if mdkLib.ok { setupMDK(); useMpvBackend = false }
+        if lib.ok    { setupMPV(); if !mdkLib.ok { useMpvBackend = true } }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -1158,15 +1216,58 @@ void main() {
         CVDisplayLinkSetOutputCallback(dl, { _, _, _, _, _, ctx -> CVReturn in
             guard let ctx else { return kCVReturnSuccess }
             let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(ctx).takeUnretainedValue()
-            guard let rc = layer.renderCtx, let fn = lib.rcSwap else {
-                return kCVReturnSuccess
+            // rcSwap is mpv-only; MDK manages its own swap
+            if layer.useMpvBackend {
+                guard let rc = layer.renderCtx, let fn = lib.rcSwap else {
+                    return kCVReturnSuccess
+                }
+                fn(rc)
             }
-            fn(rc)
             return kCVReturnSuccess
         }, selfRef)
         CVDisplayLinkStart(dl)
         displayLink = dl
         print("[DL] ✅ CVDisplayLink started (swap report)")
+    }
+
+    // ─── MDK 初始化 ───────────────────────────────────────
+
+    private func setupMDK() {
+        guard mdkLib.ok else { return }
+        let api = mdkPlayerAPI_new()!
+        mdkAPI = api
+        let obj = api.pointee.object!
+
+        // Decoders: prefer VideoToolbox, fallback to FFmpeg
+        var decoders: [UnsafePointer<CChar>?] = [
+            ("VideoToolbox" as NSString).utf8String,
+            ("FFmpeg" as NSString).utf8String,
+            nil
+        ]
+        api.pointee.setVideoDecoders(obj, &decoders)
+
+        // Start muted
+        api.pointee.setMute(obj, true)
+        mdkMuted = true
+
+        // Configure GL render API: type=OpenGL, fbo set dynamically in draw()
+        mdkGLAPI.type = MDK_RenderAPI_OpenGL
+        mdkGLAPI.fbo = -1  // will be set per draw call
+
+        // Render callback: signal new frame
+        let selfRef = Unmanaged.passUnretained(self).toOpaque()
+        api.pointee.setRenderCallback(obj, mdkRenderCallback(cb: { _, opaque in
+            guard let opaque else { return }
+            let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(opaque).takeUnretainedValue()
+            layer.callbackTime = CACurrentMediaTime()
+            layer.hasPendingFrame = true
+            layer.setNeedsDisplay()
+        }, opaque: selfRef))
+
+        // Default PQ output for HDR
+        api.pointee.setColorSpace(obj, MDK_ColorSpace_BT2100_PQ, nil)
+
+        print("[mdk] ✅ Player initialized")
     }
 
     // ─── mpv 事件執行緒 ─────────────────────────────────
@@ -1359,6 +1460,124 @@ void main() {
         }
     }
 
+    // ─── MDK 載入檔案 ──────────────────────────────────────
+
+    func mdkLoadFile(_ path: String) {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        print("[mdk] Loading: \(path)")
+        mdkReady = false
+        api.pointee.setMedia(obj, path)
+
+        let selfRef = Unmanaged.passUnretained(self).toOpaque()
+        api.pointee.prepare(obj, 0, mdkPrepareCallback(cb: { position, boost, opaque in
+            guard let opaque else { return true }
+            let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(opaque).takeUnretainedValue()
+            guard position >= 0 else {
+                print("[mdk] ❌ prepare failed: position=\(position)")
+                return false
+            }
+            // Read media info for duration and color space
+            if let api = layer.mdkAPI, let rawObj = api.pointee.object,
+               let info = api.pointee.mediaInfo(rawObj) {
+                layer.mdkDuration = Double(info.pointee.duration) / 1000.0
+                if info.pointee.nb_video > 0 {
+                    var codec = mdkVideoCodecParameters()
+                    MDK_VideoStreamCodecParameters(&info.pointee.video[0], &codec)
+                    let cs = codec.color_space
+                    let doviProfile = codec.dovi_profile
+                    print("[mdk] Media: duration=\(layer.mdkDuration)s  color_space=\(cs.rawValue)  dovi_profile=\(doviProfile)")
+
+                    // DV P8.4 (Apple) → PQ;  HLG → HLG;  Other → PQ
+                    if cs == MDK_ColorSpace_BT2100_HLG && doviProfile != 8 {
+                        // HLG content: MDK output HLG, CALayer use HLG
+                        api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_HLG, nil)
+                        print("[mdk] Colorspace: HLG → HLG")
+                        DispatchQueue.main.async {
+                            layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                            layer.wantsExtendedDynamicRangeContent = true
+                        }
+                    } else {
+                        // DV P8.4, PQ, or other: MDK output PQ, CALayer use PQ
+                        api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_PQ, nil)
+                        print("[mdk] Colorspace: \(doviProfile == 8 ? "DV P8.4" : "default") → PQ")
+                        DispatchQueue.main.async {
+                            layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+                            layer.wantsExtendedDynamicRangeContent = true
+                        }
+                    }
+                }
+            }
+            layer.mdkReady = true
+            print("[mdk] ✅ Prepared, position=\(position)")
+            return true
+        }, opaque: selfRef), MDK_SeekFlag_FromStart)
+
+        api.pointee.setState(obj, MDK_State_Playing)
+    }
+
+    // ─── MDK 播放控制 ────────────────────────────────────
+
+    func mdkSetPause(_ paused: Bool) {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        api.pointee.setState(obj, paused ? MDK_State_Paused : MDK_State_Playing)
+    }
+
+    func mdkTogglePause() {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        let current = api.pointee.state(obj)
+        api.pointee.setState(obj, current == MDK_State_Playing ? MDK_State_Paused : MDK_State_Playing)
+    }
+
+    func mdkToggleMute() {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        mdkMuted.toggle()
+        api.pointee.setMute(obj, mdkMuted)
+    }
+
+    func mdkSeek(seconds: Int) {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        let ms = Int64(seconds) * 1000
+        _ = api.pointee.seekWithFlags(obj, ms, MDK_SeekFlag(rawValue: MDK_SeekFlag_FromNow.rawValue | MDK_SeekFlag_KeyFrame.rawValue),
+                                      mdkSeekCallback(cb: nil, opaque: nil))
+    }
+
+    func mdkSeek(_ seconds: Double, absolute: Bool) {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        let ms = Int64(seconds * 1000)
+        let flags: MDK_SeekFlag = absolute
+            ? MDK_SeekFlag(rawValue: MDK_SeekFlag_FromStart.rawValue | MDK_SeekFlag_KeyFrame.rawValue)
+            : MDK_SeekFlag(rawValue: MDK_SeekFlag_FromNow.rawValue | MDK_SeekFlag_KeyFrame.rawValue)
+        _ = api.pointee.seekWithFlags(obj, ms, flags, mdkSeekCallback(cb: nil, opaque: nil))
+    }
+
+    func mdkFrameStep() {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        _ = api.pointee.seekWithFlags(obj, 1,
+            MDK_SeekFlag(rawValue: MDK_SeekFlag_FromNow.rawValue | MDK_SeekFlag_Frame.rawValue),
+            mdkSeekCallback(cb: nil, opaque: nil))
+    }
+
+    func mdkFrameBackStep() {
+        guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+        _ = api.pointee.seekWithFlags(obj, -1,
+            MDK_SeekFlag(rawValue: MDK_SeekFlag_FromNow.rawValue | MDK_SeekFlag_Frame.rawValue),
+            mdkSeekCallback(cb: nil, opaque: nil))
+    }
+
+    var mdkCurrentTimeSec: Double {
+        guard let api = mdkAPI else { return 0 }
+            let obj = api.pointee.object!
+        return Double(api.pointee.position(obj)) / 1000.0
+    }
+
     // ─── 暫停 / 繼續 ─────────────────────────────────────
 
     func setPause(_ paused: Bool) {
@@ -1440,8 +1659,12 @@ void main() {
     }
 
     var currentTimeSec: Double {
-        guard let ctx = mpvCtx else { return 0 }
-        return Double(lib.getString(ctx, "time-pos") ?? "0") ?? 0
+        if useMpvBackend {
+            guard let ctx = mpvCtx else { return 0 }
+            return Double(lib.getString(ctx, "time-pos") ?? "0") ?? 0
+        } else {
+            return mdkCurrentTimeSec
+        }
     }
 
     // ─── CAOpenGLLayer 覆寫 ──────────────────────────────
@@ -1458,8 +1681,8 @@ void main() {
                           pixelFormat pf: CGLPixelFormatObj,
                           forLayerTime t: CFTimeInterval,
                           displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
-        // hasPendingFrame 只在 mpv 有新幀時為 true，避免暫停時以 120Hz 重繪靜態畫面
-        renderCtx != nil && hasPendingFrame
+        guard hasPendingFrame else { return false }
+        return useMpvBackend ? (renderCtx != nil) : (mdkAPI != nil && mdkReady)
     }
 
     override func draw(inCGLContext ctx: CGLContextObj,
@@ -1467,9 +1690,14 @@ void main() {
                        forLayerTime t: CFTimeInterval,
                        displayTime ts: UnsafePointer<CVTimeStamp>?) {
         hasPendingFrame = false   // 消費 pending flag，在 render 前清除
-        guard let rc = renderCtx, let renderFn = lib.rcRender, let swapFn = lib.rcSwap else {
-            print("[GL] draw() 提早返回：renderCtx=\(renderCtx != nil)")
-            return
+        // Backend guard: need either mpv render context or mdk api
+        if useMpvBackend {
+            guard renderCtx != nil, lib.rcRender != nil else {
+                print("[GL] draw() 提早返回：renderCtx=\(renderCtx != nil)")
+                return
+            }
+        } else {
+            guard mdkAPI != nil, mdkReady else { return }
         }
 
         // CGLLockContext：確保多執行緒時 OpenGL context 使用安全
@@ -1494,32 +1722,100 @@ void main() {
             print("[GL] draw() #\(frameCount): w=\(w) h=\(h) fbo=\(displayFBO) float=\(isFloat)\(fetchStr)")
         }
 
-        // ── Frame info: update + get frame info ──
-        var updateFlags: UInt64 = 0
-        if let rcUpdateFn = lib.rcUpdate, let rc = renderCtx {
-            updateFlags = rcUpdateFn(rc)
-        }
-        var frameInfo = RenderFrameInfo()
-        var hasFrameInfo = false
-        var getInfoRC: Int32 = -999
-        if let rcGetInfoFn = lib.rcGetInfo, let rc = renderCtx {
-            withUnsafeMutablePointer(to: &frameInfo) { ptr in
-                let typeField = Int64(RC_NEXT_FRAME_INFO)
-                getInfoRC = rcGetInfoFn(rc, typeField, UnsafeMutableRawPointer(ptr))
-                hasFrameInfo = getInfoRC == 0
+        // ── Frame info: update + get frame info (mpv only) ──
+        if useMpvBackend {
+            var updateFlags: UInt64 = 0
+            if let rcUpdateFn = lib.rcUpdate, let rc = renderCtx {
+                updateFlags = rcUpdateFn(rc)
             }
+            _ = updateFlags
+            var frameInfo = RenderFrameInfo()
+            var hasFrameInfo = false
+            var getInfoRC: Int32 = -999
+            if let rcGetInfoFn = lib.rcGetInfo, let rc = renderCtx {
+                withUnsafeMutablePointer(to: &frameInfo) { ptr in
+                    let typeField = Int64(RC_NEXT_FRAME_INFO)
+                    getInfoRC = rcGetInfoFn(rc, typeField, UnsafeMutableRawPointer(ptr))
+                    hasFrameInfo = getInfoRC == 0
+                }
+            }
+            _ = hasFrameInfo; _ = getInfoRC
         }
 
-        // ── 同步計算當前幀矩陣（~0.5ms，直接在 render thread 呼叫）──────────
+        // ── Determine stabilization state (before Pass 1, so we know the target FBO) ──
+        let wantStab = gyroCore?.isReady == true && warpProg != 0
+
+        // 穩定化時渲染到影片原始解析度的 FBO，warp 在全解析度執行後才 downsample
+        let vidW: GLsizei = wantStab ? GLsizei(gyroCore!.gyroVideoW) : w
+        let vidH: GLsizei = wantStab ? GLsizei(gyroCore!.gyroVideoH) : h
+
+        if wantStab && (stabW != vidW || stabH != vidH) {
+            stabW = vidW; stabH = vidH
+            glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
+            glTexImage2D(GLenum(GL_TEXTURE_2D), 0, GLint(GL_RGBA),
+                         vidW, vidH, 0, GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), nil)
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), stabFBO)
+            glFramebufferTexture2D(GLenum(GL_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0),
+                                   GLenum(GL_TEXTURE_2D), stabTex, 0)
+            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(displayFBO))
+            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
+            print("[Warp] stabFBO resized to \(vidW)×\(vidH) (video native resolution)")
+        }
+
+        // ── Pass 1：video decode → FBO ──────────────────────────────────
+        if useMpvBackend {
+            // mpv render: advanced_control=1 必須每次 draw 都呼叫 rcRender
+            guard let rc = renderCtx, let renderFn = lib.rcRender else { return }
+            let mpvTargetFBO = wantStab ? GLint(stabFBO) : displayFBO
+            var fbo   = OGLFBO(fbo: mpvTargetFBO, w: vidW, h: vidH, internal_format: 0)
+            var flipY = Int32(1)
+            var depth = Int32(isFloat ? 16 : 8)
+            var block = Int32(0)
+
+            withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
+            withUnsafeMutablePointer(to: &flipY) { flipPtr in
+            withUnsafeMutablePointer(to: &depth) { depthPtr in
+            withUnsafeMutablePointer(to: &block) { blockPtr in
+                var params: [RParam] = [
+                    RParam(RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
+                    RParam(RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
+                    RParam(RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
+                    RParam(RC_BLOCK_FOR_TARGET, UnsafeMutableRawPointer(blockPtr)),
+                    RParam()
+                ]
+                let err = params.withUnsafeMutableBufferPointer { buf in
+                    renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
+                }
+                if err != 0 { print("[GL] mpv_render_context_render error: \(err)") }
+            }}}}
+        } else {
+            // MDK render — renderVideo() returns the exact timestamp of the rendered frame
+            guard let api = mdkAPI else { return }
+            let obj = api.pointee.object!
+            let targetFBO = wantStab ? Int32(stabFBO) : displayFBO
+            mdkGLAPI.fbo = targetFBO
+            withUnsafeMutablePointer(to: &mdkGLAPI) { glPtr in
+                api.pointee.setRenderAPI(obj, OpaquePointer(glPtr), nil)
+            }
+            api.pointee.setVideoSurfaceSize(obj, Int32(vidW), Int32(vidH), nil)
+            let ts = api.pointee.renderVideo(obj, nil)
+            if ts >= 0 { mdkRenderedTime = ts }
+        }
+
+        // ── Gyro matrix computation (AFTER Pass 1 so MDK frame time is available) ──
         var gyroResult: (UnsafeBufferPointer<Float>, Bool)? = nil
         var gyroFrameRepeated = false
-        if let core = gyroCore, core.isReady, let mpvCtx {
-            // advanced_control=1：每個 draw 對應一個 decoded frame。
-            // time-pos 就是當前幀的近似 PTS。frameDelay 可由 - / = 鍵微調。
-            let timeSec = Double(lib.getString(mpvCtx, "time-pos") ?? "0") ?? 0
-            let delayFrames = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 1.0
-            let videoPTS = timeSec - delayFrames / core.gyroFps
-            let renderTime = max(0, videoPTS)
+        if wantStab, let core = gyroCore, core.isReady {
+            let renderTime: Double
+            if useMpvBackend {
+                // mpv: time-pos is audio-synced → subtract pipeline delay
+                let timeSec = currentTimeSec
+                let delayFrames = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 1.0
+                renderTime = max(0, timeSec - delayFrames / core.gyroFps)
+            } else {
+                // MDK: renderVideo() returned exact frame timestamp — no delay compensation
+                renderTime = max(0, mdkRenderedTime)
+            }
             // Frame index for repeat detection only (not passed to gyroflow-core)
             var fi = max(0, min(Int((renderTime * core.gyroFps).rounded()),
                                 core.frameCount - 1))
@@ -1544,52 +1840,7 @@ void main() {
             }
         }
 
-        let hasStab = (gyroResult != nil || gyroFrameRepeated) && warpProg != 0
-
-        // 穩定化時 mpv 渲染到影片原始解析度的 FBO，warp 在全解析度執行後才 downsample
-        let vidW: GLsizei = hasStab ? GLsizei(gyroCore!.gyroVideoW) : w
-        let vidH: GLsizei = hasStab ? GLsizei(gyroCore!.gyroVideoH) : h
-
-        if hasStab && (stabW != vidW || stabH != vidH) {
-            stabW = vidW; stabH = vidH
-            glBindTexture(GLenum(GL_TEXTURE_2D), stabTex)
-            glTexImage2D(GLenum(GL_TEXTURE_2D), 0, GLint(GL_RGBA),
-                         vidW, vidH, 0, GLenum(GL_RGBA), GLenum(GL_UNSIGNED_BYTE), nil)
-            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), stabFBO)
-            glFramebufferTexture2D(GLenum(GL_FRAMEBUFFER), GLenum(GL_COLOR_ATTACHMENT0),
-                                   GLenum(GL_TEXTURE_2D), stabTex, 0)
-            glBindFramebuffer(GLenum(GL_FRAMEBUFFER), GLuint(displayFBO))
-            glBindTexture(GLenum(GL_TEXTURE_2D), 0)
-            print("[Warp] stabFBO resized to \(vidW)×\(vidH) (video native resolution)")
-        }
-
-        // ── Pass 1：mpv render ──────────────────────────────────────────
-        // advanced_control=1 模式下 mpv 追蹤 frame 消費，必須每次 draw 都呼叫 rcRender
-        // 否則 mpv 不會送出下一個 callback → fps 降到極低
-        do {
-            let mpvTargetFBO = hasStab ? GLint(stabFBO) : displayFBO
-            var fbo   = OGLFBO(fbo: mpvTargetFBO, w: vidW, h: vidH, internal_format: 0)
-            var flipY = Int32(1)
-            var depth = Int32(isFloat ? 16 : 8)
-            var block = Int32(0)  // BLOCK_FOR_TARGET_TIME=0: don't block in advanced mode
-
-            withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
-            withUnsafeMutablePointer(to: &flipY) { flipPtr in
-            withUnsafeMutablePointer(to: &depth) { depthPtr in
-            withUnsafeMutablePointer(to: &block) { blockPtr in
-                var params: [RParam] = [
-                    RParam(RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
-                    RParam(RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
-                    RParam(RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
-                    RParam(RC_BLOCK_FOR_TARGET, UnsafeMutableRawPointer(blockPtr)),
-                    RParam()
-                ]
-                let err = params.withUnsafeMutableBufferPointer { buf in
-                    renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
-                }
-                if err != 0 { print("[GL] mpv_render_context_render error: \(err)") }
-            }}}}
-        }
+        let hasStab = (gyroResult != nil || gyroFrameRepeated) && wantStab
 
         // ── Pass 2：gyroflow per-row warp ──────────────────
         if hasStab, let server = gyroCore {
@@ -1656,12 +1907,18 @@ void main() {
             glUniform1f(uLensCorr, server.lensCorrectionAmount)
 
             if frameCount <= 300 && frameCount % 30 == 0 {
-                let tp = Double(lib.getString(mpvCtx!, "time-pos") ?? "0") ?? 0
                 let fpsStr = renderFPS > 0 ? String(format: "%.1ffps", renderFPS) : "?"
                 let fiStr = lastGyroFrameIdx.map { String($0) } ?? "nil"
-                let delayF = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 0
-                print(String(format: "[GL] draw#%d  tp=%.4f  delay=%.1f  %@  fi=%@  fov=%.3f  %@",
-                             frameCount, tp, delayF,
+                let timeInfo: String
+                if useMpvBackend {
+                    let tp = currentTimeSec
+                    let delayF = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 0
+                    timeInfo = String(format: "tp=%.4f  delay=%.1f", tp, delayF)
+                } else {
+                    timeInfo = String(format: "frameTime=%.4f", mdkRenderedTime)
+                }
+                print(String(format: "[GL] draw#%d  %@  %@  fi=%@  fov=%.3f  %@",
+                             frameCount, timeInfo,
                              gyroFrameRepeated ? "rep" : "NEW",
                              fiStr,
                              server.frameFov, fpsStr))
@@ -1721,6 +1978,7 @@ void main() {
         if let dl = displayLink { CVDisplayLinkStop(dl) }
         if let rc  = renderCtx { lib.rcFree?(rc) }
         if let ctx = mpvCtx    { lib.destroy?(ctx) }
+        if mdkAPI != nil { var apiPtr = mdkAPI; mdkPlayerAPI_delete(&apiPtr) }
     }
 }
 
@@ -1750,14 +2008,38 @@ class MPVView: NSView {
         CATransaction.commit()
     }
 
-    func load(path: String) { mpvLayer.loadFile(path) }
-    func seek(_ seconds: Int) { mpvLayer.seek(seconds: seconds) }
-    func seek(_ seconds: Double, absolute: Bool) { mpvLayer.seek(seconds, absolute: absolute) }
-    func setPause(_ paused: Bool) { mpvLayer.setPause(paused) }
-    func togglePause() { mpvLayer.togglePause() }
-    func toggleMute()  { mpvLayer.toggleMute()  }
-    func frameStep() { mpvLayer.frameStep() }
-    func frameBackStep() { mpvLayer.frameBackStep() }
+    func load(path: String) {
+        if mpvLayer.useMpvBackend { mpvLayer.loadFile(path) }
+        else { mpvLayer.mdkLoadFile(path) }
+    }
+    func seek(_ seconds: Int) {
+        if mpvLayer.useMpvBackend { mpvLayer.seek(seconds: seconds) }
+        else { mpvLayer.mdkSeek(seconds: seconds) }
+    }
+    func seek(_ seconds: Double, absolute: Bool) {
+        if mpvLayer.useMpvBackend { mpvLayer.seek(seconds, absolute: absolute) }
+        else { mpvLayer.mdkSeek(seconds, absolute: absolute) }
+    }
+    func setPause(_ paused: Bool) {
+        if mpvLayer.useMpvBackend { mpvLayer.setPause(paused) }
+        else { mpvLayer.mdkSetPause(paused) }
+    }
+    func togglePause() {
+        if mpvLayer.useMpvBackend { mpvLayer.togglePause() }
+        else { mpvLayer.mdkTogglePause() }
+    }
+    func toggleMute() {
+        if mpvLayer.useMpvBackend { mpvLayer.toggleMute() }
+        else { mpvLayer.mdkToggleMute() }
+    }
+    func frameStep() {
+        if mpvLayer.useMpvBackend { mpvLayer.frameStep() }
+        else { mpvLayer.mdkFrameStep() }
+    }
+    func frameBackStep() {
+        if mpvLayer.useMpvBackend { mpvLayer.frameBackStep() }
+        else { mpvLayer.mdkFrameBackStep() }
+    }
     var currentTimeSec: Double { mpvLayer.currentTimeSec }
     func loadGyroCore(_ server: GyroCore?) { mpvLayer.loadGyroCore(server) }
     func resetGyroFrameIdx() { mpvLayer.lastGyroFrameIdx = nil }
@@ -1771,6 +2053,30 @@ class MPVView: NSView {
     var droppedFrames: Int     { mpvLayer.droppedFrames  }
     var stabilityScore: Float  { mpvLayer.stabilityScore }
     var isFloat: Bool           { mpvLayer.isFloat        }
+
+    // ── Backend switching ────────────────────────────────
+    var backendName: String { mpvLayer.useMpvBackend ? "mpv" : "MDK" }
+    var useMpvBackend: Bool { mpvLayer.useMpvBackend }
+
+    func toggleBackend() {
+        let canMpv = lib.ok
+        let canMdk = mdkLib.ok
+        if canMpv && canMdk {
+            mpvLayer.useMpvBackend.toggle()
+        } else {
+            print("[backend] Only one backend available")
+        }
+    }
+
+    func switchBackendAndReload(path: String) {
+        let pos = currentTimeSec
+        toggleBackend()
+        load(path: path)
+        // Restore position after a short delay for the new backend to initialize
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+            self?.seek(pos, absolute: true)
+        }
+    }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1942,10 +2248,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var csIndex:      Int = 1   // CGColorSpace (itur_2100_PQ)
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        guard lib.load() else {
+        let mpvOk = lib.load()
+        let mdkOk = mdkLib.load()
+        guard mpvOk || mdkOk else {
             let a = NSAlert()
-            a.messageText = "libmpv not found"
-            a.informativeText = "Install IINA from https://iina.io"
+            a.messageText = "No video backend found"
+            a.informativeText = "Install IINA (for mpv) or Gyroflow (for MDK)"
             a.runModal()
             NSApplication.shared.terminate(nil)
             return
@@ -2169,6 +2477,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.mpvView.resetGyroFrameIdx()
                 self.updateTitle()
                 return nil
+            case 35:                                         // P：切換 mpv ↔ MDK
+                guard let path = self.originalPath else { return event }
+                self.mpvView.switchBackendAndReload(path: path)
+                if self.gyroCore != nil { self.mpvView.loadGyroCore(self.gyroCore) }
+                self.updateTitle()
+                return nil
             case 12:  NSApplication.shared.terminate(nil); return nil // Q
             default:  return event
             }
@@ -2251,10 +2565,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             },
             onError: { [weak self] msg in
                 print("[gyro] ❌ \(msg)")
-                if self?.gyroCore === server { self?.gyroCore = nil }
-                // 載入失敗也要恢復播放
-                self?.mpvView.setPause(false)
-                self?.updateTitle()
+                DispatchQueue.main.async {
+                    if self?.gyroCore === server { self?.gyroCore = nil }
+                    // 載入失敗也要恢復播放
+                    self?.mpvView.setPause(false)
+                    self?.updateTitle()
+                }
             }
         )
     }
@@ -2337,22 +2653,23 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateTitle(status: String? = nil) {
         let name = originalPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "testmpv"
         let color = colorStatusString
+        let backend = "[\(mpvView.backendName)]"
         if let s = status {
-            window.title = "testmpv — \(s)"
+            window.title = "testmpv \(backend) — \(s)"
         } else if stabManager.isRendering {
-            window.title = "\(name)  [渲染中…]"
+            window.title = "\(name) \(backend) [渲染中…]"
         } else if let srv = gyroCore {
             let syncStr = gyroFrameSync != 0 ? "  sync=\(gyroFrameSync > 0 ? "+" : "")\(gyroFrameSync)f" : ""
             let ptsStr = lib.rcGetInfo != nil ? "  pts=frame_info" : String(format: "  delay=%.2ff", frameDelayFrames)
             let params = String(format: "smooth=%.2f  RS=%@  offset=%dms",
                                 gyroSmoothness, gyroRSEnabled ? "ON" : "OFF", Int(gyroOffsetMs)) + syncStr + ptsStr
             window.title = srv.isReady
-                ? "\(name)  [gyro \(params)]  \(color)"
-                : "\(name)  [gyrocore 初始化中…]"
+                ? "\(name) \(backend) [gyro \(params)]  \(color)"
+                : "\(name) \(backend) [gyrocore 初始化中…]"
         } else if isShowingStabilized {
-            window.title = "\(name)  [Phase 1]  \(color)"
+            window.title = "\(name) \(backend) [Phase 1]  \(color)"
         } else {
-            window.title = "\(name)  \(color)"
+            window.title = "\(name) \(backend) \(color)"
         }
     }
 

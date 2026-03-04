@@ -24,12 +24,19 @@ fi
 
 echo "Building testmpv..."
 
+MDK_HEADERS="/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c"
+
 swiftc main.swift \
+    -import-objc-header mdk_bridge.h \
+    -Xcc -DBUILD_MDK_STATIC \
+    -Xcc -I"$MDK_HEADERS" \
     -framework Cocoa \
     -framework OpenGL \
     -framework QuartzCore \
     -framework AVFoundation \
     -Xlinker -rpath -Xlinker /Applications/IINA.app/Contents/Frameworks \
+    -Xlinker -rpath -Xlinker /Applications/Gyroflow.app/Contents/Frameworks \
+    -Xlinker -undefined -Xlinker dynamic_lookup \
     -O \
     -o testmpv
 
