@@ -23,19 +23,6 @@ enum VideoHDRType: String, CaseIterable {
     case slog2 = "S-Log2"
     case slog3 = "S-Log3"
 
-    /// AppStorage key for per-type player override
-    var playerStorageKey: String {
-        switch self {
-        case .dolbyVision: return "playerForDolbyVision"
-        case .hlg:         return "playerForHLG"
-        case .hdr10:       return "playerForHDR10"
-        case .slog2:       return "playerForSLog2"
-        case .slog3:       return "playerForSLog3"
-        }
-    }
-
-    /// The key used for SDR videos (no HDR type detected)
-    static let sdrPlayerStorageKey = "playerForSDR"
 }
 
 struct CachedImageEntry: @unchecked Sendable {
@@ -44,122 +31,7 @@ struct CachedImageEntry: @unchecked Sendable {
     let hdrFormat: HDRFormat?   // nil = SDR
 }
 
-struct CachedVideoEntry {
-    let player: AVPlayer
-    let hdrType: VideoHDRType?
-    let hdrComposition: AVVideoComposition?
-    let sdrComposition: AVVideoComposition?
-}
-
 enum ImagePreloadCache {
-
-    // MARK: - Video loading
-
-    static func loadVideoEntry(
-        path: String,
-        bookmarkData: Data?
-    ) async -> CachedVideoEntry? {
-        let url = URL(fileURLWithPath: path)
-
-        var scopeURL: URL?
-        var didStart = false
-        if let bookmarkData {
-            do {
-                let folderURL = try BookmarkService.resolveBookmark(bookmarkData)
-                scopeURL = folderURL
-                didStart = folderURL.startAccessingSecurityScopedResource()
-            } catch {
-                Log.bookmark.warning("Failed to resolve bookmark for video \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-        defer {
-            if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
-        }
-
-        let asset = AVURLAsset(url: url)
-        var hdrType: VideoHDRType?
-        var hdrComposition: AVVideoComposition?
-        var sdrComposition: AVVideoComposition?
-        let canPlayHDR = AVPlayer.eligibleForHDRPlayback
-
-        if canPlayHDR {
-            do {
-                let videoTracks = try await asset.loadTracks(withMediaType: .video)
-                if let track = videoTracks.first {
-                    if let descriptions = try? await track.load(.formatDescriptions) {
-                        for desc in descriptions {
-                            let codecType = CMFormatDescriptionGetMediaSubType(desc)
-                            if codecType == kCMVideoCodecType_DolbyVisionHEVC {
-                                hdrType = .dolbyVision
-                                break
-                            }
-
-                            guard let extensions = CMFormatDescriptionGetExtensions(desc) as? [String: Any] else { continue }
-
-                            if let atoms = extensions[kCMFormatDescriptionExtension_SampleDescriptionExtensionAtoms as String] as? [String: Any],
-                               atoms["dvcC"] != nil || atoms["dvvC"] != nil {
-                                hdrType = .dolbyVision
-                                break
-                            }
-
-                            if let transfer = extensions[kCMFormatDescriptionExtension_TransferFunction as String] as? String {
-                                if transfer == (kCMFormatDescriptionTransferFunction_ITU_R_2100_HLG as String) {
-                                    hdrType = .hlg
-                                } else if transfer == (kCMFormatDescriptionTransferFunction_SMPTE_ST_2084_PQ as String) {
-                                    hdrType = .hdr10
-                                }
-                            }
-                        }
-                    }
-
-                    if hdrType != nil {
-                        let size = (try? await track.load(.naturalSize)) ?? CGSize(width: 1920, height: 1080)
-                        let transform = (try? await track.load(.preferredTransform)) ?? .identity
-                        let fps = (try? await track.load(.nominalFrameRate)) ?? 30
-                        let duration = (try? await asset.load(.duration)) ?? .indefinite
-
-                        let transformedSize = size.applying(transform)
-                        let renderSize = CGSize(width: abs(transformedSize.width), height: abs(transformedSize.height))
-                        let frameDuration = CMTime(value: 1, timescale: CMTimeScale(fps > 0 ? fps : 30))
-
-                        func makeInstruction() -> AVMutableVideoCompositionInstruction {
-                            let inst = AVMutableVideoCompositionInstruction()
-                            inst.timeRange = CMTimeRange(start: .zero, duration: duration)
-                            let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: track)
-                            layer.setTransform(transform, at: .zero)
-                            inst.layerInstructions = [layer]
-                            return inst
-                        }
-
-                        let hdrComp = AVMutableVideoComposition()
-                        hdrComp.colorPrimaries = AVVideoColorPrimaries_ITU_R_2020
-                        hdrComp.colorTransferFunction = (hdrType == .hlg || hdrType == .dolbyVision)
-                            ? AVVideoTransferFunction_ITU_R_2100_HLG
-                            : AVVideoTransferFunction_SMPTE_ST_2084_PQ
-                        hdrComp.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_2020
-                        hdrComp.renderSize = renderSize
-                        hdrComp.frameDuration = frameDuration
-                        hdrComp.instructions = [makeInstruction()]
-                        hdrComposition = hdrComp
-
-                        let sdrComp = AVMutableVideoComposition()
-                        sdrComp.colorPrimaries = AVVideoColorPrimaries_ITU_R_709_2
-                        sdrComp.colorTransferFunction = AVVideoTransferFunction_ITU_R_709_2
-                        sdrComp.colorYCbCrMatrix = AVVideoYCbCrMatrix_ITU_R_709_2
-                        sdrComp.renderSize = renderSize
-                        sdrComp.frameDuration = frameDuration
-                        sdrComp.instructions = [makeInstruction()]
-                        sdrComposition = sdrComp
-                    }
-                }
-            } catch {
-                Log.video.warning("Failed to load video tracks for HDR detection \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
-        }
-
-        let player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
-        return CachedVideoEntry(player: player, hdrType: hdrType, hdrComposition: hdrComposition, sdrComposition: sdrComposition)
-    }
 
     // MARK: - Lightweight HDR type detection (no AVPlayer created)
 

@@ -3,11 +3,6 @@ import SwiftData
 
 @main
 struct SpectrumApp: App {
-    init() {
-        // Pre-initialize LibMPV so the singleton is ready before any video loads
-        _ = LibMPV.shared
-    }
-
     var body: some Scene {
         WindowGroup {
             ContentView()

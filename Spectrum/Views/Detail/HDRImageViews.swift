@@ -1,5 +1,4 @@
 import SwiftUI
-import AVKit
 
 // MARK: - HDR NSImageView wrapper
 
@@ -79,57 +78,3 @@ struct HLGImageView: NSViewRepresentable {
 
 }
 
-// MARK: - HDR AVPlayerView wrapper
-
-private class EDRPlayerView: AVPlayerView {
-    override func viewDidMoveToWindow() {
-        super.viewDidMoveToWindow()
-        enableEDR()
-    }
-
-    override func layout() {
-        super.layout()
-        enableEDR()
-    }
-
-    private func enableEDR() {
-        setEDRDown(layer)
-        var current = layer?.superlayer
-        while let l = current {
-            setEDR(l)
-            current = l.superlayer
-        }
-    }
-
-    private func setEDR(_ l: CALayer) {
-        if #available(macOS 26.0, *) {
-            l.preferredDynamicRange = .high
-        } else {
-            l.wantsExtendedDynamicRangeContent = true
-        }
-    }
-
-    private func setEDRDown(_ l: CALayer?) {
-        guard let l else { return }
-        setEDR(l)
-        l.sublayers?.forEach { setEDRDown($0) }
-    }
-}
-
-struct HDRVideoPlayerView: NSViewRepresentable {
-    let player: AVPlayer
-
-    func makeNSView(context: Context) -> AVPlayerView {
-        let view = EDRPlayerView()
-        view.controlsStyle = .none          // custom control bar overlaid in SwiftUI
-        view.allowsVideoFrameAnalysis = false
-        view.player = player
-        return view
-    }
-
-    func updateNSView(_ nsView: AVPlayerView, context: Context) {
-        if nsView.player !== player {
-            nsView.player = player
-        }
-    }
-}

@@ -33,9 +33,7 @@
 		AA000029 /* FolderClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000029 /* FolderClipboard.swift */; };
 		AA000031 /* NetworkVolumeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000031 /* NetworkVolumeService.swift */; };
 		AA000032 /* FolderListCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000032 /* FolderListCache.swift */; };
-		AA000050 /* MPVLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000050 /* MPVLib.swift */; };
 		AA000051 /* MPVPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* MPVPlayerView.swift */; };
-		AA000052 /* AVPlayerControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000052 /* AVPlayerControlBar.swift */; };
 		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
 		AA000054 /* HDRImageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000054 /* HDRImageViews.swift */; };
 		AA000055 /* MPVController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* MPVController.swift */; };
@@ -99,9 +97,7 @@
 		AB000029 /* FolderClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderClipboard.swift; sourceTree = "<group>"; };
 		AB000031 /* NetworkVolumeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkVolumeService.swift; sourceTree = "<group>"; };
 		AB000032 /* FolderListCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderListCache.swift; sourceTree = "<group>"; };
-		AB000050 /* MPVLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVLib.swift; sourceTree = "<group>"; };
 		AB000051 /* MPVPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVPlayerView.swift; sourceTree = "<group>"; };
-		AB000052 /* AVPlayerControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVPlayerControlBar.swift; sourceTree = "<group>"; };
 		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
 		AB000054 /* HDRImageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRImageViews.swift; sourceTree = "<group>"; };
 		AB000055 /* MPVController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVController.swift; sourceTree = "<group>"; };
@@ -205,7 +201,6 @@
 			isa = PBXGroup;
 			children = (
 				AB000070 /* Log.swift */,
-				AB000050 /* MPVLib.swift */,
 				AB000090 /* MDKLib.swift */,
 				AB000053 /* GyroCore.swift */,
 				AB000010 /* FolderScanner.swift */,
@@ -269,7 +264,6 @@
 				AB000051 /* MPVPlayerView.swift */,
 				AB000055 /* MPVController.swift */,
 				AB000056 /* MPVControlBar.swift */,
-				AB000052 /* AVPlayerControlBar.swift */,
 				AB000073 /* CropOverlayView.swift */,
 			);
 			path = Detail;
@@ -517,11 +511,9 @@
 				AA000015 /* URL+ImageTypes.swift in Sources */,
 				AA000016 /* Date+Formatting.swift in Sources */,
 				AA000017 /* VideoMetadataService.swift in Sources */,
-				AA000050 /* MPVLib.swift in Sources */,
 				AA000090 /* MDKLib.swift in Sources */,
 				AA000053 /* GyroCore.swift in Sources */,
 				AA000051 /* MPVPlayerView.swift in Sources */,
-				AA000052 /* AVPlayerControlBar.swift in Sources */,
 				AA000054 /* HDRImageViews.swift in Sources */,
 				AA000055 /* MPVController.swift in Sources */,
 				AA000056 /* MPVControlBar.swift in Sources */,

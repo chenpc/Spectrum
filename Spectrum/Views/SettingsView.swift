@@ -79,54 +79,14 @@ private struct CacheSettingsTab: View {
 
 private struct PlaybackSettingsTab: View {
     @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
-    @AppStorage("mpvHwdec") private var mpvHwdec: String = "auto"
-
-    // Per-type player selection (no "default" indirection)
-    @AppStorage("playerForSDR") private var playerForSDR: String = "libmpv"
-    @AppStorage("playerForHLG") private var playerForHLG: String = "libmpv"
-    @AppStorage("playerForHDR10") private var playerForHDR10: String = "libmpv"
-    @AppStorage("playerForDolbyVision") private var playerForDV: String = "libmpv"
-    @AppStorage("playerForSLog2") private var playerForSLog2: String = "libmpv"
-    @AppStorage("playerForSLog3") private var playerForSLog3: String = "libmpv"
 
     var body: some View {
         Form {
-            if LibMPV.shared.ok || LibMDK.shared.ok {
-                Section("Video Player") {
-                    perTypePicker("SDR", selection: $playerForSDR)
-                    perTypePicker("HLG", selection: $playerForHLG)
-                    perTypePicker("HDR10", selection: $playerForHDR10)
-                    perTypePicker("Dolby Vision", selection: $playerForDV)
-                    perTypePicker("S-Log2", selection: $playerForSLog2)
-                    perTypePicker("S-Log3", selection: $playerForSLog3)
-                }
-
-                Section("Hardware Decode") {
-                    Picker("hwdec", selection: $mpvHwdec) {
-                        Text(verbatim: "auto").tag("auto")
-                        Text(verbatim: "videotoolbox").tag("videotoolbox")
-                        Text(verbatim: "videotoolbox-copy").tag("videotoolbox-copy")
-                        Text(verbatim: "no (software)").tag("no")
-                    }
-                    Text("Changes take effect on next video load")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                }
-            }
-
             Section("Diagnostics") {
                 Toggle("Show diagnostics badge", isOn: $showMPVDiagBadge)
             }
         }
         .formStyle(.grouped)
-    }
-
-    private func perTypePicker(_ label: LocalizedStringKey, selection: Binding<String>) -> some View {
-        Picker(label, selection: selection) {
-            if LibMPV.shared.ok { Text(verbatim: "libmpv").tag("libmpv") }
-            if LibMDK.shared.ok { Text(verbatim: "MDK").tag("mdk") }
-            Text(verbatim: "AVPlayer").tag("avplayer")
-        }
     }
 }
 

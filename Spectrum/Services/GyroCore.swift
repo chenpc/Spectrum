@@ -56,7 +56,7 @@ struct GyroConfig: Codable {
 // MARK: - GyroCore
 //
 // Gyroflow-core stabilization matrix engine.
-// Loads libgyrocore_c.dylib via dlopen — same pattern as LibMPV.
+// Loads libgyrocore_c.dylib via dlopen.
 
 final class GyroCore: @unchecked Sendable {
 

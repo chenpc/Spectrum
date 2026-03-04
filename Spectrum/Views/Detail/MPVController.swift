@@ -20,18 +20,10 @@ final class MPVController: @unchecked Sendable {
     private(set) var renderStability: Double = 1
     /// Declared FPS of the video file.
     private(set) var videoFPS: Double = 0
-    /// Cumulative VO-level dropped frames (render API queue replacement).
-    private(set) var droppedFrames: Int = 0
-    /// Cumulative decoder-level dropped frames (B-frame skip etc.).
-    private(set) var decoderDroppedFrames: Int = 0
-    /// Reflects the actual hardware decoder in use after file load (e.g. "videotoolbox").
-    private(set) var hwdecInfo: String = "-"
     /// CALayer colorspace display name (e.g. "PQ", "HLG", "sRGB").
     private(set) var layerColorspaceInfo: String = "-"
     /// MDK setColorSpace value (e.g. "PQ", "HLG", "BT.709").
     private(set) var mdkColorspaceInfo: String = "-"
-    /// Backend name ("mpv" or "MDK").
-    private(set) var backendName: String = "mpv"
     /// Latest gyro computeMatrix time in ms (0 when gyro inactive).
     private(set) var gyroComputeMs: Double = 0
 
@@ -75,23 +67,16 @@ final class MPVController: @unchecked Sendable {
     private var gyroLoadPending = false
 
     private weak var nsView: MPVPlayerNSView?
-    /// Serial background queue: reads mpv properties off the main thread.
+    /// Serial background queue: reads properties off the main thread.
     private let pollQueue = DispatchQueue(label: "com.spectrum.mpv.poll", qos: .utility)
     private var isPolling = false
-    private var hwdecCheckTask: Task<Void, Never>?
 
-    /// When false, all diagnostic reads (FPS, CV, hwdec) are skipped — zero overhead.
+    /// When false, all diagnostic reads (FPS, CV) are skipped — zero overhead.
     var diagnosticsEnabled: Bool = true {
         didSet {
             let enabled = diagnosticsEnabled
-            // nsView is @MainActor-isolated (NSView); dispatch to avoid
-            // @Observable macro concurrency warning.
             Task { @MainActor [weak self] in
                 self?.nsView?.diagnosticsEnabled = enabled
-                if !enabled {
-                    self?.hwdecCheckTask?.cancel()
-                    self?.hwdecCheckTask = nil
-                }
             }
         }
     }
@@ -109,14 +94,9 @@ final class MPVController: @unchecked Sendable {
         renderCV = 0
         renderStability = 1
         videoFPS = 0
-        droppedFrames = 0
-        decoderDroppedFrames = 0
-        hwdecInfo = "-"
         layerColorspaceInfo = "-"
         mdkColorspaceInfo = "-"
-        backendName = "mpv"
         gyroComputeMs = 0
-        hwdecCheckTask?.cancel()
     }
 
     // MARK: - Gyro stabilization
@@ -199,15 +179,6 @@ final class MPVController: @unchecked Sendable {
         if gyroStabEnabled, let core = activeGyroCore {
             view.loadGyroCore(core)
         }
-        // After 1 s the file should be open; read the actual decoder for diagnostics.
-        hwdecCheckTask?.cancel()
-        if diagnosticsEnabled {
-            hwdecCheckTask = Task { @MainActor [weak self] in
-                try? await Task.sleep(for: .seconds(1))
-                guard !Task.isCancelled, let self, let v = self.nsView else { return }
-                self.hwdecInfo = v.hwdecCurrent
-            }
-        }
         isPolling = true
         schedulePoll()
     }
@@ -218,14 +189,13 @@ final class MPVController: @unchecked Sendable {
         }
     }
 
-    /// Runs on `pollQueue` (background). Reads all mpv properties off the main thread,
+    /// Runs on `pollQueue` (background). Reads properties off the main thread,
     /// then dispatches only the fast @Observable property assignments back to main.
     private func doPoll() {
         guard isPolling, let v = nsView else {
             isPolling = false
             return
         }
-        // mpv C API (mpv_get_property_string) is thread-safe per mpv documentation.
         // Playback state (always needed for control bar)
         let d       = v.videoDuration
         let eof     = v.isEOFReached
@@ -238,14 +208,11 @@ final class MPVController: @unchecked Sendable {
         let cv      = diag ? v.renderCV      : 0
         let stab    = diag ? v.renderStability : 1
         let vfps    = diag ? v.videoFPS      : 0
-        let dropped = diag ? v.droppedFrames : 0
-        let decDropped = diag ? v.decoderDroppedFrames : 0
         let gyroMs = diag ? (activeGyroCore?.lastFetchMs ?? 0) : 0
         let csInfo  = diag ? v.layerColorspaceInfo : "-"
         let mdkCS   = diag ? v.mdkColorspaceInfo : "-"
-        let backend = diag ? v.backendName : "mpv"
 
-        // Main thread only does fast property assignments — no mpv API calls here.
+        // Main thread only does fast property assignments.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             if d > 0 { self.duration = d }
@@ -261,12 +228,9 @@ final class MPVController: @unchecked Sendable {
                 self.renderCV = cv
                 self.renderStability = stab
                 if vfps > 0 { self.videoFPS = vfps }
-                self.droppedFrames = dropped
-                self.decoderDroppedFrames = decDropped
                 self.gyroComputeMs = gyroMs
                 self.layerColorspaceInfo = csInfo
                 self.mdkColorspaceInfo = mdkCS
-                self.backendName = backend
             }
         }
 
@@ -274,8 +238,6 @@ final class MPVController: @unchecked Sendable {
     }
 
     func stopPolling() {
-        hwdecCheckTask?.cancel()
-        hwdecCheckTask = nil
         isPolling = false
         stopGyroStab()
         nsView = nil
