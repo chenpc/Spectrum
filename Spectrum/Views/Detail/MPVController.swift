@@ -2,7 +2,7 @@ import SwiftUI
 
 // MARK: - MPVController
 
-/// Observable state for mpv playback; polled via background queue at ~4 Hz.
+/// Observable state for MDK playback; polled via background queue at ~4 Hz.
 ///
 /// Property reads (mpv C API calls) happen on `pollQueue` (background) to keep the
 /// main thread free for `layer.display()` calls — this is the primary fix for high CV.

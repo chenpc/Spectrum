@@ -5,7 +5,7 @@ import Darwin
 
 // MARK: - Display Peak Nits
 
-/// Query the display's actual peak HDR luminance via CoreDisplay private API (IINA approach).
+/// Query the display's actual peak HDR luminance via CoreDisplay private API.
 func displayPeakNits() -> Int {
     typealias FnCreateInfo = @convention(c) (UInt32) -> CFDictionary?
     guard let cd = dlopen("/System/Library/Frameworks/CoreDisplay.framework/CoreDisplay", RTLD_LAZY),
@@ -19,11 +19,7 @@ func displayPeakNits() -> Int {
 
 // MARK: - MPVOpenGLLayer
 
-/// CAOpenGLLayer that renders video via libmpv with per-content HDR configuration.
-///
-/// HDR pipeline — IINA-style PQ output:
-///   All HDR (HLG/HDR10/DV) → mpv target-trc=pq, CALayer = itur_2100_PQ
-///   SDR content / HDR toggle off → mpv target-trc=bt.709, CALayer = sRGB
+/// CAOpenGLLayer that renders video via MDK with per-content HDR configuration.
 class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
 
     private var cglPF:     CGLPixelFormatObj?
@@ -135,7 +131,7 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     // MARK: - OpenGL setup
 
     private func setupGL() {
-        // ── IINA-style: progressive pixel format selection ──────────────────
+        // ── Progressive pixel format selection ──────────────────
         let glVersions: [CGLOpenGLProfile] = [
             kCGLOGLPVersion_3_2_Core,
             kCGLOGLPVersion_Legacy
@@ -192,7 +188,7 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
         // EDR + initial PQ colorspace (prepareForContent will set dynamically)
         wantsExtendedDynamicRangeContent = true
 
-        // ── IINA-style: Context creation ──────────────────────────
+        // ── CGL Context creation ──────────────────────────
         var ctx: CGLContextObj?
         CGLCreateContext(pixelFormat, nil, &ctx)
         guard let context = ctx else {

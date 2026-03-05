@@ -158,7 +158,7 @@ final class GyroCore: @unchecked Sendable {
 
     // ── dylib search paths ────────────────────────────────────────────────────
 
-    /// Search for libgyrocore_c.dylib in order; same dlopen loop pattern as MPVLib.
+    /// Search for libgyrocore_c.dylib in order.
     private static let searchPaths: [String] = {
         var paths: [String] = []
         // 1. App bundle Resources/lib/ — distribution / sandbox-safe path

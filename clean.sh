@@ -34,28 +34,8 @@ else
     echo "  - gyro-wrapper/target/ (already clean)"
 fi
 
-# Downloaded pre-built deps (mpv-build)
-DEPS_DIR="$SCRIPT_DIR/mpv-build/deps"
-if [ -d "$DEPS_DIR" ]; then
-    SIZE=$(du -sh "$DEPS_DIR" | cut -f1)
-    rm -rf "$DEPS_DIR"
-    echo "  ✓ mpv-build/deps/ ($SIZE)"
-else
-    echo "  - mpv-build/deps/ (already clean)"
-fi
-
-# Downloaded dylibs
-LIB_DIR="$SCRIPT_DIR/Spectrum/Resources/lib"
-if [ -d "$LIB_DIR" ] && ls "$LIB_DIR"/*.dylib >/dev/null 2>&1; then
-    SIZE=$(du -sh "$LIB_DIR" | cut -f1)
-    rm -rf "$LIB_DIR"
-    echo "  ✓ Spectrum/Resources/lib/ ($SIZE)"
-else
-    echo "  - Spectrum/Resources/lib/ (already clean)"
-fi
-
 echo ""
 echo "Done. To rebuild:"
-echo "  ./build.sh     # Debug build (auto-downloads deps)"
+echo "  ./build.sh     # Debug build"
 echo "  ./test.sh      # Run tests"
 echo "  ./release.sh   # Release build + DMG"
