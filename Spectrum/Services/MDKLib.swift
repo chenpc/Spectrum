@@ -23,6 +23,12 @@ class LibMDK: @unchecked Sendable {
             "/usr/local/lib/mdk.framework/mdk",
         ]
         for path in searchPaths {
+            // Pre-load MDK's bundled ffmpeg so it wins over Homebrew's,
+            // avoiding duplicate ObjC class warnings (AVFFrameReceiver etc.)
+            let dir = (path as NSString).deletingLastPathComponent
+            let ffmpeg = dir + "/libffmpeg.8.dylib"
+            dlopen(ffmpeg, RTLD_LAZY | RTLD_GLOBAL)
+
             handle = dlopen(path, RTLD_LAZY | RTLD_GLOBAL)
             if handle != nil { loadedPath = path; break }
         }

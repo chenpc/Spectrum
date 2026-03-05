@@ -26,6 +26,8 @@ final class MPVController: @unchecked Sendable {
     private(set) var mdkColorspaceInfo: String = "-"
     /// Latest gyro computeMatrix time in ms (0 when gyro inactive).
     private(set) var gyroComputeMs: Double = 0
+    /// Gyro Stability Index: RMS inter-frame rotation angle (radians). Lower = more stable.
+    private(set) var gyroSI: Double = 0
 
     /// True when gyro stabilization is loaded and active.
     private(set) var gyroStabEnabled: Bool = false
@@ -42,31 +44,6 @@ final class MPVController: @unchecked Sendable {
     private var activeGyroFlowCore: GyroFlowCore?
     /// Convenience: whichever gyro core is currently active.
     private var activeGyro: GyroCoreProvider? { activeGyroCore ?? activeGyroFlowCore }
-    /// Debug lens profile summary for diagnostics badge.
-    var gyroLensInfo: String {
-        if let c = activeGyroCore {
-            let modelName: String
-            switch c.distortionModel {
-            case 1:  modelName = "OpenCVFish"
-            case 3:  modelName = "Poly3"
-            case 4:  modelName = "Poly5"
-            case 7:  modelName = "Sony"
-            default: modelName = "none(\(c.distortionModel))"
-            }
-            let k = (0..<4).map { String(format: "%.4f", c.distortionK[$0]) }.joined(separator: ",")
-            let f = String(format: "%.1f,%.1f", c.gyroFx, c.gyroFy)
-            let cx = String(format: "%.1f,%.1f", c.gyroCx, c.gyroCy)
-            let lca = String(format: "%.2f", c.lensCorrectionAmount)
-            let fov = String(format: "%.4f", c.frameFov)
-            let fovRange = String(format: "[%.4f-%.4f]", c.fovMin, c.fovMax)
-            let lens = c.lensProfileName
-            return "\(modelName) f=[\(f)] c=[\(cx)]\nk=[\(k)]\nlens=\(lens)\nlca=\(lca) fov=\(fov) \(fovRange)"
-        }
-        if let c = activeGyroFlowCore {
-            return c.lensInfo
-        }
-        return ""
-    }
     /// When true, the user pressed play while gyro was loading — defer actual unpause
     /// until gyro is ready. This prevents mpv from decoding (and dropping) frames
     /// while `waitingForGyro` suppresses draw().
@@ -75,6 +52,8 @@ final class MPVController: @unchecked Sendable {
     /// startPolling() will set waitingForGyro on the view when it connects.
     private var gyroLoadPending = false
 
+    /// Prevents repeated seek(0) when EOF persists across poll cycles.
+    private var didRewindOnEOF = false
     private weak var nsView: MPVPlayerNSView?
     /// Serial background queue: reads properties off the main thread.
     private let pollQueue = DispatchQueue(label: "com.spectrum.mpv.poll", qos: .utility)
@@ -106,6 +85,7 @@ final class MPVController: @unchecked Sendable {
         layerColorspaceInfo = "-"
         mdkColorspaceInfo = "-"
         gyroComputeMs = 0
+        didRewindOnEOF = false
     }
 
     // MARK: - Gyro stabilization
@@ -237,6 +217,7 @@ final class MPVController: @unchecked Sendable {
         if gyroStabEnabled, let core = activeGyro {
             view.loadGyroCore(core)
         }
+        view.startDisplayLink()
         isPolling = true
         schedulePoll()
     }
@@ -267,6 +248,7 @@ final class MPVController: @unchecked Sendable {
         let stab    = diag ? v.renderStability : 1
         let vfps    = diag ? v.videoFPS      : 0
         let gyroMs = diag ? (activeGyro?.lastFetchMs ?? 0) : 0
+        let si      = diag ? v.gyroSI : 0
         let csInfo  = diag ? v.layerColorspaceInfo : "-"
         let mdkCS   = diag ? v.mdkColorspaceInfo : "-"
 
@@ -277,7 +259,13 @@ final class MPVController: @unchecked Sendable {
             if eof {
                 self.currentTime = 0
                 self.isPlaying = false
+                if !self.didRewindOnEOF {
+                    self.didRewindOnEOF = true
+                    v.seek(to: 0)
+                    v.setPause(true)
+                }
             } else {
+                self.didRewindOnEOF = false
                 self.currentTime = ct
                 self.isPlaying = playing
             }
@@ -287,6 +275,7 @@ final class MPVController: @unchecked Sendable {
                 self.renderStability = stab
                 if vfps > 0 { self.videoFPS = vfps }
                 self.gyroComputeMs = gyroMs
+                self.gyroSI = si
                 self.layerColorspaceInfo = csInfo
                 self.mdkColorspaceInfo = mdkCS
             }
@@ -297,15 +286,13 @@ final class MPVController: @unchecked Sendable {
 
     func stopPolling() {
         isPolling = false
+        nsView?.stopDisplayLink()
         stopGyroStab()
         nsView = nil
     }
 
     func togglePlayPause() {
-        if !isPlaying, let v = nsView, v.isEOFReached {
-            // Replay from beginning
-            v.seek(to: 0)
-        }
+        didRewindOnEOF = false
         isPlaying.toggle()
         // Defer actual unpause while gyro is loading — mpv stays paused so no frames
         // are decoded (and dropped) while waitingForGyro suppresses draw().
@@ -318,6 +305,7 @@ final class MPVController: @unchecked Sendable {
     }
 
     func seek(to seconds: Double) {
+        didRewindOnEOF = false
         currentTime = seconds
         nsView?.seek(to: seconds)
     }

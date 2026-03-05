@@ -28,6 +28,14 @@
 //   src_x      = fx × (_x/_w) + cx
 //   src_y      = fy × (_y/_w) + cy
 
+/// Debug log — only prints in debug builds.
+macro_rules! dlog {
+    ($($arg:tt)*) => {
+        #[cfg(debug_assertions)]
+        eprintln!($($arg)*)
+    };
+}
+
 use gyroflow_core::{StabilizationManager, timestamp_at_frame};
 use gyroflow_core::stabilization::{ComputeParams, FrameTransform};
 use std::ffi::CStr;
@@ -144,14 +152,14 @@ pub extern "C" fn gyrocore_load(
             Config::default()
         };
         let eff_smooth = if cfg.smooth > 0.0 { cfg.smooth } else { 0.5 };
-        eprintln!("[gyrocore] Config: {:?}", cfg);
+        dlog!("[gyrocore] Config: {:?}", cfg);
 
         let canonical = std::fs::canonicalize(path_str)?;
         let url       = format!("file://{}", canonical.display());
         let mut file  = std::fs::File::open(&canonical)?;
         let file_size = file.metadata()?.len() as usize;
 
-        eprintln!("[gyrocore] Loading: {}", canonical.display());
+        dlog!("[gyrocore] Loading: {}", canonical.display());
         let stab = StabilizationManager::default();
 
         // Load lens profiles from external directory (e.g. Gyroflow.app/Contents/Resources)
@@ -161,7 +169,7 @@ pub extern "C" fn gyrocore_load(
             let _ = std::env::set_current_dir(dir);
             stab.lens_profile_db.write().load_all();
             if let Some(old) = old { let _ = std::env::set_current_dir(old); }
-            eprintln!("[gyrocore] Loaded lens profiles from {dir}");
+            dlog!("[gyrocore] Loaded lens profiles from {dir}");
         }
 
         stab.load_video_file(&mut file, file_size, &url, None, false)
@@ -174,7 +182,7 @@ pub extern "C" fn gyrocore_load(
         if frame_count == 0 || fps == 0.0 {
             return Err(format!("No gyro data (frame_count={frame_count}, fps={fps})").into());
         }
-        eprintln!("[gyrocore] {}×{} @ {:.3} fps, {} frames", vid_w, vid_h, fps, frame_count);
+        dlog!("[gyrocore] {}×{} @ {:.3} fps, {} frames", vid_w, vid_h, fps, frame_count);
 
         // ── Motion data diagnostics ────────────────────────────────────────
         let has_motion;
@@ -187,35 +195,35 @@ pub extern "C" fn gyrocore_load(
             let source = md.detected_source.as_deref().unwrap_or("unknown");
             let orientation = md.imu_orientation.as_deref().unwrap_or("none");
             let readout = md.frame_readout_time;
-            eprintln!("[gyrocore] ── Motion Data ──────────────────────────────");
-            eprintln!("[gyrocore]   source       : {}", source);
-            eprintln!("[gyrocore]   has_motion   : {}  raw_imu: {}  quaternions: {}", has_motion, raw_count, quat_count);
-            eprintln!("[gyrocore]   orientation  : {}", orientation);
-            eprintln!("[gyrocore]   readout_time : {:?}", readout);
+            dlog!("[gyrocore] ── Motion Data ──────────────────────────────");
+            dlog!("[gyrocore]   source       : {}", source);
+            dlog!("[gyrocore]   has_motion   : {}  raw_imu: {}  quaternions: {}", has_motion, raw_count, quat_count);
+            dlog!("[gyrocore]   orientation  : {}", orientation);
+            dlog!("[gyrocore]   readout_time : {:?}", readout);
             if raw_count > 0 {
                 // Print first & last few IMU samples
                 let first = &md.raw_imu[0];
                 let last  = &md.raw_imu[raw_count - 1];
-                eprintln!("[gyrocore]   imu[0]       : t={:.3}ms gyro={:?} accl={:?}", first.timestamp_ms, first.gyro, first.accl);
+                dlog!("[gyrocore]   imu[0]       : t={:.3}ms gyro={:?} accl={:?}", first.timestamp_ms, first.gyro, first.accl);
                 if raw_count > 1 {
                     let s1 = &md.raw_imu[1];
                     let dt = s1.timestamp_ms - first.timestamp_ms;
                     let sample_rate = if dt > 0.0 { 1000.0 / dt } else { 0.0 };
-                    eprintln!("[gyrocore]   imu[1]       : t={:.3}ms  (dt={:.3}ms → ~{:.0} Hz)", s1.timestamp_ms, dt, sample_rate);
+                    dlog!("[gyrocore]   imu[1]       : t={:.3}ms  (dt={:.3}ms → ~{:.0} Hz)", s1.timestamp_ms, dt, sample_rate);
                 }
-                eprintln!("[gyrocore]   imu[{}]  : t={:.3}ms gyro={:?}", raw_count-1, last.timestamp_ms, last.gyro);
+                dlog!("[gyrocore]   imu[{}]  : t={:.3}ms gyro={:?}", raw_count-1, last.timestamp_ms, last.gyro);
                 // Check for non-zero gyro values
                 let nonzero_count = md.raw_imu.iter()
                     .filter(|d| d.gyro.map_or(false, |g| g[0].abs() > 1e-6 || g[1].abs() > 1e-6 || g[2].abs() > 1e-6))
                     .count();
-                eprintln!("[gyrocore]   non-zero gyro: {}/{} ({:.1}%)", nonzero_count, raw_count, 100.0 * nonzero_count as f64 / raw_count as f64);
+                dlog!("[gyrocore]   non-zero gyro: {}/{} ({:.1}%)", nonzero_count, raw_count, 100.0 * nonzero_count as f64 / raw_count as f64);
                 // Max angular velocity
                 let max_gyro = md.raw_imu.iter()
                     .filter_map(|d| d.gyro)
                     .fold(0.0_f64, |mx, g| mx.max(g[0].abs()).max(g[1].abs()).max(g[2].abs()));
-                eprintln!("[gyrocore]   max |gyro|   : {:.4} rad/s ({:.2} deg/s)", max_gyro, max_gyro.to_degrees());
+                dlog!("[gyrocore]   max |gyro|   : {:.4} rad/s ({:.2} deg/s)", max_gyro, max_gyro.to_degrees());
             }
-            eprintln!("[gyrocore] ──────────────────────────────────────────────");
+            dlog!("[gyrocore] ──────────────────────────────────────────────");
         }
         if !has_motion {
             return Err("No motion/gyro data found in video".into());
@@ -228,7 +236,7 @@ pub extern "C" fn gyrocore_load(
 
         if auto_loaded {
             let l = stab.lens.read();
-            eprintln!("[gyrocore] ✅ Lens auto-detected: {} {} {}", l.camera_brand, l.camera_model, l.lens_model);
+            dlog!("[gyrocore] ✅ Lens auto-detected: {} {} {}", l.camera_brand, l.camera_model, l.lens_model);
         }
 
         // Load .gyroflow project file: extract lens calibration + sync offsets
@@ -247,7 +255,7 @@ pub extern "C" fn gyrocore_load(
                             match stab.load_lens_profile(&cs) {
                                 Ok(_) => {
                                     let l = stab.lens.read();
-                                    eprintln!("[gyrocore] ✅ Lens loaded from {}: {} {} {}",
+                                    dlog!("[gyrocore] ✅ Lens loaded from {}: {} {} {}",
                                               std::path::Path::new(lpath).file_name().unwrap_or_default().to_string_lossy(),
                                               l.camera_brand, l.camera_model, l.lens_model);
                                 }
@@ -261,7 +269,7 @@ pub extern "C" fn gyrocore_load(
                             .filter_map(|(k, v)| Some((k.parse().ok()?, v.as_f64()?)))
                             .collect();
                         if !map.is_empty() {
-                            eprintln!("[gyrocore] ✅ Loaded {} sync offsets from project file", map.len());
+                            dlog!("[gyrocore] ✅ Loaded {} sync offsets from project file", map.len());
                             project_offsets = Some(map);
                         }
                     }
@@ -284,11 +292,11 @@ pub extern "C" fn gyrocore_load(
                 stab.set_offset(ts, off);
             }
             let avg: f64 = offsets.values().sum::<f64>() / offsets.len() as f64;
-            eprintln!("[gyrocore]   sync offsets: {} points, avg={:.2}ms", offsets.len(), avg);
+            dlog!("[gyrocore]   sync offsets: {} points, avg={:.2}ms", offsets.len(), avg);
         } else if cfg.gyro_offset_ms.abs() > 0.001 {
             // Apply single global offset
             stab.set_offset(0, cfg.gyro_offset_ms);
-            eprintln!("[gyrocore]   gyro_offset  : {:.3} ms", cfg.gyro_offset_ms);
+            dlog!("[gyrocore]   gyro_offset  : {:.3} ms", cfg.gyro_offset_ms);
         }
 
         // ── IMU integration (must set BEFORE recompute_blocking) ────────────
@@ -363,16 +371,16 @@ pub extern "C" fn gyrocore_load(
             let md = gyro.file_metadata.read();
             md.imu_orientation.clone().unwrap_or_else(|| "unknown".into())
         };
-        eprintln!("[gyrocore] ── Settings ──────────────────────────────────");
-        eprintln!("[gyrocore]   integration: {} ({}) [{}]  orientation: {} [{}]",
+        dlog!("[gyrocore] ── Settings ──────────────────────────────────");
+        dlog!("[gyrocore]   integration: {} ({}) [{}]  orientation: {} [{}]",
                   actual_integration,
                   match actual_integration { 0 => "BuiltIn", 1 => "Complementary", 2 => "VQF", 3 => "SimpleGyro", 4 => "SimpleGyro+Accel", 5 => "Mahony", 6 => "Madgwick", _ => "?" },
                   if cfg.integration_method.is_some() { "manual" } else { "auto" },
                   actual_orientation,
                   if cfg.imu_orientation.is_some() { "manual" } else { "auto" });
-        eprintln!("[gyrocore]   method     : 1 (Default)  smoothness: {:.3}  per_axis: {}", eff_smooth, cfg.per_axis);
+        dlog!("[gyrocore]   method     : 1 (Default)  smoothness: {:.3}  per_axis: {}", eff_smooth, cfg.per_axis);
         if cfg.per_axis {
-            eprintln!("[gyrocore]   pitch={:.3}  yaw={:.3}  roll={:.3}", cfg.smoothness_pitch, cfg.smoothness_yaw, cfg.smoothness_roll);
+            dlog!("[gyrocore]   pitch={:.3}  yaw={:.3}  roll={:.3}", cfg.smoothness_pitch, cfg.smoothness_yaw, cfg.smoothness_roll);
         }
         let zoom_mode = match cfg.zooming_method {
             0 => "None".to_string(),
@@ -385,18 +393,18 @@ pub extern "C" fn gyrocore_load(
                 format!("Dynamic({}, {:.1}s)", algo, cfg.adaptive_zoom)
             }
         };
-        eprintln!("[gyrocore]   fov: {:.2}  lens_correction: {:.2}  zoom: {}  max_zoom: {:.0}%",
+        dlog!("[gyrocore]   fov: {:.2}  lens_correction: {:.2}  zoom: {}  max_zoom: {:.0}%",
                   cfg.fov, cfg.lens_correction_amount, zoom_mode, cfg.max_zoom);
         if cfg.horizon_lock_enabled {
-            eprintln!("[gyrocore]   horizon_lock: ON  amount={:.0}%  roll={:.1}°", cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll);
+            dlog!("[gyrocore]   horizon_lock: ON  amount={:.0}%  roll={:.1}°", cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll);
         }
-        eprintln!("[gyrocore]   readout_ms : {:.3} (metadata: {:?}, arg: {:.3})  gyro_offset: {:.3} ms",
+        dlog!("[gyrocore]   readout_ms : {:.3} (metadata: {:?}, arg: {:.3})  gyro_offset: {:.3} ms",
                   eff_readout, stab.gyro.read().file_metadata.read().frame_readout_time, cfg.readout_ms, cfg.gyro_offset_ms);
-        eprintln!("[gyrocore] ─────────────────────────────────────────────");
-        eprintln!("[gyrocore] Precomputing…");
+        dlog!("[gyrocore] ─────────────────────────────────────────────");
+        dlog!("[gyrocore] Precomputing…");
         let t0 = std::time::Instant::now();
         stab.recompute_blocking();
-        eprintln!("[gyrocore] Done in {:.1}s", t0.elapsed().as_secs_f64());
+        dlog!("[gyrocore] Done in {:.1}s", t0.elapsed().as_secs_f64());
 
         // ── Post-recompute diagnostics ─────────────────────────────────────
         {
@@ -405,10 +413,10 @@ pub extern "C" fn gyrocore_load(
             let smooth_count = gyro.smoothed_quaternions.len();
             let int_method = gyro.integration_method;
             let max_angles = gyro.max_angles;
-            eprintln!("[gyrocore] ── After recompute ──────────────────────────");
-            eprintln!("[gyrocore]   integration  : {} (0=Compl 1=Compl2 2=VQF)", int_method);
-            eprintln!("[gyrocore]   quaternions  : {}  smoothed: {}", quat_count, smooth_count);
-            eprintln!("[gyrocore]   max_angles   : pitch={:.1}° yaw={:.1}° roll={:.1}°", max_angles.0, max_angles.1, max_angles.2);
+            dlog!("[gyrocore] ── After recompute ──────────────────────────");
+            dlog!("[gyrocore]   integration  : {} (0=Compl 1=Compl2 2=VQF)", int_method);
+            dlog!("[gyrocore]   quaternions  : {}  smoothed: {}", quat_count, smooth_count);
+            dlog!("[gyrocore]   max_angles   : pitch={:.1}° yaw={:.1}° roll={:.1}°", max_angles.0, max_angles.1, max_angles.2);
             // Sample a few quaternion differences (raw vs smoothed) to see smoothing effect
             if quat_count > 0 && smooth_count > 0 {
                 let raw_keys: Vec<_> = gyro.quaternions.keys().collect();
@@ -420,34 +428,34 @@ pub extern "C" fn gyrocore_load(
                         if let Some((&_sk, &smooth_q)) = gyro.smoothed_quaternions.range(..=ts).next_back() {
                             let diff = raw_q.inverse() * smooth_q;
                             let angle_deg = diff.angle().to_degrees();
-                            eprintln!("[gyrocore]   q[{:.1}s] raw→smooth diff: {:.3}°",
+                            dlog!("[gyrocore]   q[{:.1}s] raw→smooth diff: {:.3}°",
                                       *ts as f64 / 1_000_000.0, angle_deg);
                         }
                     }
                 }
             }
-            eprintln!("[gyrocore] ────────────────────────────────────────────");
+            dlog!("[gyrocore] ────────────────────────────────────────────");
 
             // ── IBIS/OIS diagnostics ─────────────────────────────────────
             let md = gyro.file_metadata.read();
             let stab_count = md.camera_stab_data.len();
-            eprintln!("[gyrocore]   camera_stab_data: {} frames", stab_count);
+            dlog!("[gyrocore]   camera_stab_data: {} frames", stab_count);
             if stab_count > 0 {
                 let is0 = &md.camera_stab_data[0];
-                eprintln!("[gyrocore]   frame[0] sensor_size=({},{}), crop_area=({},{},{},{}), offset={:.1}",
+                dlog!("[gyrocore]   frame[0] sensor_size=({},{}), crop_area=({},{},{},{}), offset={:.1}",
                     is0.sensor_size.0, is0.sensor_size.1,
                     is0.crop_area.0, is0.crop_area.1, is0.crop_area.2, is0.crop_area.3,
                     is0.offset);
                 // Sample IBIS data at y=0 for first frame
                 if let Some(s) = is0.ibis_spline.interpolate(is0.offset) {
-                    eprintln!("[gyrocore]   frame[0] ibis(y=0): sx={:.3} sy={:.3} ra={:.3}", s.x, s.y, s.z);
+                    dlog!("[gyrocore]   frame[0] ibis(y=0): sx={:.3} sy={:.3} ra={:.3}", s.x, s.y, s.z);
                 } else {
-                    eprintln!("[gyrocore]   frame[0] ibis(y=0): None");
+                    dlog!("[gyrocore]   frame[0] ibis(y=0): None");
                 }
                 if let Some(o) = is0.ois_spline.interpolate(is0.offset) {
-                    eprintln!("[gyrocore]   frame[0] ois(y=0): ox={:.3} oy={:.3}", o.x, o.y);
+                    dlog!("[gyrocore]   frame[0] ois(y=0): ox={:.3} oy={:.3}", o.x, o.y);
                 } else {
-                    eprintln!("[gyrocore]   frame[0] ois(y=0): None");
+                    dlog!("[gyrocore]   frame[0] ois(y=0): None");
                 }
             }
         }
@@ -470,11 +478,11 @@ pub extern "C" fn gyrocore_load(
                 if fov < fov_min { fov_min = fov; }
                 if fov > fov_max { fov_max = fov; }
             }
-            eprintln!("[gyrocore] ── FOV range (adaptive zoom) ────────────────");
-            eprintln!("[gyrocore]   fov min={:.6}  max={:.6}  range={:.6}  ({:.2}%)",
+            dlog!("[gyrocore] ── FOV range (adaptive zoom) ────────────────");
+            dlog!("[gyrocore]   fov min={:.6}  max={:.6}  range={:.6}  ({:.2}%)",
                       fov_min, fov_max, fov_max - fov_min,
                       (fov_max - fov_min) / fov_min * 100.0);
-            eprintln!("[gyrocore] ──────────────────────────────────────────────");
+            dlog!("[gyrocore] ──────────────────────────────────────────────");
         }
 
         let ts0 = timestamp_at_frame(0, scaled_fps);
@@ -482,8 +490,8 @@ pub extern "C" fn gyrocore_load(
         let kp  = &ft0.kernel_params;
 
         let mut dm = kp.distortion_model as i32;
-        eprintln!("[gyrocore] distortion_model={} r_limit={:.4}", dm, kp.r_limit);
-        eprintln!("[gyrocore] k[0..7]=[{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}]",
+        dlog!("[gyrocore] distortion_model={} r_limit={:.4}", dm, kp.r_limit);
+        dlog!("[gyrocore] k[0..7]=[{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6},{:.6}]",
                   kp.k[0], kp.k[1], kp.k[2], kp.k[3], kp.k[4], kp.k[5], kp.k[6], kp.k[7]);
 
         // Check lens profile note for in-camera distortion compensation.
@@ -491,10 +499,10 @@ pub extern "C" fn gyrocore_load(
         // in the output video — applying distort_point would re-distort the image.
         let lens_note = stab.lens.read().note.clone();
         if !lens_note.is_empty() {
-            eprintln!("[gyrocore] lens note: {}", lens_note);
+            dlog!("[gyrocore] lens note: {}", lens_note);
         }
         if lens_note.contains("Distortion comp.: On") {
-            eprintln!("[gyrocore] in-camera distortion compensation detected → forcing identity distortion");
+            dlog!("[gyrocore] in-camera distortion compensation detected → forcing identity distortion");
             dm = 0; // None — skip distort_point in shader
         }
 
@@ -511,7 +519,7 @@ pub extern "C" fn gyrocore_load(
                 format!("{} | {}x{} | {} | id={}", name, cw, ch, setting, id)
             }
         };
-        eprintln!("[gyrocore] lens_info: \"{}\"", lens_info);
+        dlog!("[gyrocore] lens_info: \"{}\"", lens_info);
 
         let state = Box::new(State {
             frame_count,
@@ -526,7 +534,7 @@ pub extern "C" fn gyrocore_load(
             lens_info,
             compute_params,
         });
-        eprintln!("[gyrocore] f=[{:.2},{:.2}] c=[{:.2},{:.2}] rows={}",
+        dlog!("[gyrocore] f=[{:.2},{:.2}] c=[{:.2},{:.2}] rows={}",
                   state.fx, state.fy, state.cx, state.cy, state.row_count);
 
         Ok(Box::into_raw(state))
@@ -632,21 +640,21 @@ pub unsafe extern "C" fn gyrocore_get_frame(
     let diag_n = DIAG_COUNT.load(std::sync::atomic::Ordering::Relaxed);
     if diag_n < 5 {
         DIAG_COUNT.store(diag_n + 1, std::sync::atomic::Ordering::Relaxed);
-        eprintln!("[gyrocore] frame{} f=[{:.4},{:.4}] c=[{:.4},{:.4}] k=[{:.8},{:.8},{:.8},{:.8}] fov={:.6}",
+        dlog!("[gyrocore] frame{} f=[{:.4},{:.4}] c=[{:.4},{:.4}] k=[{:.8},{:.8},{:.8},{:.8}] fov={:.6}",
                   frame_idx, kp.f[0], kp.f[1], kp.c[0], kp.c[1],
                   kp.k[0], kp.k[1], kp.k[2], kp.k[3], kp.fov);
         if frame_idx == 0 {
             if let Some(m0) = ft.matrices.first() {
-                eprintln!("[gyrocore] frame0 row0 mat3x3: [{:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}]",
+                dlog!("[gyrocore] frame0 row0 mat3x3: [{:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}]",
                           m0[0], m0[1], m0[2], m0[3], m0[4], m0[5], m0[6], m0[7], m0[8]);
-                eprintln!("[gyrocore] frame0 row0 IBIS: sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
+                dlog!("[gyrocore] frame0 row0 IBIS: sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
                           m0[9], m0[10], m0[11], m0[12], m0[13]);
             }
             let mid = s.row_count / 2;
             if let Some(mm) = ft.matrices.get(mid) {
-                eprintln!("[gyrocore] frame0 row{} mat3x3: [{:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}]",
+                dlog!("[gyrocore] frame0 row{} mat3x3: [{:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}; {:.6},{:.6},{:.6}]",
                           mid, mm[0], mm[1], mm[2], mm[3], mm[4], mm[5], mm[6], mm[7], mm[8]);
-                eprintln!("[gyrocore] frame0 row{} IBIS: sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
+                dlog!("[gyrocore] frame0 row{} IBIS: sx={:.3} sy={:.3} ra={:.6} ox={:.3} oy={:.3}",
                           mid, mm[9], mm[10], mm[11], mm[12], mm[13]);
             }
         }
@@ -780,6 +788,14 @@ impl GyroflowState {
             self.k  = kp.k;
             self.distortion_model = kp.distortion_model as i32;
             self.r_limit = kp.r_limit;
+
+            // Sony cameras with "Distortion Comp.: On" already correct lens distortion
+            // in the output video — applying distort_point would re-distort the image.
+            let lens_note = self.stab.lens.read().note.clone();
+            if lens_note.contains("Distortion comp.: On") {
+                dlog!("[gyroflow] in-camera distortion compensation detected → forcing identity distortion");
+                self.distortion_model = 0;
+            }
         }
     }
 }
@@ -797,7 +813,7 @@ pub extern "C" fn gyroflow_create(lens_db_dir: *const c_char) -> *mut GyroflowSt
             let _ = std::env::set_current_dir(dir);
             stab.lens_profile_db.write().load_all();
             if let Some(old) = old { let _ = std::env::set_current_dir(old); }
-            eprintln!("[gyroflow] Loaded lens profiles from {dir}");
+            dlog!("[gyroflow] Loaded lens profiles from {dir}");
         }
     }
 
@@ -826,7 +842,7 @@ pub extern "C" fn gyroflow_load_video(
         let mut file = std::fs::File::open(&canonical)?;
         let file_size = file.metadata()?.len() as usize;
 
-        eprintln!("[gyroflow] Loading: {}", canonical.display());
+        dlog!("[gyroflow] Loading: {}", canonical.display());
         s.stab.load_video_file(&mut file, file_size, &url, None, false)
             .map_err(|e| format!("load_video_file: {e:?}"))?;
 
@@ -838,13 +854,13 @@ pub extern "C" fn gyroflow_load_video(
         s.vid_h = vid_h;
         s.fps = fps;
         s.frame_count = frame_count;
-        eprintln!("[gyroflow] {}×{} @ {:.3} fps, {} frames", vid_w, vid_h, fps, frame_count);
+        dlog!("[gyroflow] {}×{} @ {:.3} fps, {} frames", vid_w, vid_h, fps, frame_count);
         Ok(())
     }));
     match res {
         Ok(Ok(())) => 0,
-        Ok(Err(e)) => { eprintln!("[gyroflow] load_video error: {e}"); -1 }
-        Err(_) => { eprintln!("[gyroflow] load_video panicked"); -1 }
+        Ok(Err(e)) => { dlog!("[gyroflow] load_video error: {e}"); -1 }
+        Err(_) => { dlog!("[gyroflow] load_video panicked"); -1 }
     }
 }
 
@@ -864,17 +880,17 @@ pub extern "C" fn gyroflow_load_lens(
         if let Some(cal) = json.get("calibration_data") {
             let cal_str = serde_json::to_string(cal)?;
             s.stab.load_lens_profile(&cal_str);
-            eprintln!("[gyroflow] Loaded lens from calibration_data in {path_str}");
+            dlog!("[gyroflow] Loaded lens from calibration_data in {path_str}");
         } else {
             let cal_str = serde_json::to_string(&json)?;
             s.stab.load_lens_profile(&cal_str);
-            eprintln!("[gyroflow] Loaded lens profile: {path_str}");
+            dlog!("[gyroflow] Loaded lens profile: {path_str}");
         }
         Ok(())
     }));
     match res {
         Ok(Ok(())) => 0,
-        Ok(Err(e)) => { eprintln!("[gyroflow] load_lens error: {e}"); -1 }
+        Ok(Err(e)) => { dlog!("[gyroflow] load_lens error: {e}"); -1 }
         Err(_) => -1
     }
 }
@@ -914,7 +930,7 @@ pub extern "C" fn gyroflow_set_param(
         "video_speed" => { stab.params.write().video_speed = value; }
         "gyro_offset" => { stab.set_offset(0, value); }
         _ => {
-            eprintln!("[gyroflow] Unknown param: {k}");
+            dlog!("[gyroflow] Unknown param: {k}");
             return -1;
         }
     }
@@ -937,7 +953,7 @@ pub extern "C" fn gyroflow_set_param_str(
             s.stab.set_imu_orientation(v.to_string());
         }
         _ => {
-            eprintln!("[gyroflow] Unknown string param: {k}");
+            dlog!("[gyroflow] Unknown string param: {k}");
             return -1;
         }
     }
@@ -966,12 +982,12 @@ pub extern "C" fn gyroflow_recompute(handle: *mut GyroflowState) -> c_int {
         s.compute_params = Some(cp);
         s.update_from_compute_params();
 
-        eprintln!("[gyroflow] Recomputed: row_count={} scaled_fps={:.3} dist_model={}",
+        dlog!("[gyroflow] Recomputed: row_count={} scaled_fps={:.3} dist_model={}",
                   s.row_count, s.scaled_fps, s.distortion_model);
     }));
     match res {
         Ok(()) => 0,
-        Err(_) => { eprintln!("[gyroflow] recompute panicked"); -1 }
+        Err(_) => { dlog!("[gyroflow] recompute panicked"); -1 }
     }
 }
 

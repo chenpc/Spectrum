@@ -466,9 +466,9 @@ struct PhotoDetailView: View {
                     }
                 }
                 if mpvController.gyroAvailable {
-                    togglePill(label: "GYRO",
+                    togglePill(label: mpvController.gyroStabEnabled ? gyroMethod.uppercased() : "GYRO OFF",
                                active: mpvController.gyroStabEnabled, color: .green) {
-                        toggleGyroStab()
+                        cycleGyroMethod()
                     }
                 }
             }
@@ -486,16 +486,12 @@ struct PhotoDetailView: View {
                 }
                 Text("CV \(String(format: "%.3f", mpvController.renderCV))")
                     .foregroundStyle(dotColor)
-            }
-
-            if mpvController.gyroStabEnabled {
-                Text("gyro \(String(format: "%.2f", mpvController.gyroComputeMs))ms")
-                    .foregroundStyle(.secondary)
-                if !mpvController.gyroLensInfo.isEmpty {
-                    Text(mpvController.gyroLensInfo)
-                        .foregroundStyle(.secondary)
+                if mpvController.gyroStabEnabled && mpvController.gyroSI > 0 {
+                    Text(String(format: "SI %.4f", mpvController.gyroSI))
+                        .foregroundStyle(.cyan)
                 }
             }
+
         }
         .font(.caption2.monospacedDigit())
         .foregroundStyle(.secondary)
@@ -564,10 +560,24 @@ struct PhotoDetailView: View {
         }
     }
 
-    private func toggleGyroStab() {
+    /// Cycle: spectrum → gyroflow → off → spectrum …
+    private func cycleGyroMethod() {
         if mpvController.gyroStabEnabled {
-            mpvController.stopGyroStab()
+            if gyroMethod == "spectrum" {
+                // spectrum → gyroflow
+                mpvController.stopGyroStab()
+                gyroMethod = "gyroflow"
+                let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
+                let lens = gyroLensPath.isEmpty ? nil : gyroLensPath
+                startGyro(videoPath: photo.filePath, fps: fps,
+                          config: buildGyroConfig(), lensPath: lens)
+            } else {
+                // gyroflow → off
+                mpvController.stopGyroStab()
+            }
         } else {
+            // off → spectrum
+            gyroMethod = "spectrum"
             let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
             let lens = gyroLensPath.isEmpty ? nil : gyroLensPath
             startGyro(videoPath: photo.filePath, fps: fps,
