@@ -1,15 +1,8 @@
-// testmpv — Sony HLG 亮度 + 靜態圖片測試 App (仿照 IINA 架構)
+// testmpv — Sony HLG 亮度 + 靜態圖片測試 App (MDK backend)
 //
 // Build: bash build.sh
 // Run:   ./testmpv /path/to/sony-hlg.mp4
 //        ./testmpv /path/to/photo.HIF
-//
-// mpv log: /tmp/testmpv.log  (詳細解碼資訊)
-
-// 抑制 OpenGL 棄用警告（我們刻意使用，因為 mpv 也用 OpenGL）
-#if canImport(OpenGL)
-// suppressed by -Xfrontend -disable-safety-checks if needed
-#endif
 
 import Cocoa
 import OpenGL.GL3
@@ -59,6 +52,7 @@ struct GyroConfig: Codable {
     var smoothnessPitch:      Double = 0
     var smoothnessYaw:        Double = 0
     var smoothnessRoll:       Double = 0
+    var lensDbDir:            String? = nil
 
     enum CodingKeys: String, CodingKey {
         case readoutMs            = "readout_ms"
@@ -82,11 +76,12 @@ struct GyroConfig: Codable {
         case smoothnessPitch      = "smoothness_pitch"
         case smoothnessYaw        = "smoothness_yaw"
         case smoothnessRoll       = "smoothness_roll"
+        case lensDbDir            = "lens_db_dir"
     }
 }
 
 // GyroCore: in-process gyroflow-core 矩陣計算
-// 用 dlopen 載入 libgyrocore_c.dylib（與 libmpv 相同模式），無 subprocess
+// 用 dlopen 載入 libgyrocore_c.dylib，無 subprocess
 class GyroCore {
     // ── C function pointer types (matches Spectrum/Services/GyroCore.swift) ──
     private typealias FnLoad      = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
@@ -335,200 +330,253 @@ class GyroCore {
 }
 
 // ════════════════════════════════════════════════════════
-// MARK: - mpv C API 型別定義
+// MARK: - GyroCoreProvider Protocol
 // ════════════════════════════════════════════════════════
 
-// mpv_render_param_type
-private let RC_API_TYPE: Int32    = 1
-private let RC_OGL_INIT: Int32    = 2
-private let RC_OGL_FBO: Int32     = 3
-private let RC_FLIP_Y: Int32      = 4
-private let RC_DEPTH: Int32       = 5
-private let RC_ADVANCED: Int32    = 10
-private let RC_BLOCK_FOR_TARGET: Int32 = 12
-
-// mpv_event_id
-private let EV_NONE: Int32          = 0
-private let EV_SHUTDOWN: Int32      = 1
-private let EV_FILE_LOADED: Int32   = 8
-private let EV_END_FILE: Int32      = 9
-private let EV_VIDEO_RECONFIG: Int32 = 17
-private let EV_PROP_CHANGE: Int32   = 22
-
-// mpv_end_file_reason
-private let END_EOF: Int32   = 0
-private let END_ERROR: Int32 = 3
-
-// mpv_event_end_file: { int reason; int error; }
-private struct MPVEndFile { var reason: Int32; var error: Int32 }
-
-// mpv_format
-private let FMT_STRING: Int32 = 1
-
-// mpv_render_param: { int type; [4-byte pad]; void *data }
-// LayoutL Int32(4B) + _pad(4B) + pointer(8B) = 16B，與 C struct 對齊
-private struct RParam {
-    var type: Int32
-    private var _pad: Int32 = 0
-    var data: UnsafeMutableRawPointer?
-    init(_ t: Int32, _ d: UnsafeMutableRawPointer?) { type = t; _pad = 0; data = d }
-    init() { type = 0; _pad = 0; data = nil }
+protocol GyroCoreProvider: AnyObject {
+    var isReady: Bool { get }
+    var gyroVideoW: Float { get }
+    var gyroVideoH: Float { get }
+    var gyroFps: Double { get }
+    var frameCount: Int { get }
+    func computeMatrixAtTime(timeSec: Double) -> (UnsafeBufferPointer<Float>, Bool)?
+    var frameFx: Float { get }
+    var frameFy: Float { get }
+    var frameCx: Float { get }
+    var frameCy: Float { get }
+    var frameK: [Float] { get }
+    var distortionK: [Float] { get }
+    var distortionModel: Int32 { get }
+    var rLimit: Float { get }
+    var frameFov: Float { get }
+    var lensCorrectionAmount: Float { get }
+    var lastFetchMs: Double { get }
+    func stop()
 }
 
-// mpv_render_frame_info: { uint64_t flags; int64_t target_time; }
-private struct RenderFrameInfo {
-    var flags: UInt64 = 0
-    var targetTime: Int64 = 0   // microseconds, same time base as mpv_get_time_us()
-}
-private let RC_NEXT_FRAME_INFO: Int32 = 11
-private let FRAME_INFO_PRESENT:     UInt64 = 1 << 0
-private let FRAME_INFO_REDRAW:      UInt64 = 1 << 1
-private let FRAME_INFO_REPEAT:      UInt64 = 1 << 2
-
-// mpv_opengl_fbo
-private struct OGLFBO {
-    var fbo: Int32; var w: Int32; var h: Int32; var internal_format: Int32
-}
-
-// mpv_opengl_init_params
-private struct OGLInit {
-    var get_proc_address: (@convention(c) (UnsafeMutableRawPointer?,
-                                           UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?)?
-    var get_proc_address_ctx: UnsafeMutableRawPointer?
-}
-
-// mpv_event
-private struct MPVEvent {
-    var event_id: Int32; var error: Int32; var reply_userdata: UInt64
-    var data: UnsafeMutableRawPointer?
-}
-
-// mpv_event_property
-private struct MPVEventProp {
-    var name: UnsafePointer<CChar>?; var format: Int32; var data: UnsafeMutableRawPointer?
-}
+extension GyroCore: GyroCoreProvider {}
 
 // ════════════════════════════════════════════════════════
-// MARK: - LibMPV
+// MARK: - GyroFlowCore (incremental gyroflow API)
 // ════════════════════════════════════════════════════════
 
-// OpenGL proc address lookup
-private let glLibHandle: UnsafeMutableRawPointer? =
-    dlopen("/System/Library/Frameworks/OpenGL.framework/OpenGL", RTLD_LAZY)
+class GyroFlowCore: GyroCoreProvider {
+    private typealias FnCreate     = @convention(c) (UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
+    private typealias FnLoadVideo  = @convention(c) (UnsafeMutableRawPointer, UnsafePointer<CChar>) -> Int32
+    private typealias FnLoadLens   = @convention(c) (UnsafeMutableRawPointer, UnsafePointer<CChar>) -> Int32
+    private typealias FnSetParam   = @convention(c) (UnsafeMutableRawPointer, UnsafePointer<CChar>, Double) -> Int32
+    private typealias FnSetParamS  = @convention(c) (UnsafeMutableRawPointer, UnsafePointer<CChar>, UnsafePointer<CChar>) -> Int32
+    private typealias FnRecompute  = @convention(c) (UnsafeMutableRawPointer) -> Int32
+    private typealias FnGetFrame   = @convention(c) (UnsafeMutableRawPointer, Double, UnsafeMutablePointer<Float>) -> Int32
+    private typealias FnGetParams  = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
+    private typealias FnFree       = @convention(c) (UnsafeMutableRawPointer) -> Void
 
-private func glProcAddr(_ ctx: UnsafeMutableRawPointer?,
-                        _ name: UnsafePointer<CChar>?) -> UnsafeMutableRawPointer? {
-    guard let name else { return nil }
-    return dlsym(glLibHandle, name)
-}
+    private(set) var frameCount:  Int    = 0
+    private(set) var rowCount:    Int    = 1
+    private(set) var gyroFx:      Float  = 0
+    private(set) var gyroFy:      Float  = 0
+    private(set) var gyroCx:      Float  = 0
+    private(set) var gyroCy:      Float  = 0
+    private(set) var gyroVideoW:  Float  = 0
+    private(set) var gyroVideoH:  Float  = 0
+    private(set) var gyroFps:     Double = 30
+    private(set) var distortionK: [Float] = [Float](repeating: 0, count: 12)
+    private(set) var distortionModel: Int32 = 0
+    private(set) var rLimit:      Float  = 0
+    private(set) var frameFx: Float = 0
+    private(set) var frameFy: Float = 0
+    private(set) var frameCx: Float = 0
+    private(set) var frameCy: Float = 0
+    private(set) var frameK: [Float] = [0, 0, 0, 0]
+    private(set) var frameFov: Float = 1.0
+    private(set) var lensCorrectionAmount: Float = 1.0
+    private(set) var lastFetchMs: Double = 0
 
-private class LibMPV {
-    static let shared = LibMPV()
-    private var h: UnsafeMutableRawPointer?
-    private(set) var ok = false
+    private var _isReady = false
+    private let readyLock = NSLock()
+    var isReady: Bool { readyLock.lock(); defer { readyLock.unlock() }; return _isReady }
 
-    // @convention(c) 只能使用 ObjC 可表達的型別（OpaquePointer, UnsafePointer<CChar>, UnsafeMutableRawPointer 等）
-    typealias FCreate   = @convention(c) () -> OpaquePointer?
-    typealias FInit     = @convention(c) (OpaquePointer) -> Int32
-    typealias FSetStr   = @convention(c) (OpaquePointer, UnsafePointer<CChar>, UnsafePointer<CChar>) -> Int32
-    typealias FGetStr   = @convention(c) (OpaquePointer, UnsafePointer<CChar>) -> UnsafeMutablePointer<CChar>?
-    typealias FCmd      = @convention(c) (OpaquePointer, UnsafePointer<UnsafePointer<CChar>?>) -> Int32
-    typealias FObs      = @convention(c) (OpaquePointer, UInt64, UnsafePointer<CChar>, Int32) -> Int32
-    // FWait 回傳 RawPointer，呼叫端自行轉型為 UnsafeMutablePointer<MPVEvent>
-    typealias FWait     = @convention(c) (OpaquePointer, Double) -> UnsafeMutableRawPointer
-    typealias FWakeCb   = @convention(c) (OpaquePointer,
-                                          (@convention(c) (UnsafeMutableRawPointer?) -> Void)?,
-                                          UnsafeMutableRawPointer?) -> Void
-    typealias FDestroy  = @convention(c) (OpaquePointer) -> Void
-    typealias FFree     = @convention(c) (UnsafeMutableRawPointer?) -> Void
-    // rcCreate / rcRender 使用 RawPointer 避免 ObjC 橋接問題
-    typealias FRCCreate = @convention(c) (UnsafeMutableRawPointer,
-                                          OpaquePointer,
-                                          UnsafeMutableRawPointer) -> Int32
-    typealias FRCCb     = @convention(c) (OpaquePointer,
-                                          (@convention(c) (UnsafeMutableRawPointer?) -> Void)?,
-                                          UnsafeMutableRawPointer?) -> Void
-    typealias FRCRender  = @convention(c) (OpaquePointer, UnsafeMutableRawPointer) -> Int32
-    typealias FRCSwap    = @convention(c) (OpaquePointer) -> Void
-    typealias FRCFree    = @convention(c) (OpaquePointer) -> Void
-    typealias FRCUpdate  = @convention(c) (OpaquePointer) -> UInt64
-    // mpv_render_context_get_info(ctx, mpv_render_param{type,data}) — struct passed by value
-    // arm64 ABI: 16-byte struct → first 8 bytes (type+pad) in x1, next 8 bytes (data*) in x2
-    typealias FRCGetInfo = @convention(c) (OpaquePointer, Int64, UnsafeMutableRawPointer?) -> Int32
-    typealias FGetTimeUs = @convention(c) (OpaquePointer) -> Int64
+    private let coreLock = NSLock()
+    private let ioQueue = DispatchQueue(label: "gyroflow.io", qos: .userInitiated)
+    private var libHandle: UnsafeMutableRawPointer?
+    private var coreHandle: UnsafeMutableRawPointer?
+    private var fnCreate:     FnCreate?
+    private var fnLoadVideo:  FnLoadVideo?
+    private var fnLoadLens:   FnLoadLens?
+    private var fnSetParam:   FnSetParam?
+    private var fnSetParamS:  FnSetParamS?
+    private var fnRecompute:  FnRecompute?
+    private var fnGetFrame:   FnGetFrame?
+    private var fnGetParams:  FnGetParams?
+    private var fnFree:       FnFree?
+    private var matBuf: [Float] = []
+    private var matsBuf: [Float] = []
+    private var cachedFrameIdx: Int = -1
 
-    var create:    FCreate?;    var initialize: FInit?;    var setStr:  FSetStr?
-    var getStr:    FGetStr?;    var command:    FCmd?;     var observe: FObs?
-    var waitEvent: FWait?;      var setWakeCb:  FWakeCb?
-    var destroy:   FDestroy?;   var free:       FFree?
-    var rcCreate:  FRCCreate?;  var rcSetCb:    FRCCb?
-    var rcRender:  FRCRender?;  var rcSwap:     FRCSwap?; var rcFree: FRCFree?
-    var rcUpdate:  FRCUpdate?
-    var rcGetInfo: FRCGetInfo?; var getTimeUs:  FGetTimeUs?
+    func start(videoPath: String, lensPath: String? = nil,
+               config: GyroConfig = GyroConfig(),
+               onReady: @escaping () -> Void,
+               onError: @escaping (String) -> Void) {
+        ioQueue.async { [weak self] in
+            guard let self else { return }
+            let path = GyroCore.dylibPath
+            self.libHandle = dlopen(path, RTLD_NOW | RTLD_LOCAL)
+            guard let lib = self.libHandle else {
+                DispatchQueue.main.async { onError("dlopen failed: \(String(cString: dlerror()))") }
+                return
+            }
+            self.fnCreate    = dlsym(lib, "gyroflow_create").map    { unsafeBitCast($0, to: FnCreate.self) }
+            self.fnLoadVideo = dlsym(lib, "gyroflow_load_video").map { unsafeBitCast($0, to: FnLoadVideo.self) }
+            self.fnLoadLens  = dlsym(lib, "gyroflow_load_lens").map  { unsafeBitCast($0, to: FnLoadLens.self) }
+            self.fnSetParam  = dlsym(lib, "gyroflow_set_param").map  { unsafeBitCast($0, to: FnSetParam.self) }
+            self.fnSetParamS = dlsym(lib, "gyroflow_set_param_str").map { unsafeBitCast($0, to: FnSetParamS.self) }
+            self.fnRecompute = dlsym(lib, "gyroflow_recompute").map  { unsafeBitCast($0, to: FnRecompute.self) }
+            self.fnGetFrame  = dlsym(lib, "gyroflow_get_frame").map  { unsafeBitCast($0, to: FnGetFrame.self) }
+            self.fnGetParams = dlsym(lib, "gyroflow_get_params").map { unsafeBitCast($0, to: FnGetParams.self) }
+            self.fnFree      = dlsym(lib, "gyroflow_free").map       { unsafeBitCast($0, to: FnFree.self) }
 
-    func load() -> Bool {
-        let paths = [
-            "/opt/homebrew/lib/libmpv.dylib",       // Homebrew 0.41.0 (supports rcGetInfo)
-            "/Applications/IINA.app/Contents/Frameworks/libmpv.2.dylib",
-            "/Applications/IINA.app/Contents/Frameworks/libmpv.dylib",
-            "/usr/local/lib/libmpv.dylib",
-        ]
-        for p in paths {
-            h = dlopen(p, RTLD_LAZY | RTLD_GLOBAL)
-            if h != nil { print("[libmpv] ✅ Loaded: \(p)"); break }
-        }
-        guard let h else {
-            print("[libmpv] ❌ libmpv not found. Install IINA from https://iina.io")
-            return false
-        }
+            guard let fnCreate = self.fnCreate else {
+                DispatchQueue.main.async { onError("gyroflow_create not found") }
+                return
+            }
+            let handle: UnsafeMutableRawPointer?
+            if let dir = config.lensDbDir {
+                handle = dir.withCString { fnCreate($0) }
+            } else {
+                handle = fnCreate(nil)
+            }
+            guard let handle else {
+                DispatchQueue.main.async { onError("gyroflow_create returned NULL") }
+                return
+            }
+            self.coreHandle = handle
 
-        // 顯式標記型別，幫助 Swift 推斷 generic 參數
-        create    = dlsym(h, "mpv_create")              .map { unsafeBitCast($0, to: FCreate.self)   }
-        initialize = dlsym(h, "mpv_initialize")         .map { unsafeBitCast($0, to: FInit.self)     }
-        setStr    = dlsym(h, "mpv_set_option_string")   .map { unsafeBitCast($0, to: FSetStr.self)   }
-        getStr    = dlsym(h, "mpv_get_property_string") .map { unsafeBitCast($0, to: FGetStr.self)   }
-        command   = dlsym(h, "mpv_command")             .map { unsafeBitCast($0, to: FCmd.self)      }
-        observe   = dlsym(h, "mpv_observe_property")    .map { unsafeBitCast($0, to: FObs.self)      }
-        waitEvent = dlsym(h, "mpv_wait_event")          .map { unsafeBitCast($0, to: FWait.self)     }
-        setWakeCb = dlsym(h, "mpv_set_wakeup_callback") .map { unsafeBitCast($0, to: FWakeCb.self)   }
-        destroy   = dlsym(h, "mpv_terminate_destroy")   .map { unsafeBitCast($0, to: FDestroy.self)  }
-        free      = dlsym(h, "mpv_free")                .map { unsafeBitCast($0, to: FFree.self)     }
-        rcCreate  = dlsym(h, "mpv_render_context_create")             .map { unsafeBitCast($0, to: FRCCreate.self) }
-        rcSetCb   = dlsym(h, "mpv_render_context_set_update_callback") .map { unsafeBitCast($0, to: FRCCb.self)    }
-        rcRender  = dlsym(h, "mpv_render_context_render")             .map { unsafeBitCast($0, to: FRCRender.self) }
-        rcSwap    = dlsym(h, "mpv_render_context_report_swap")        .map { unsafeBitCast($0, to: FRCSwap.self)  }
-        rcFree    = dlsym(h, "mpv_render_context_free")               .map { unsafeBitCast($0, to: FRCFree.self)  }
-        rcUpdate  = dlsym(h, "mpv_render_context_update")            .map { unsafeBitCast($0, to: FRCUpdate.self) }
-        rcGetInfo = dlsym(h, "mpv_render_context_get_info")           .map { unsafeBitCast($0, to: FRCGetInfo.self) }
-        getTimeUs = dlsym(h, "mpv_get_time_us")                      .map { unsafeBitCast($0, to: FGetTimeUs.self) }
-
-        ok = create != nil
-        if ok {
-            print("[libmpv] rcGetInfo=\(rcGetInfo != nil ? "✅" : "❌")  getTimeUs=\(getTimeUs != nil ? "✅" : "❌")")
-        }
-        return ok
-    }
-
-    // 便利：取得字串屬性（呼叫端不需要手動 free）
-    func getString(_ ctx: OpaquePointer, _ key: String) -> String? {
-        guard let fn = getStr else { return nil }
-        return key.withCString { kPtr in
-            guard let ptr = fn(ctx, kPtr) else { return nil }
-            let s = String(cString: ptr)
-            free?(ptr)
-            return s
+            let rc1 = videoPath.withCString { self.fnLoadVideo?(handle, $0) ?? -1 }
+            guard rc1 == 0 else {
+                DispatchQueue.main.async { onError("gyroflow_load_video failed") }
+                return
+            }
+            if let lensPath, let fn = self.fnLoadLens {
+                let _ = lensPath.withCString { fn(handle, $0) }
+            }
+            self.applyConfig(config, handle: handle)
+            let rc3 = self.fnRecompute?(handle) ?? -1
+            guard rc3 == 0 else {
+                DispatchQueue.main.async { onError("gyroflow_recompute failed") }
+                return
+            }
+            self.readParams(handle)
+            let total = self.rowCount * 14 + 9
+            self.matBuf = [Float](repeating: 0, count: total)
+            self.matsBuf = [Float](repeating: 0, count: Int(self.gyroVideoH) * 16)
+            self.lensCorrectionAmount = Float(config.lensCorrectionAmount)
+            self.readyLock.lock(); self._isReady = true; self.readyLock.unlock()
+            print(String(format: "[gyroflow] Ready: %d frames x %d rows  %.0fx%.0f@%.3ffps",
+                         self.frameCount, self.rowCount, self.gyroVideoW, self.gyroVideoH, self.gyroFps))
+            DispatchQueue.main.async { onReady() }
         }
     }
 
-    // 便利：設定字串選項
-    @discardableResult
-    func set(_ ctx: OpaquePointer, _ key: String, _ val: String) -> Int32 {
-        guard let fn = setStr else { return -1 }
-        return key.withCString { k in val.withCString { v in fn(ctx, k, v) } }
+    private func applyConfig(_ config: GyroConfig, handle: UnsafeMutableRawPointer) {
+        guard let fn = fnSetParam else { return }
+        let smooth = config.smooth > 0 ? config.smooth : 0.5
+        "smoothness".withCString { _ = fn(handle, $0, smooth) }
+        "fov".withCString                  { _ = fn(handle, $0, config.fov) }
+        "lens_correction_amount".withCString { _ = fn(handle, $0, config.lensCorrectionAmount) }
+        "adaptive_zoom".withCString        { _ = fn(handle, $0, config.adaptiveZoom) }
+        "max_zoom".withCString             { _ = fn(handle, $0, config.maxZoom) }
+        "zooming_method".withCString       { _ = fn(handle, $0, Double(config.zoomingMethod)) }
+        "frame_readout_time".withCString   { _ = fn(handle, $0, config.readoutMs) }
+        "video_speed".withCString          { _ = fn(handle, $0, config.videoSpeed) }
+        "gyro_offset".withCString          { _ = fn(handle, $0, config.gyroOffsetMs) }
+        if config.horizonLockEnabled {
+            "horizon_lock_amount".withCString { _ = fn(handle, $0, config.horizonLockAmount) }
+            "horizon_lock_roll".withCString   { _ = fn(handle, $0, config.horizonLockRoll) }
+        }
+        if config.useGravityVectors {
+            "use_gravity_vectors".withCString { _ = fn(handle, $0, 1.0) }
+        }
+    }
+
+    private func readParams(_ handle: UnsafeMutableRawPointer) {
+        guard let fn = fnGetParams else { return }
+        var buf = [UInt8](repeating: 0, count: 96)
+        buf.withUnsafeMutableBytes { ptr in _ = fn(handle, ptr.baseAddress!) }
+        buf.withUnsafeBytes { raw in
+            let base = raw.baseAddress!
+            frameCount = Int(base.load(fromByteOffset: 0, as: UInt32.self))
+            rowCount   = Int(base.load(fromByteOffset: 4, as: UInt32.self))
+            gyroVideoW = Float(base.load(fromByteOffset: 8, as: UInt32.self))
+            gyroVideoH = Float(base.load(fromByteOffset: 12, as: UInt32.self))
+            gyroFps    = base.load(fromByteOffset: 16, as: Float64.self)
+            gyroFx     = base.load(fromByteOffset: 24, as: Float.self)
+            gyroFy     = base.load(fromByteOffset: 28, as: Float.self)
+            gyroCx     = base.load(fromByteOffset: 32, as: Float.self)
+            gyroCy     = base.load(fromByteOffset: 36, as: Float.self)
+            for i in 0..<12 {
+                distortionK[i] = base.load(fromByteOffset: 40 + i * 4, as: Float.self)
+            }
+            distortionModel = base.load(fromByteOffset: 88, as: Int32.self)
+            rLimit          = base.load(fromByteOffset: 92, as: Float.self)
+        }
+    }
+
+    func computeMatrixAtTime(timeSec: Double) -> (UnsafeBufferPointer<Float>, Bool)? {
+        coreLock.lock(); defer { coreLock.unlock() }
+        guard let handle = coreHandle, let fn = fnGetFrame, _isReady else { return nil }
+        let fi = max(0, min(Int((timeSec * gyroFps).rounded()), frameCount - 1))
+        if fi == cachedFrameIdx {
+            lastFetchMs = 0
+            return matsBuf.withUnsafeBufferPointer { ($0, false) }
+        }
+        let t0 = CACurrentMediaTime()
+        let total = rowCount * 14 + 9
+        if matBuf.count != total { matBuf = [Float](repeating: 0, count: total) }
+        let rc = matBuf.withUnsafeMutableBufferPointer { ptr -> Int32 in
+            fn(handle, timeSec, ptr.baseAddress!)
+        }
+        guard rc > 0 else { return nil }
+        let pfBase = rowCount * 14
+        frameFx  = matBuf[pfBase]
+        frameFy  = matBuf[pfBase + 1]
+        frameCx  = matBuf[pfBase + 2]
+        frameCy  = matBuf[pfBase + 3]
+        frameK   = [matBuf[pfBase + 4], matBuf[pfBase + 5], matBuf[pfBase + 6], matBuf[pfBase + 7]]
+        frameFov = matBuf[pfBase + 8]
+        lastFetchMs = (CACurrentMediaTime() - t0) * 1000.0
+        // Expand rowCount x 14 -> vH x 16
+        let vH = Int(gyroVideoH)
+        if matsBuf.count != vH * 16 { matsBuf = [Float](repeating: 0, count: vH * 16) }
+        matBuf.withUnsafeBufferPointer { raw in
+        matsBuf.withUnsafeMutableBufferPointer { mats in
+            let rp = raw.baseAddress!
+            let mp = mats.baseAddress!
+            let rc = rowCount
+            for y in 0..<vH {
+                let r = rc == 1 ? 0 : min(y &* rc / max(vH, 1), rc &- 1)
+                let sp = rp + r &* 14
+                let dp = mp + y &* 16
+                dp[0]  = sp[0]; dp[1]  = sp[1]; dp[2]  = sp[2]; dp[3]  = sp[9]
+                dp[4]  = sp[3]; dp[5]  = sp[4]; dp[6]  = sp[5]; dp[7]  = sp[10]
+                dp[8]  = sp[6]; dp[9]  = sp[7]; dp[10] = sp[8]; dp[11] = sp[11]
+                dp[12] = sp[12]; dp[13] = sp[13]; dp[14] = 0; dp[15] = 0
+            }
+        }}
+        cachedFrameIdx = fi
+        return matsBuf.withUnsafeBufferPointer { ($0, true) }
+    }
+
+    func stop() {
+        readyLock.lock(); _isReady = false; readyLock.unlock()
+        ioQueue.sync { }
+        coreLock.lock()
+        if let handle = coreHandle, let fn = fnFree { fn(handle) }
+        coreHandle = nil
+        coreLock.unlock()
+        if let lib = libHandle { dlclose(lib) }
+        libHandle = nil
     }
 }
-
-private let lib = LibMPV.shared
 
 // ════════════════════════════════════════════════════════
 // MARK: - LibMDK
@@ -567,15 +615,11 @@ private let mdkLib = LibMDK.shared
 
 class MPVOpenGLLayer: CAOpenGLLayer {
 
-    private var mpvCtx:    OpaquePointer?
-    fileprivate var renderCtx: OpaquePointer?   // accessed by CVDisplayLink callback
     private var cglPF:     CGLPixelFormatObj?
     private var cglCtx:    CGLContextObj?
     private(set) var isFloat = false
-    private var displayLink: CVDisplayLink?
 
-    // mpv 有新 frame 時由 callback 設為 true；draw() 開頭清除。
-    // arm64 Bool store/load 為單一指令，無需 lock。
+    // MDK 有新 frame 時由 callback 設為 true；draw() 開頭清除。
     var hasPendingFrame = false
 
     // ── MDK backend state ────────────────────────────────
@@ -587,11 +631,7 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     /// Timestamp (seconds) of the last frame rendered by MDK's renderVideo()
     private var mdkRenderedTime: Double = 0
 
-    /// true = mpv, false = MDK
-    var useMpvBackend: Bool = true
-
-    // update callback 觸發時間；draw() 用此計算 vsync 延遲並補償 time-pos。
-    // 注意：callback 中不可呼叫任何 mpv API（會死鎖），只記錄時間戳。
+    // update callback 觸發時間
     var callbackTime: CFTimeInterval = 0
     // frame counter（每 60 幀印一次 log）
     private var frameCount = 0
@@ -611,26 +651,14 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     private(set) var stabilityScore: Float = -1
 
     var videoFPS: Double {
-        if useMpvBackend {
-            guard let ctx = mpvCtx else { return 0 }
-            return Double(lib.getString(ctx, "container-fps") ?? "0") ?? 0
-        } else {
-            guard let api = mdkAPI else { return 0 }
-            let obj = api.pointee.object!
-            guard let info = api.pointee.mediaInfo(obj), info.pointee.nb_video > 0 else { return 0 }
-            var codec = mdkVideoCodecParameters()
-            MDK_VideoStreamCodecParameters(&info.pointee.video[0], &codec)
-            return Double(codec.frame_rate)
-        }
+        guard let api = mdkAPI else { return 0 }
+        let obj = api.pointee.object!
+        guard let info = api.pointee.mediaInfo(obj), info.pointee.nb_video > 0 else { return 0 }
+        var codec = mdkVideoCodecParameters()
+        MDK_VideoStreamCodecParameters(&info.pointee.video[0], &codec)
+        return Double(codec.frame_rate)
     }
-    var droppedFrames: Int {
-        if useMpvBackend {
-            guard let ctx = mpvCtx else { return 0 }
-            return Int(lib.getString(ctx, "frame-drop-count") ?? "0") ?? 0
-        } else {
-            return 0  // MDK does not expose drop count
-        }
-    }
+    var droppedFrames: Int { 0 }
 
     // ── Warp pipeline (gyroflow-style per-row matrix) ────────
     private var stabFBO:    GLuint = 0     // intermediate FBO (mpv → here)
@@ -655,20 +683,13 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     private var uRLimit:    GLint = -1
     private var uFrameFov:  GLint = -1
     private var uLensCorr:  GLint = -1
-    var gyroCore: GyroCore?            // non-nil → real-time warp active
-
-    // 保留 NSString 確保 utf8String 指標在 render context 建立期間有效
-    private let kOpenGL = "opengl" as NSString
+    var activeGyro: GyroCoreProvider?   // non-nil → real-time warp active
 
     override init() {
         super.init()
-        // isAsynchronous = true：CAOpenGLLayer 在專屬 rendering thread 以 vsync 驅動 draw()
-        // 主執行緒完全不參與 render，與 Spectrum 同步的修正。
         isAsynchronous = true
         setupGL()
-        // Initialize both backends if available; toggle with P key
-        if mdkLib.ok { setupMDK(); useMpvBackend = false }
-        if lib.ok    { setupMPV(); if !mdkLib.ok { useMpvBackend = true } }
+        if mdkLib.ok { setupMDK() }
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -1088,148 +1109,6 @@ void main() {
         return sh
     }
 
-    // ─── mpv 初始化 ─────────────────────────────────────
-
-    private func setupMPV() {
-        guard let ctx = lib.create?() else { return }
-        mpvCtx = ctx
-
-        // 基本選項
-        lib.set(ctx, "vo", "libmpv")
-        lib.set(ctx, "hwdec", "videotoolbox")    // DV 實驗：強制 FFmpeg software decode，讀 HLG base layer，忽略 DV RPU
-        lib.set(ctx, "log-file", "/tmp/testmpv.log")
-        lib.set(ctx, "msg-level", "all=v")
-
-        // 靜態圖片：顯示不結束
-        lib.set(ctx, "image-display-duration", "inf")
-
-        // 預設靜音
-        lib.set(ctx, "mute", "yes")
-
-        // video-sync=audio + framedrop=vo：gyro stabilization 最佳組合。
-        // audio：time-pos 直接對應 rendered frame，delay=1 準確。
-        // vo：負載過重時丟幀，防止 audio-video desync 累積。
-        lib.set(ctx, "video-sync", "audio")
-        lib.set(ctx, "framedrop", "vo")
-
-        // ══ IINA 風格 PQ/HDR 設定 ══
-        //   mpv 輸出 PQ，CALayer 用 itur_2100_PQ colorspace
-        //   target-peak 設為顯示器真實峰值亮度，mpv 做精準 tone mapping
-
-        let peakNits = displayPeakNits()
-
-        lib.set(ctx, "target-trc",       "pq")
-        lib.set(ctx, "target-prim",      "bt.2020")
-        lib.set(ctx, "target-peak",      String(peakNits))
-        lib.set(ctx, "hdr-compute-peak", "no")
-        lib.set(ctx, "tone-mapping",     "auto")
-        lib.set(ctx, "icc-profile-auto", "no")
-
-        let edrPotential = NSScreen.main?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0
-        let edrCurrent   = NSScreen.main?.maximumExtendedDynamicRangeColorComponentValue ?? 1.0
-
-        print("[mpv] ─── 初始化設定（IINA PQ 方式）──────────")
-        print("[mpv]   target-trc   = pq")
-        print("[mpv]   target-prim  = bt.2020")
-        print("[mpv]   target-peak  = \(peakNits) nit  (顯示器實際峰值)")
-        print("[mpv]   colorspace   = itur_2100_PQ")
-        print("[mpv]   EDR potential = \(String(format: "%.2f", edrPotential))x")
-        print("[mpv]   EDR current   = \(String(format: "%.2f", edrCurrent))x")
-        print("[mpv] ─────────────────────────────────────")
-
-        guard lib.initialize?(ctx) == 0 else {
-            print("[mpv] ❌ mpv_initialize failed"); return
-        }
-
-        // 觀察影片 / 圖片參數（for logging）
-        lib.observe?(ctx, 1, "video-params/gamma",     FMT_STRING)
-        lib.observe?(ctx, 2, "video-params/primaries",  FMT_STRING)
-        lib.observe?(ctx, 3, "video-params/sig-peak",   FMT_STRING)
-        lib.observe?(ctx, 4, "video-codec",             FMT_STRING)
-        lib.observe?(ctx, 5, "video-format",            FMT_STRING)
-
-        setupRenderContext(ctx: ctx)
-        setupDisplayLink()
-        startEventThread()
-    }
-
-    // ─── mpv Render Context (OpenGL) ────────────────────
-
-    private func setupRenderContext(ctx: OpaquePointer) {
-        guard let cglCtx, let rcCreate = lib.rcCreate, let rcSetCb = lib.rcSetCb else { return }
-
-        CGLSetCurrentContext(cglCtx)
-
-        var initParams = OGLInit(get_proc_address: glProcAddr, get_proc_address_ctx: nil)
-        // ADVANCED_CONTROL=0：讓 mpv 管理自己的顯示時序（較簡單）
-        // ADVANCED_CONTROL=1：由渲染端管理，需配合 mpv_render_context_update()
-        var advanced: Int32 = 1   // Required for rcGetInfo (frame timing)
-
-        withUnsafeMutablePointer(to: &initParams) { initPtr in
-        withUnsafeMutablePointer(to: &advanced)   { advPtr  in
-            var params: [RParam] = [
-                RParam(RC_API_TYPE, UnsafeMutableRawPointer(mutating: kOpenGL.utf8String!)),
-                RParam(RC_OGL_INIT, UnsafeMutableRawPointer(initPtr)),
-                RParam(RC_ADVANCED, UnsafeMutableRawPointer(advPtr)),
-                RParam()
-            ]
-            var rc: OpaquePointer?
-            let err = withUnsafeMutablePointer(to: &rc) { rcPtr in
-                params.withUnsafeMutableBufferPointer { buf in
-                    // rcCreate 使用 RawPointer 簽名規避 ObjC 橋接限制
-                    rcCreate(
-                        UnsafeMutableRawPointer(rcPtr),
-                        ctx,
-                        UnsafeMutableRawPointer(buf.baseAddress!)
-                    )
-                }
-            }
-            guard err == 0, let rc else {
-                print("[mpv] ❌ Render context create failed: \(err)"); return
-            }
-            renderCtx = rc
-            print("[mpv] ✅ Render context created")
-
-            // isAsynchronous = true：draw() 在 CAOpenGLLayer 的專屬 rendering thread 執行。
-            // callback 只需標記 hasPendingFrame + 喚醒 layer，不再 dispatch to main。
-            // setNeedsDisplay() 是 thread-safe，可從任意執行緒呼叫。
-            let selfRef = Unmanaged.passUnretained(self).toOpaque()
-            rcSetCb(rc, { ptr in
-                guard let ptr else { return }
-                let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(ptr).takeUnretainedValue()
-                // ⚠️ callback 中禁止呼叫任何 mpv API（會死鎖）。
-                // 只記錄時間戳，讓 draw() 用 elapsed time 補償 vsync 延遲。
-                layer.callbackTime = CACurrentMediaTime()
-                layer.hasPendingFrame = true
-                layer.setNeedsDisplay()
-            }, selfRef)
-        }}
-    }
-
-    // ─── CVDisplayLink (swap report) ────────────────────
-
-    private func setupDisplayLink() {
-        var dl: CVDisplayLink?
-        CVDisplayLinkCreateWithActiveCGDisplays(&dl)
-        guard let dl else { print("[DL] ❌ CVDisplayLink 建立失敗"); return }
-        let selfRef = Unmanaged.passUnretained(self).toOpaque()
-        CVDisplayLinkSetOutputCallback(dl, { _, _, _, _, _, ctx -> CVReturn in
-            guard let ctx else { return kCVReturnSuccess }
-            let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(ctx).takeUnretainedValue()
-            // rcSwap is mpv-only; MDK manages its own swap
-            if layer.useMpvBackend {
-                guard let rc = layer.renderCtx, let fn = lib.rcSwap else {
-                    return kCVReturnSuccess
-                }
-                fn(rc)
-            }
-            return kCVReturnSuccess
-        }, selfRef)
-        CVDisplayLinkStart(dl)
-        displayLink = dl
-        print("[DL] ✅ CVDisplayLink started (swap report)")
-    }
-
     // ─── MDK 初始化 ───────────────────────────────────────
 
     private func setupMDK() {
@@ -1270,199 +1149,16 @@ void main() {
         print("[mdk] ✅ Player initialized")
     }
 
-    // ─── mpv 事件執行緒 ─────────────────────────────────
-
-    private func startEventThread() {
-        Thread.detachNewThread { [weak self] in
-            guard let self, let ctx = self.mpvCtx, let waitFn = lib.waitEvent else { return }
-            print("[mpv] Event thread started")
-            while true {
-                // waitFn 回傳 RawPointer，轉型為 MPVEvent 指標
-                let evRaw = waitFn(ctx, -1)
-                let ev = evRaw.assumingMemoryBound(to: MPVEvent.self)
-                switch ev.pointee.event_id {
-                case EV_SHUTDOWN:
-                    print("[mpv] Shutdown"); return
-                case EV_FILE_LOADED:
-                    print("[mpv] ─── File loaded ───")
-                    self.logVideoParams()
-                    // 依實際 gamma 動態設定色彩管線（DV="pq"、HLG="hlg"、SDR=其他）
-                    if let ctx = self.mpvCtx {
-                        let gamma = lib.getString(ctx, "video-params/gamma")    ?? ""
-                        let prim  = lib.getString(ctx, "video-params/primaries") ?? "bt.2020"
-                        self.applyColorMode(gamma: gamma, primaries: prim)
-                    }
-                case EV_END_FILE:
-                    if let data = ev.pointee.data {
-                        let ef = data.assumingMemoryBound(to: MPVEndFile.self)
-                        if ef.pointee.reason == END_ERROR {
-                            print("[mpv] ❌ End file ERROR: code=\(ef.pointee.error)")
-                        } else {
-                            print("[mpv] End file: reason=\(ef.pointee.reason)")
-                        }
-                    }
-                case EV_VIDEO_RECONFIG:
-                    print("[mpv] ─── Video Reconfig ───")
-                    self.logVideoParams()
-                    if let ctx = self.mpvCtx {
-                        let gamma = lib.getString(ctx, "video-params/gamma")    ?? ""
-                        let prim  = lib.getString(ctx, "video-params/primaries") ?? "bt.2020"
-                        self.applyColorMode(gamma: gamma, primaries: prim)
-                    }
-                case EV_PROP_CHANGE:
-                    if let propRaw = ev.pointee.data {
-                        let prop = propRaw.assumingMemoryBound(to: MPVEventProp.self)
-                        let pname = prop.pointee.name.map { String(cString: $0) } ?? "?"
-                        if prop.pointee.format == FMT_STRING,
-                           let valPtr = prop.pointee.data?.assumingMemoryBound(to: Optional<UnsafePointer<CChar>>.self),
-                           let cStr = valPtr.pointee {
-                            print("[mpv]   prop: \(pname) = \(String(cString: cStr))")
-                        }
-                    }
-                default: break
-                }
-            }
-        }
-    }
-
-    private func logVideoParams() {
-        guard let ctx = mpvCtx else { return }
-        let gamma  = lib.getString(ctx, "video-params/gamma")    ?? "?"
-        let prim   = lib.getString(ctx, "video-params/primaries") ?? "?"
-        let peak   = lib.getString(ctx, "video-params/sig-peak")  ?? "?"
-        let hwdec  = lib.getString(ctx, "hwdec-current")          ?? "?"
-        let codec  = lib.getString(ctx, "video-codec")            ?? "?"
-        let fmt    = lib.getString(ctx, "video-format")           ?? "?"
-        let w      = lib.getString(ctx, "width")                  ?? "?"
-        let h      = lib.getString(ctx, "height")                 ?? "?"
-        let csName = colorspace?.name.map { $0 as String } ?? "nil"
-        print("[mpv] ─── Video/Image Params ──────────────")
-        print("[mpv]   codec      = \(codec)")
-        print("[mpv]   format     = \(fmt)  \(w)x\(h)")
-        print("[mpv]   gamma      = \(gamma)")
-        print("[mpv]   primaries  = \(prim)")
-        print("[mpv]   sig-peak   = \(peak)")
-        print("[mpv]   hwdec      = \(hwdec)")
-        print("[mpv]   GL isFloat = \(isFloat)")
-        print("[mpv]   colorspace = \(csName)")
-        print("[mpv] ──────────────────────────────────────")
-    }
-
-    // ─── 依 video-params/gamma 動態選色彩管線 ────────────
-    //
-    // IINA 的做法：讀 mpv 回報的 gamma（非容器 metadata），
-    // 依此設定 CALayer colorspace 與 mpv target-trc。
-    //
-    // DV P8.4：mpv 回報 gamma="pq"（VideoToolbox 以 PQ 解碼）
-    // HLG：gamma="hlg"；SDR：gamma="srgb" / "bt.709" / 其他
-    //
-    // 呼叫端可在任意執行緒；CALayer 的 colorspace 更新透過 main dispatch。
-    func applyColorMode(gamma: String, primaries: String) {
-        guard let ctx = mpvCtx else { return }
-
-        let newColorspace: CGColorSpace
-        let trcLabel: String
-
-        // 讀取顯示器實際 HDR 峰值（近似值）
-        // macOS EDR 1.0 = SDR 參考白點 ≈ 203 nit
-        let edrPotential = NSScreen.main?.maximumPotentialExtendedDynamicRangeColorComponentValue ?? 1.0
-        let displayPeakNit = Int(203.0 * edrPotential)  // e.g. MBP XDR 7.88× ≈ 1600 nit
-
-        let peakNits = displayPeakNits()
-
-        switch gamma {
-        case "pq":
-            // PQ / Dolby Vision：直接 PQ 輸出，mpv 做 tone mapping
-            lib.set(ctx, "icc-profile-auto", "no")
-            lib.set(ctx, "target-trc",       "pq")
-            lib.set(ctx, "target-prim",      primaries)
-            lib.set(ctx, "target-peak",      String(peakNits))
-            lib.set(ctx, "hdr-compute-peak", "no")
-            lib.set(ctx, "tone-mapping",     "auto")
-            newColorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
-            wantsExtendedDynamicRangeContent = true
-            trcLabel = "pq → itur_2100_PQ  peak=\(peakNits)nit"
-        case "hlg":
-            // HLG → PQ 轉換輸出（IINA 方式）
-            lib.set(ctx, "icc-profile-auto", "no")
-            lib.set(ctx, "target-trc",       "pq")
-            lib.set(ctx, "target-prim",      "bt.2020")
-            lib.set(ctx, "target-peak",      String(peakNits))
-            lib.set(ctx, "hdr-compute-peak", "no")
-            lib.set(ctx, "tone-mapping",     "auto")
-            newColorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
-            wantsExtendedDynamicRangeContent = true
-            trcLabel = "hlg → pq  itur_2100_PQ  peak=\(peakNits)nit"
-        default:
-            // SDR（srgb / bt.709 / unknown）
-            lib.set(ctx, "icc-profile-auto", "yes")
-            lib.set(ctx, "target-trc",       "bt.709")
-            lib.set(ctx, "target-prim",      "bt.709")
-            lib.set(ctx, "target-peak",      "auto")
-            lib.set(ctx, "hdr-compute-peak", "auto")
-            lib.set(ctx, "tone-mapping",     "auto")
-            newColorspace = CGColorSpace(name: CGColorSpace.sRGB)!
-            wantsExtendedDynamicRangeContent = false
-            trcLabel = "\(gamma) → sRGB (EDR off)"
-        }
-
-        print("[mpv] applyColorMode: gamma=\(gamma) prim=\(primaries) → \(trcLabel)")
-        hasPendingFrame = true
-        DispatchQueue.main.async { [weak self] in
-            self?.colorspace = newColorspace
-            self?.setNeedsDisplay()
-        }
-    }
-
-    // ─── Runtime mpv color option ────────────────────────
-
-    func setColorOption(_ key: String, _ value: String) {
-        guard let ctx = mpvCtx else { return }
-        lib.set(ctx, key, value)
-    }
-
-    func updateColorspace(for trc: String) {
-        let newCS: CGColorSpace
-        switch trc {
-        case "pq":  newCS = CGColorSpace(name: CGColorSpace.itur_2100_PQ)!
-        case "hlg": newCS = CGColorSpace(name: CGColorSpace.itur_2100_HLG)!
-        default:    newCS = CGColorSpace(name: CGColorSpace.sRGB)!
-        }
-        colorspace = newCS
-        hasPendingFrame = true
-        setNeedsDisplay()
-    }
-
-    func setColorspace(_ name: CFString) {
-        guard let cs = CGColorSpace(name: name) else { return }
-        colorspace = cs
-        hasPendingFrame = true
-        setNeedsDisplay()
-    }
-
     // ─── 穩定化資料 ─────────────────────────────────────
 
-    func loadGyroCore(_ server: GyroCore?) {
-        gyroCore = server
+    func loadGyroCore(_ server: GyroCoreProvider?) {
+        activeGyro = server
         lastGyroFrameIdx = nil   // 重置單調保護
     }
 
     // ─── 載入檔案 ────────────────────────────────────────
 
     func loadFile(_ path: String) {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        print("[mpv] Loading: \(path)")
-        "loadfile".withCString { loadPtr in
-            path.withCString { pathPtr in
-                var args: [UnsafePointer<CChar>?] = [loadPtr, pathPtr, nil]
-                _ = cmdFn(ctx, &args)
-            }
-        }
-    }
-
-    // ─── MDK 載入檔案 ──────────────────────────────────────
-
-    func mdkLoadFile(_ path: String) {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         print("[mdk] Loading: \(path)")
@@ -1516,29 +1212,29 @@ void main() {
         api.pointee.setState(obj, MDK_State_Playing)
     }
 
-    // ─── MDK 播放控制 ────────────────────────────────────
+    // ─── 播放控制 ────────────────────────────────────
 
-    func mdkSetPause(_ paused: Bool) {
+    func setPause(_ paused: Bool) {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         api.pointee.setState(obj, paused ? MDK_State_Paused : MDK_State_Playing)
     }
 
-    func mdkTogglePause() {
+    func togglePause() {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         let current = api.pointee.state(obj)
         api.pointee.setState(obj, current == MDK_State_Playing ? MDK_State_Paused : MDK_State_Playing)
     }
 
-    func mdkToggleMute() {
+    func toggleMute() {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         mdkMuted.toggle()
         api.pointee.setMute(obj, mdkMuted)
     }
 
-    func mdkSeek(seconds: Int) {
+    func seek(seconds: Int) {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         let ms = Int64(seconds) * 1000
@@ -1546,7 +1242,7 @@ void main() {
                                       mdkSeekCallback(cb: nil, opaque: nil))
     }
 
-    func mdkSeek(_ seconds: Double, absolute: Bool) {
+    func seek(_ seconds: Double, absolute: Bool) {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         let ms = Int64(seconds * 1000)
@@ -1556,7 +1252,7 @@ void main() {
         _ = api.pointee.seekWithFlags(obj, ms, flags, mdkSeekCallback(cb: nil, opaque: nil))
     }
 
-    func mdkFrameStep() {
+    func frameStep() {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         _ = api.pointee.seekWithFlags(obj, 1,
@@ -1564,7 +1260,7 @@ void main() {
             mdkSeekCallback(cb: nil, opaque: nil))
     }
 
-    func mdkFrameBackStep() {
+    func frameBackStep() {
         guard let api = mdkAPI else { return }
             let obj = api.pointee.object!
         _ = api.pointee.seekWithFlags(obj, -1,
@@ -1572,99 +1268,10 @@ void main() {
             mdkSeekCallback(cb: nil, opaque: nil))
     }
 
-    var mdkCurrentTimeSec: Double {
+    var currentTimeSec: Double {
         guard let api = mdkAPI else { return 0 }
             let obj = api.pointee.object!
         return Double(api.pointee.position(obj)) / 1000.0
-    }
-
-    // ─── 暫停 / 繼續 ─────────────────────────────────────
-
-    func setPause(_ paused: Bool) {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        let val = paused ? "yes" : "no"
-        "set".withCString { setPtr in
-            "pause".withCString { pausePtr in
-                val.withCString { valPtr in
-                    var args: [UnsafePointer<CChar>?] = [setPtr, pausePtr, valPtr, nil]
-                    _ = cmdFn(ctx, &args)
-                }
-            }
-        }
-    }
-
-    func togglePause() {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        "cycle".withCString { cyclePtr in
-            "pause".withCString { pausePtr in
-                var args: [UnsafePointer<CChar>?] = [cyclePtr, pausePtr, nil]
-                _ = cmdFn(ctx, &args)
-            }
-        }
-    }
-
-    func toggleMute() {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        "cycle".withCString { cyclePtr in
-            "mute".withCString { mutePtr in
-                var args: [UnsafePointer<CChar>?] = [cyclePtr, mutePtr, nil]
-                _ = cmdFn(ctx, &args)
-            }
-        }
-    }
-
-    // ─── 跳轉 ───────────────────────────────────────────
-
-    func seek(seconds: Int) {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        let val = String(seconds)
-        "seek".withCString { seekPtr in
-            val.withCString { valPtr in
-                var args: [UnsafePointer<CChar>?] = [seekPtr, valPtr, nil]
-                _ = cmdFn(ctx, &args)
-            }
-        }
-    }
-
-    func seek(_ seconds: Double, absolute: Bool) {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        let val = String(seconds)
-        let flag = absolute ? "absolute" : "relative"
-        "seek".withCString { seekPtr in
-            val.withCString { valPtr in
-                flag.withCString { flagPtr in
-                    var args: [UnsafePointer<CChar>?] = [seekPtr, valPtr, flagPtr, nil]
-                    _ = cmdFn(ctx, &args)
-                }
-            }
-        }
-    }
-
-    // ─── 逐幀步進 ────────────────────────────────────────
-
-    func frameStep() {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        "frame-step".withCString { ptr in
-            var args: [UnsafePointer<CChar>?] = [ptr, nil]
-            _ = cmdFn(ctx, &args)
-        }
-    }
-
-    func frameBackStep() {
-        guard let ctx = mpvCtx, let cmdFn = lib.command else { return }
-        "frame-back-step".withCString { ptr in
-            var args: [UnsafePointer<CChar>?] = [ptr, nil]
-            _ = cmdFn(ctx, &args)
-        }
-    }
-
-    var currentTimeSec: Double {
-        if useMpvBackend {
-            guard let ctx = mpvCtx else { return 0 }
-            return Double(lib.getString(ctx, "time-pos") ?? "0") ?? 0
-        } else {
-            return mdkCurrentTimeSec
-        }
     }
 
     // ─── CAOpenGLLayer 覆寫 ──────────────────────────────
@@ -1682,23 +1289,15 @@ void main() {
                           forLayerTime t: CFTimeInterval,
                           displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
         guard hasPendingFrame else { return false }
-        return useMpvBackend ? (renderCtx != nil) : (mdkAPI != nil && mdkReady)
+        return mdkAPI != nil && mdkReady
     }
 
     override func draw(inCGLContext ctx: CGLContextObj,
                        pixelFormat pf: CGLPixelFormatObj,
                        forLayerTime t: CFTimeInterval,
                        displayTime ts: UnsafePointer<CVTimeStamp>?) {
-        hasPendingFrame = false   // 消費 pending flag，在 render 前清除
-        // Backend guard: need either mpv render context or mdk api
-        if useMpvBackend {
-            guard renderCtx != nil, lib.rcRender != nil else {
-                print("[GL] draw() 提早返回：renderCtx=\(renderCtx != nil)")
-                return
-            }
-        } else {
-            guard mdkAPI != nil, mdkReady else { return }
-        }
+        hasPendingFrame = false
+        guard mdkAPI != nil, mdkReady else { return }
 
         // CGLLockContext：確保多執行緒時 OpenGL context 使用安全
         CGLLockContext(ctx)
@@ -1715,39 +1314,19 @@ void main() {
 
         frameCount += 1
         if frameCount == 1 || frameCount % 60 == 0 {
-            let fetchMs = gyroCore?.lastFetchMs ?? 0
-            let fetchStr = gyroCore?.isReady == true
+            let fetchMs = activeGyro?.lastFetchMs ?? 0
+            let fetchStr = activeGyro?.isReady == true
                 ? String(format: "  gyroFetch=%.3fms", fetchMs)
                 : ""
             print("[GL] draw() #\(frameCount): w=\(w) h=\(h) fbo=\(displayFBO) float=\(isFloat)\(fetchStr)")
         }
 
-        // ── Frame info: update + get frame info (mpv only) ──
-        if useMpvBackend {
-            var updateFlags: UInt64 = 0
-            if let rcUpdateFn = lib.rcUpdate, let rc = renderCtx {
-                updateFlags = rcUpdateFn(rc)
-            }
-            _ = updateFlags
-            var frameInfo = RenderFrameInfo()
-            var hasFrameInfo = false
-            var getInfoRC: Int32 = -999
-            if let rcGetInfoFn = lib.rcGetInfo, let rc = renderCtx {
-                withUnsafeMutablePointer(to: &frameInfo) { ptr in
-                    let typeField = Int64(RC_NEXT_FRAME_INFO)
-                    getInfoRC = rcGetInfoFn(rc, typeField, UnsafeMutableRawPointer(ptr))
-                    hasFrameInfo = getInfoRC == 0
-                }
-            }
-            _ = hasFrameInfo; _ = getInfoRC
-        }
-
         // ── Determine stabilization state (before Pass 1, so we know the target FBO) ──
-        let wantStab = gyroCore?.isReady == true && warpProg != 0
+        let wantStab = activeGyro?.isReady == true && warpProg != 0
 
         // 穩定化時渲染到影片原始解析度的 FBO，warp 在全解析度執行後才 downsample
-        let vidW: GLsizei = wantStab ? GLsizei(gyroCore!.gyroVideoW) : w
-        let vidH: GLsizei = wantStab ? GLsizei(gyroCore!.gyroVideoH) : h
+        let vidW: GLsizei = wantStab ? GLsizei(activeGyro!.gyroVideoW) : w
+        let vidH: GLsizei = wantStab ? GLsizei(activeGyro!.gyroVideoH) : h
 
         if wantStab && (stabW != vidW || stabH != vidH) {
             stabW = vidW; stabH = vidH
@@ -1762,60 +1341,24 @@ void main() {
             print("[Warp] stabFBO resized to \(vidW)×\(vidH) (video native resolution)")
         }
 
-        // ── Pass 1：video decode → FBO ──────────────────────────────────
-        if useMpvBackend {
-            // mpv render: advanced_control=1 必須每次 draw 都呼叫 rcRender
-            guard let rc = renderCtx, let renderFn = lib.rcRender else { return }
-            let mpvTargetFBO = wantStab ? GLint(stabFBO) : displayFBO
-            var fbo   = OGLFBO(fbo: mpvTargetFBO, w: vidW, h: vidH, internal_format: 0)
-            var flipY = Int32(1)
-            var depth = Int32(isFloat ? 16 : 8)
-            var block = Int32(0)
-
-            withUnsafeMutablePointer(to: &fbo)   { fboPtr  in
-            withUnsafeMutablePointer(to: &flipY) { flipPtr in
-            withUnsafeMutablePointer(to: &depth) { depthPtr in
-            withUnsafeMutablePointer(to: &block) { blockPtr in
-                var params: [RParam] = [
-                    RParam(RC_OGL_FBO, UnsafeMutableRawPointer(fboPtr)),
-                    RParam(RC_FLIP_Y,  UnsafeMutableRawPointer(flipPtr)),
-                    RParam(RC_DEPTH,   UnsafeMutableRawPointer(depthPtr)),
-                    RParam(RC_BLOCK_FOR_TARGET, UnsafeMutableRawPointer(blockPtr)),
-                    RParam()
-                ]
-                let err = params.withUnsafeMutableBufferPointer { buf in
-                    renderFn(rc, UnsafeMutableRawPointer(buf.baseAddress!))
-                }
-                if err != 0 { print("[GL] mpv_render_context_render error: \(err)") }
-            }}}}
-        } else {
-            // MDK render — renderVideo() returns the exact timestamp of the rendered frame
-            guard let api = mdkAPI else { return }
-            let obj = api.pointee.object!
-            let targetFBO = wantStab ? Int32(stabFBO) : displayFBO
-            mdkGLAPI.fbo = targetFBO
-            withUnsafeMutablePointer(to: &mdkGLAPI) { glPtr in
-                api.pointee.setRenderAPI(obj, OpaquePointer(glPtr), nil)
-            }
-            api.pointee.setVideoSurfaceSize(obj, Int32(vidW), Int32(vidH), nil)
-            let ts = api.pointee.renderVideo(obj, nil)
-            if ts >= 0 { mdkRenderedTime = ts }
+        // ── Pass 1：MDK video decode → FBO ──────────────────────────────
+        guard let api = mdkAPI else { return }
+        let obj = api.pointee.object!
+        let targetFBO = wantStab ? Int32(stabFBO) : displayFBO
+        mdkGLAPI.fbo = targetFBO
+        withUnsafeMutablePointer(to: &mdkGLAPI) { glPtr in
+            api.pointee.setRenderAPI(obj, OpaquePointer(glPtr), nil)
         }
+        api.pointee.setVideoSurfaceSize(obj, Int32(vidW), Int32(vidH), nil)
+        let ts = api.pointee.renderVideo(obj, nil)
+        if ts >= 0 { mdkRenderedTime = ts }
 
         // ── Gyro matrix computation (AFTER Pass 1 so MDK frame time is available) ──
         var gyroResult: (UnsafeBufferPointer<Float>, Bool)? = nil
         var gyroFrameRepeated = false
-        if wantStab, let core = gyroCore, core.isReady {
-            let renderTime: Double
-            if useMpvBackend {
-                // mpv: time-pos is audio-synced → subtract pipeline delay
-                let timeSec = currentTimeSec
-                let delayFrames = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 1.0
-                renderTime = max(0, timeSec - delayFrames / core.gyroFps)
-            } else {
-                // MDK: renderVideo() returned exact frame timestamp — no delay compensation
-                renderTime = max(0, mdkRenderedTime)
-            }
+        if wantStab, let core = activeGyro, core.isReady {
+            // MDK: renderVideo() returned exact frame timestamp — no delay compensation
+            let renderTime = max(0, mdkRenderedTime)
             // Frame index for repeat detection only (not passed to gyroflow-core)
             var fi = max(0, min(Int((renderTime * core.gyroFps).rounded()),
                                 core.frameCount - 1))
@@ -1843,7 +1386,7 @@ void main() {
         let hasStab = (gyroResult != nil || gyroFrameRepeated) && wantStab
 
         // ── Pass 2：gyroflow per-row warp ──────────────────
-        if hasStab, let server = gyroCore {
+        if hasStab, let server = activeGyro {
             let vH = Int(server.gyroVideoH)
             let vW = server.gyroVideoW
 
@@ -1909,14 +1452,7 @@ void main() {
             if frameCount <= 300 && frameCount % 30 == 0 {
                 let fpsStr = renderFPS > 0 ? String(format: "%.1ffps", renderFPS) : "?"
                 let fiStr = lastGyroFrameIdx.map { String($0) } ?? "nil"
-                let timeInfo: String
-                if useMpvBackend {
-                    let tp = currentTimeSec
-                    let delayF = (NSApp.delegate as? AppDelegate)?.frameDelayFrames ?? 0
-                    timeInfo = String(format: "tp=%.4f  delay=%.1f", tp, delayF)
-                } else {
-                    timeInfo = String(format: "frameTime=%.4f", mdkRenderedTime)
-                }
+                let timeInfo = String(format: "frameTime=%.4f", mdkRenderedTime)
                 print(String(format: "[GL] draw#%d  %@  %@  fi=%@  fov=%.3f  %@",
                              frameCount, timeInfo,
                              gyroFrameRepeated ? "rep" : "NEW",
@@ -1975,9 +1511,6 @@ void main() {
     }
 
     deinit {
-        if let dl = displayLink { CVDisplayLinkStop(dl) }
-        if let rc  = renderCtx { lib.rcFree?(rc) }
-        if let ctx = mpvCtx    { lib.destroy?(ctx) }
         if mdkAPI != nil { var apiPtr = mdkAPI; mdkPlayerAPI_delete(&apiPtr) }
     }
 }
@@ -2008,75 +1541,24 @@ class MPVView: NSView {
         CATransaction.commit()
     }
 
-    func load(path: String) {
-        if mpvLayer.useMpvBackend { mpvLayer.loadFile(path) }
-        else { mpvLayer.mdkLoadFile(path) }
-    }
-    func seek(_ seconds: Int) {
-        if mpvLayer.useMpvBackend { mpvLayer.seek(seconds: seconds) }
-        else { mpvLayer.mdkSeek(seconds: seconds) }
-    }
-    func seek(_ seconds: Double, absolute: Bool) {
-        if mpvLayer.useMpvBackend { mpvLayer.seek(seconds, absolute: absolute) }
-        else { mpvLayer.mdkSeek(seconds, absolute: absolute) }
-    }
-    func setPause(_ paused: Bool) {
-        if mpvLayer.useMpvBackend { mpvLayer.setPause(paused) }
-        else { mpvLayer.mdkSetPause(paused) }
-    }
-    func togglePause() {
-        if mpvLayer.useMpvBackend { mpvLayer.togglePause() }
-        else { mpvLayer.mdkTogglePause() }
-    }
-    func toggleMute() {
-        if mpvLayer.useMpvBackend { mpvLayer.toggleMute() }
-        else { mpvLayer.mdkToggleMute() }
-    }
-    func frameStep() {
-        if mpvLayer.useMpvBackend { mpvLayer.frameStep() }
-        else { mpvLayer.mdkFrameStep() }
-    }
-    func frameBackStep() {
-        if mpvLayer.useMpvBackend { mpvLayer.frameBackStep() }
-        else { mpvLayer.mdkFrameBackStep() }
-    }
+    func load(path: String) { mpvLayer.loadFile(path) }
+    func seek(_ seconds: Int) { mpvLayer.seek(seconds: seconds) }
+    func seek(_ seconds: Double, absolute: Bool) { mpvLayer.seek(seconds, absolute: absolute) }
+    func setPause(_ paused: Bool) { mpvLayer.setPause(paused) }
+    func togglePause() { mpvLayer.togglePause() }
+    func toggleMute() { mpvLayer.toggleMute() }
+    func frameStep() { mpvLayer.frameStep() }
+    func frameBackStep() { mpvLayer.frameBackStep() }
     var currentTimeSec: Double { mpvLayer.currentTimeSec }
-    func loadGyroCore(_ server: GyroCore?) { mpvLayer.loadGyroCore(server) }
+    func loadGyroCore(_ server: GyroCoreProvider?) { mpvLayer.loadGyroCore(server) }
     func resetGyroFrameIdx() { mpvLayer.lastGyroFrameIdx = nil }
-    func setColorOption(_ key: String, _ value: String) { mpvLayer.setColorOption(key, value) }
-    func updateColorspace(for trc: String) { mpvLayer.updateColorspace(for: trc) }
-    func setColorspace(_ name: CFString) { mpvLayer.setColorspace(name) }
 
     var renderFPS: Double      { mpvLayer.renderFPS      }
     var renderCV: Double       { mpvLayer.renderCV       }
     var videoFPS: Double       { mpvLayer.videoFPS       }
     var droppedFrames: Int     { mpvLayer.droppedFrames  }
     var stabilityScore: Float  { mpvLayer.stabilityScore }
-    var isFloat: Bool           { mpvLayer.isFloat        }
-
-    // ── Backend switching ────────────────────────────────
-    var backendName: String { mpvLayer.useMpvBackend ? "mpv" : "MDK" }
-    var useMpvBackend: Bool { mpvLayer.useMpvBackend }
-
-    func toggleBackend() {
-        let canMpv = lib.ok
-        let canMdk = mdkLib.ok
-        if canMpv && canMdk {
-            mpvLayer.useMpvBackend.toggle()
-        } else {
-            print("[backend] Only one backend available")
-        }
-    }
-
-    func switchBackendAndReload(path: String) {
-        let pos = currentTimeSec
-        toggleBackend()
-        load(path: path)
-        // Restore position after a short delay for the new backend to initialize
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-            self?.seek(pos, absolute: true)
-        }
-    }
+    var isFloat: Bool          { mpvLayer.isFloat        }
 }
 
 // ════════════════════════════════════════════════════════
@@ -2216,7 +1698,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var originalPath: String?        // 目前播放的原始檔路徑
     var stabilizedPath: String?      // Phase 1：穩定化 MP4 路徑
     var isShowingStabilized = false  // Phase 1：目前顯示穩定化版本？
-    var gyroCore: GyroCore?      // Phase 2：即時 gyrocore 穩定化（nil = 關閉）
+    var activeGyro: GyroCoreProvider?  // Phase 2：即時 gyrocore 穩定化（nil = 關閉）
+    var gyroMethod: String = "spectrum" // "spectrum" or "gyroflow"
     var gyroOffsetMs: Double = 0.0  // Gyro-video sync offset (ms)
     var gyroSmoothness: Double = 0.5  // 平滑度 (0.01–3.0)
     var gyroRSEnabled: Bool = true    // Rolling shutter 修正
@@ -2225,35 +1708,11 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var stabManager = StabilizationManager()
     var keyMonitor: Any?
 
-    // ── mpv color parameter cycling (number keys 1-6) ──
-    static let trcOptions     = ["hlg", "pq", "srgb", "auto", "linear", "gamma2.2", "bt.1886"]
-    static let primOptions    = ["bt.2020", "bt.709", "display-p3", "auto"]
-    static let peakOptions    = [String(displayPeakNits()), "1000", "auto", "203", "400", "600", "1600"]
-    static let hdrPeakOptions = ["no", "auto", "yes"]
-    static let tmapOptions    = ["auto", "clip", "mobius", "reinhard", "hable", "bt.2390", "spline"]
-    static let csOptions: [(label: String, name: CFString)] = [
-        ("itur_2100_HLG",  CGColorSpace.itur_2100_HLG),
-        ("itur_2100_PQ",   CGColorSpace.itur_2100_PQ),
-        ("sRGB",           CGColorSpace.sRGB),
-        ("displayP3",      CGColorSpace.displayP3),
-        ("linearSRGB",     CGColorSpace.linearSRGB),
-        ("extendedLinearSRGB", CGColorSpace.extendedLinearSRGB),
-        ("genericRGBLinear", CGColorSpace.genericRGBLinear),
-    ]
-    var trcIndex:     Int = 1   // target-trc  (pq)
-    var primIndex:    Int = 0   // target-prim (bt.2020)
-    var peakIndex:    Int = 0   // target-peak (由 displayPeakNits 決定初始值)
-    var hdrPeakIndex: Int = 0   // hdr-compute-peak (no)
-    var tmapIndex:    Int = 0   // tone-mapping (auto)
-    var csIndex:      Int = 1   // CGColorSpace (itur_2100_PQ)
-
     func applicationDidFinishLaunching(_ notification: Notification) {
-        let mpvOk = lib.load()
-        let mdkOk = mdkLib.load()
-        guard mpvOk || mdkOk else {
+        guard mdkLib.load() else {
             let a = NSAlert()
-            a.messageText = "No video backend found"
-            a.informativeText = "Install IINA (for mpv) or Gyroflow (for MDK)"
+            a.messageText = "MDK not found"
+            a.informativeText = "Install Gyroflow.app (contains mdk.framework)"
             a.runModal()
             NSApplication.shared.terminate(nil)
             return
@@ -2333,12 +1792,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // ──────────────────────────────────────────────────────────
 
         // ── 鍵盤快捷鍵 ────────────────────────────────────────
-        // 1 (18)     : cycle target-trc
-        // 2 (19)     : cycle target-prim
-        // 3 (20)     : cycle target-peak
-        // 4 (21)     : cycle hdr-compute-peak
-        // 5 (23)     : cycle tone-mapping
-        // 6 (22)     : cycle CGColorSpace
         // M (46)     : toggle mute
         // S (1)      : Phase 1：切換原始↔穩定化（若無則觸發 gyroflow 渲染）
         // R (15)     : gyro 穩定化 on/off
@@ -2351,66 +1804,17 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // = (24)     : frame delay +0.25（Shift: +0.05）
         // ← (123)   : 倒退 5 秒
         // → (124)   : 快進 5 秒
-        // M (46)     : toggle mute
         // Space (49) : 暫停/繼續
         // Q (12)     : 離開
         keyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard let self else { return event }
             switch event.keyCode {
-            case 18:                                         // 1：cycle target-trc
-                self.trcIndex = (self.trcIndex + 1) % Self.trcOptions.count
-                let val = Self.trcOptions[self.trcIndex]
-                self.mpvView.setColorOption("target-trc", val)
-                self.mpvView.seek(0, absolute: true)
-                print("[color] target-trc = \(val)")
-                self.updateTitle()
-                return nil
-            case 19:                                         // 2：cycle target-prim
-                self.primIndex = (self.primIndex + 1) % Self.primOptions.count
-                let val = Self.primOptions[self.primIndex]
-                self.mpvView.setColorOption("target-prim", val)
-                self.mpvView.seek(0, absolute: true)
-                print("[color] target-prim = \(val)")
-                self.updateTitle()
-                return nil
-            case 20:                                         // 3：cycle target-peak
-                self.peakIndex = (self.peakIndex + 1) % Self.peakOptions.count
-                let val = Self.peakOptions[self.peakIndex]
-                self.mpvView.setColorOption("target-peak", val)
-                self.mpvView.seek(0, absolute: true)
-                print("[color] target-peak = \(val)")
-                self.updateTitle()
-                return nil
-            case 21:                                         // 4：cycle hdr-compute-peak
-                self.hdrPeakIndex = (self.hdrPeakIndex + 1) % Self.hdrPeakOptions.count
-                let val = Self.hdrPeakOptions[self.hdrPeakIndex]
-                self.mpvView.setColorOption("hdr-compute-peak", val)
-                self.mpvView.seek(0, absolute: true)
-                print("[color] hdr-compute-peak = \(val)")
-                self.updateTitle()
-                return nil
-            case 23:                                         // 5：cycle tone-mapping
-                self.tmapIndex = (self.tmapIndex + 1) % Self.tmapOptions.count
-                let val = Self.tmapOptions[self.tmapIndex]
-                self.mpvView.setColorOption("tone-mapping", val)
-                self.mpvView.seek(0, absolute: true)
-                print("[color] tone-mapping = \(val)")
-                self.updateTitle()
-                return nil
-            case 22:                                         // 6：cycle CGColorSpace
-                self.csIndex = (self.csIndex + 1) % Self.csOptions.count
-                let opt = Self.csOptions[self.csIndex]
-                self.mpvView.setColorspace(opt.name)
-                self.mpvView.seek(0, absolute: true)
-                print("[color] CGColorSpace = \(opt.label)")
-                self.updateTitle()
-                return nil
             case 46:  self.mpvView.toggleMute(); return nil   // M：toggle mute
             case 1:   self.handleStabilizeKey(); return nil  // S：Phase 1 切換
             case 15:                                         // R：切換 gyro 穩定化 on/off
-                if self.gyroCore != nil {
-                    self.gyroCore?.stop()
-                    self.gyroCore = nil
+                if self.activeGyro != nil {
+                    self.activeGyro?.stop()
+                    self.activeGyro = nil
                     self.mpvView.loadGyroCore(nil)
                     self.updateTitle()
                 } else if let path = self.originalPath {
@@ -2435,21 +1839,21 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             case 17:                                         // T：切換 Rolling Shutter 修正
                 self.gyroRSEnabled.toggle()
                 print("[gyro] RS correction: \(self.gyroRSEnabled ? "ON" : "OFF")")
-                if let path = self.originalPath, self.gyroCore != nil {
+                if let path = self.originalPath, self.activeGyro != nil {
                     self.restartGyro(for: path)
                 }
                 return nil
             case 33:                                         // [：降低平滑度
                 self.gyroSmoothness = max(0.01, self.gyroSmoothness - 0.1)
                 print(String(format: "[gyro] smoothness = %.2f", self.gyroSmoothness))
-                if let path = self.originalPath, self.gyroCore != nil {
+                if let path = self.originalPath, self.activeGyro != nil {
                     self.restartGyro(for: path)
                 }
                 return nil
             case 30:                                         // ]：提高平滑度
                 self.gyroSmoothness = min(3.0, self.gyroSmoothness + 0.1)
                 print(String(format: "[gyro] smoothness = %.2f", self.gyroSmoothness))
-                if let path = self.originalPath, self.gyroCore != nil {
+                if let path = self.originalPath, self.activeGyro != nil {
                     self.restartGyro(for: path)
                 }
                 return nil
@@ -2477,11 +1881,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.mpvView.resetGyroFrameIdx()
                 self.updateTitle()
                 return nil
-            case 35:                                         // P：切換 mpv ↔ MDK
-                guard let path = self.originalPath else { return event }
-                self.mpvView.switchBackendAndReload(path: path)
-                if self.gyroCore != nil { self.mpvView.loadGyroCore(self.gyroCore) }
-                self.updateTitle()
+            case 5:                                          // G：切換 gyro method
+                self.gyroMethod = self.gyroMethod == "spectrum" ? "gyroflow" : "spectrum"
+                print("[gyro] method = \(self.gyroMethod)")
+                if let path = self.originalPath, self.activeGyro != nil {
+                    self.restartGyro(for: path)
+                }
                 return nil
             case 12:  NSApplication.shared.terminate(nil); return nil // Q
             default:  return event
@@ -2511,7 +1916,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             originalPath = url.path
             stabilizedPath = nil
             isShowingStabilized = false
-            gyroCore?.stop(); gyroCore = nil
+            activeGyro?.stop(); activeGyro = nil
             mpvView.loadGyroCore(nil)
             mpvView.load(path: url.path)
             startGyroGeneration(for: url.path)
@@ -2544,41 +1949,50 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // 暫停 mpv，避免 gyrocore 初始化期間顯示未穩定化畫面
         mpvView.setPause(true)
 
-        let server = GyroCore()
-        gyroCore = server
-        updateTitle()
-
         var cfg = GyroConfig()
         cfg.readoutMs = gyroRSEnabled ? readout : 0.0
         cfg.smooth = gyroSmoothness
         cfg.gyroOffsetMs = gyroOffsetMs
-        server.start(
-            videoPath: videoPath, lensPath: lensPath, config: cfg,
-            onReady: { [weak self] in
-                guard let self, self.gyroCore === server else { return }
-                self.mpvView.loadGyroCore(server)
-                // Seek 回開頭確保第一幀就是穩定化的，然後恢復播放
-                self.mpvView.seek(0, absolute: true)
-                self.mpvView.setPause(false)
-                print("[gyro] ✅ 穩定化啟動")
-                self.updateTitle()
-            },
-            onError: { [weak self] msg in
-                print("[gyro] ❌ \(msg)")
-                DispatchQueue.main.async {
-                    if self?.gyroCore === server { self?.gyroCore = nil }
-                    // 載入失敗也要恢復播放
-                    self?.mpvView.setPause(false)
-                    self?.updateTitle()
-                }
+        cfg.lensDbDir = "/Applications/Gyroflow.app/Contents/Resources"
+
+        let onReady: (GyroCoreProvider) -> Void = { [weak self] server in
+            guard let self, self.activeGyro === server else { return }
+            self.mpvView.loadGyroCore(server)
+            self.mpvView.seek(0, absolute: true)
+            self.mpvView.setPause(false)
+            print("[gyro] ✅ 穩定化啟動 (\(self.gyroMethod))")
+            self.updateTitle()
+        }
+        let onError: (GyroCoreProvider, String) -> Void = { [weak self] server, msg in
+            print("[gyro] ❌ \(msg)")
+            DispatchQueue.main.async {
+                if self?.activeGyro === server { self?.activeGyro = nil }
+                self?.mpvView.setPause(false)
+                self?.updateTitle()
             }
-        )
+        }
+
+        if gyroMethod == "gyroflow" {
+            let server = GyroFlowCore()
+            activeGyro = server
+            updateTitle()
+            server.start(videoPath: videoPath, lensPath: lensPath, config: cfg,
+                         onReady: { onReady(server) },
+                         onError: { onError(server, $0) })
+        } else {
+            let server = GyroCore()
+            activeGyro = server
+            updateTitle()
+            server.start(videoPath: videoPath, lensPath: lensPath, config: cfg,
+                         onReady: { onReady(server) },
+                         onError: { onError(server, $0) })
+        }
     }
 
     /// 重新啟動 gyro（offset 變更時使用）
     private func restartGyro(for videoPath: String) {
-        gyroCore?.stop()
-        gyroCore = nil
+        activeGyro?.stop()
+        activeGyro = nil
         mpvView.loadGyroCore(nil)
         startGyroGeneration(for: videoPath)
     }
@@ -2639,42 +2053,31 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     // ── 視窗標題更新 ──────────────────────────────────────
-    private var colorStatusString: String {
-        let trc   = Self.trcOptions[trcIndex]
-        let prim  = Self.primOptions[primIndex]
-        let peak  = Self.peakOptions[peakIndex]
-        let cpk   = Self.hdrPeakOptions[hdrPeakIndex]
-        let tm    = Self.tmapOptions[tmapIndex]
-        let cs    = Self.csOptions[csIndex].label
-        let depth = mpvView.isFloat ? 16 : 8
-        return "depth=\(depth) 1:target-trc=\(trc) 2:target-prim=\(prim) 3:target-peak=\(peak) 4:hdr-compute-peak=\(cpk) 5:tone-mapping=\(tm) 6:colorspace=\(cs)"
-    }
-
     private func updateTitle(status: String? = nil) {
         let name = originalPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "testmpv"
-        let color = colorStatusString
-        let backend = "[\(mpvView.backendName)]"
+        let depth = mpvView.isFloat ? 16 : 8
         if let s = status {
-            window.title = "testmpv \(backend) — \(s)"
+            window.title = "testmpv [MDK] — \(s)"
         } else if stabManager.isRendering {
-            window.title = "\(name) \(backend) [渲染中…]"
-        } else if let srv = gyroCore {
+            window.title = "\(name) [MDK] [渲染中…]"
+        } else if let srv = activeGyro {
             let syncStr = gyroFrameSync != 0 ? "  sync=\(gyroFrameSync > 0 ? "+" : "")\(gyroFrameSync)f" : ""
-            let ptsStr = lib.rcGetInfo != nil ? "  pts=frame_info" : String(format: "  delay=%.2ff", frameDelayFrames)
+            let ptsStr = String(format: "  delay=%.2ff", frameDelayFrames)
             let params = String(format: "smooth=%.2f  RS=%@  offset=%dms",
                                 gyroSmoothness, gyroRSEnabled ? "ON" : "OFF", Int(gyroOffsetMs)) + syncStr + ptsStr
+            let methodStr = gyroMethod == "gyroflow" ? "gyroflow" : "gyro"
             window.title = srv.isReady
-                ? "\(name) \(backend) [gyro \(params)]  \(color)"
-                : "\(name) \(backend) [gyrocore 初始化中…]"
+                ? "\(name) [MDK] [\(methodStr) \(params)]  depth=\(depth)"
+                : "\(name) [MDK] [\(methodStr) 初始化中…]"
         } else if isShowingStabilized {
-            window.title = "\(name) \(backend) [Phase 1]  \(color)"
+            window.title = "\(name) [MDK] [Phase 1]  depth=\(depth)"
         } else {
-            window.title = "\(name) \(backend) \(color)"
+            window.title = "\(name) [MDK] depth=\(depth)"
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
-        gyroCore?.stop()
+        activeGyro?.stop()
         stabManager.cancel()
         if let m = keyMonitor { NSEvent.removeMonitor(m) }
     }

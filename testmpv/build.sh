@@ -34,7 +34,6 @@ swiftc main.swift \
     -framework OpenGL \
     -framework QuartzCore \
     -framework AVFoundation \
-    -Xlinker -rpath -Xlinker /Applications/IINA.app/Contents/Frameworks \
     -Xlinker -rpath -Xlinker /Applications/Gyroflow.app/Contents/Frameworks \
     -Xlinker -undefined -Xlinker dynamic_lookup \
     -O \
@@ -48,4 +47,4 @@ echo "  ./testmpv /Users/chenpc/my_photo/C0206.MP4"
 echo "  ./testmpv /Users/chenpc/my_photo/HLG.HIF"
 echo "  ./testmpv   (open dialog)"
 echo ""
-echo "mpv log: /tmp/testmpv.log"
+echo "  MDK backend (Gyroflow.app)"

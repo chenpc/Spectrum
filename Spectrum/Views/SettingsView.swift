@@ -115,13 +115,23 @@ private struct GyroSettingsTab: View {
     @AppStorage("gyroSmoothnessPitch") private var smoothnessPitch: Double = 0
     @AppStorage("gyroSmoothnessYaw") private var smoothnessYaw: Double = 0
     @AppStorage("gyroSmoothnessRoll") private var smoothnessRoll: Double = 0
+    @AppStorage("gyroMethod") private var gyroMethod: String = "spectrum"
     @State private var gyroDylibFound: Bool = false
 
     var body: some View {
         Form {
+            // MARK: Gyro Method
+            Section("Gyro Method") {
+                Picker("Method", selection: $gyroMethod) {
+                    Text("Spectrum").tag("spectrum")
+                    Text("Gyroflow").tag("gyroflow")
+                }
+                .pickerStyle(.radioGroup)
+            }
+
             // MARK: Enable + dylib status
             Section {
-                Toggle("Enable Gyroflow stabilization (during mpv playback)", isOn: $gyroStabEnabled)
+                Toggle("Enable Gyroflow stabilization", isOn: $gyroStabEnabled)
 
                 HStack(spacing: 5) {
                     Image(systemName: gyroDylibFound ? "checkmark.circle.fill" : "xmark.circle.fill")

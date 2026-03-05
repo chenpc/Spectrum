@@ -58,6 +58,7 @@ struct PhotoDetailView: View {
     @AppStorage("gyroSmoothnessPitch") private var gyroSmoothnessPitch: Double = 0
     @AppStorage("gyroSmoothnessYaw") private var gyroSmoothnessYaw: Double = 0
     @AppStorage("gyroSmoothnessRoll") private var gyroSmoothnessRoll: Double = 0
+    @AppStorage("gyroMethod") private var gyroMethod: String = "spectrum"
 
     private var bookmarkData: Data? {
         photo.resolveBookmarkData(from: folders)
@@ -89,8 +90,8 @@ struct PhotoDetailView: View {
             mpvController.stopGyroStab()
             let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
             let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
-            mpvController.startGyroStab(videoPath: photo.filePath, fps: fps,
-                                        config: buildGyroConfig(), lensPath: lens)
+            startGyro(videoPath: photo.filePath, fps: fps,
+                      config: buildGyroConfig(), lensPath: lens)
         }
         .onDisappear {
             removeSpaceMonitor()
@@ -520,7 +521,10 @@ struct PhotoDetailView: View {
         // Per-video override takes priority
         if let json = gyroConfigJson,
            let data = json.data(using: .utf8),
-           let config = try? JSONDecoder().decode(GyroConfig.self, from: data) {
+           var config = try? JSONDecoder().decode(GyroConfig.self, from: data) {
+            if config.lensDbDir == nil {
+                config.lensDbDir = "/Applications/Gyroflow.app/Contents/Resources"
+            }
             return config
         }
         // Fallback to global settings
@@ -544,8 +548,20 @@ struct PhotoDetailView: View {
             perAxis:              gyroPerAxis,
             smoothnessPitch:      gyroSmoothnessPitch,
             smoothnessYaw:        gyroSmoothnessYaw,
-            smoothnessRoll:       gyroSmoothnessRoll
+            smoothnessRoll:       gyroSmoothnessRoll,
+            lensDbDir:            "/Applications/Gyroflow.app/Contents/Resources"
         )
+    }
+
+    /// Route to spectrum or gyroflow method based on user setting.
+    private func startGyro(videoPath: String, fps: Double, config: GyroConfig, lensPath: String?) {
+        if gyroMethod == "gyroflow" {
+            mpvController.startGyroStabGyroflow(videoPath: videoPath, fps: fps,
+                                                config: config, lensPath: lensPath)
+        } else {
+            mpvController.startGyroStab(videoPath: videoPath, fps: fps,
+                                        config: config, lensPath: lensPath)
+        }
     }
 
     private func toggleGyroStab() {
@@ -554,8 +570,8 @@ struct PhotoDetailView: View {
         } else {
             let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
             let lens = gyroLensPath.isEmpty ? nil : gyroLensPath
-            mpvController.startGyroStab(videoPath: photo.filePath, fps: fps,
-                                        config: buildGyroConfig(), lensPath: lens)
+            startGyro(videoPath: photo.filePath, fps: fps,
+                      config: buildGyroConfig(), lensPath: lens)
         }
     }
 
@@ -668,8 +684,8 @@ struct PhotoDetailView: View {
             if gyroStabEnabled && GyroCore.dylibFound {
                 let cfg = buildGyroConfig()
                 let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
-                mpvController.startGyroStab(videoPath: path, fps: 30,
-                                            config: cfg, lensPath: lens)
+                startGyro(videoPath: path, fps: 30,
+                          config: cfg, lensPath: lens)
             }
 
             // Install key monitor with full playback controls
@@ -699,13 +715,19 @@ struct PhotoDetailView: View {
         let mpv   = mpvController
         let gyroCfg = buildGyroConfig()
         let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
+        let method = gyroMethod
         let gyroToggle: () -> Void = { [mpv, photo] in
             if mpv.gyroStabEnabled {
                 mpv.stopGyroStab()
             } else {
                 let fps = mpv.videoFPS > 0 ? mpv.videoFPS : 30.0
-                mpv.startGyroStab(videoPath: photo.filePath, fps: fps,
-                                  config: gyroCfg, lensPath: lens)
+                if method == "gyroflow" {
+                    mpv.startGyroStabGyroflow(videoPath: photo.filePath, fps: fps,
+                                              config: gyroCfg, lensPath: lens)
+                } else {
+                    mpv.startGyroStab(videoPath: photo.filePath, fps: fps,
+                                      config: gyroCfg, lensPath: lens)
+                }
             }
         }
         let inspectorToggle: () -> Void = { [self] in self.showInspector.toggle() }

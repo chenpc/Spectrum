@@ -33,8 +33,11 @@ use gyroflow_core::stabilization::{ComputeParams, FrameTransform};
 use std::ffi::CStr;
 use std::io::Write as _;
 use std::os::raw::{c_char, c_int};
+use std::sync::Mutex;
 use serde::{Deserialize};
 use serde_json::Value as JVal;
+
+static CWD_MUTEX: Mutex<()> = Mutex::new(());
 
 /// JSON-configurable parameters for gyrocore_load.
 /// All fields are optional — omit or pass null config_json to use defaults.
@@ -62,6 +65,7 @@ struct Config {
     smoothness_pitch:       f64,     // Per-axis pitch smoothness (0 = use global)
     smoothness_yaw:         f64,     // Per-axis yaw smoothness (0 = use global)
     smoothness_roll:        f64,     // Per-axis roll smoothness (0 = use global)
+    lens_db_dir:            Option<String>, // Dir containing camera_presets/ (e.g. Gyroflow.app/Contents/Resources)
 }
 
 impl Default for Config {
@@ -88,6 +92,7 @@ impl Default for Config {
             smoothness_pitch:       0.0,    // 0 = use global
             smoothness_yaw:         0.0,
             smoothness_roll:        0.0,
+            lens_db_dir:            None,
         }
     }
 }
@@ -148,6 +153,17 @@ pub extern "C" fn gyrocore_load(
 
         eprintln!("[gyrocore] Loading: {}", canonical.display());
         let stab = StabilizationManager::default();
+
+        // Load lens profiles from external directory (e.g. Gyroflow.app/Contents/Resources)
+        if let Some(ref dir) = cfg.lens_db_dir {
+            let _lock = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let old = std::env::current_dir().ok();
+            let _ = std::env::set_current_dir(dir);
+            stab.lens_profile_db.write().load_all();
+            if let Some(old) = old { let _ = std::env::set_current_dir(old); }
+            eprintln!("[gyrocore] Loaded lens profiles from {dir}");
+        }
+
         stab.load_video_file(&mut file, file_size, &url, None, false)
             .map_err(|e| format!("load_video_file: {e:?}"))?;
 
@@ -720,6 +736,339 @@ pub unsafe extern "C" fn gyrocore_get_lens_info(
 
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn gyrocore_free(handle: *mut State) {
+    if !handle.is_null() {
+        drop(Box::from_raw(handle));
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// MARK: - Gyroflow incremental API
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// Unlike the gyrocore_* one-shot API, the gyroflow_* API retains the full
+// StabilizationManager so parameters can be changed incrementally without
+// reloading the video file (~50ms recompute vs ~300ms full reload).
+
+struct GyroflowState {
+    stab: StabilizationManager,
+    compute_params: Option<ComputeParams>,
+    frame_count: usize,
+    row_count:   usize,
+    scaled_fps:  f64,
+    vid_w:       usize,
+    vid_h:       usize,
+    fps:         f64,
+    fx: f32, fy: f32,
+    cx: f32, cy: f32,
+    k:  [f32; 12],
+    distortion_model: i32,
+    r_limit: f32,
+    lens_info: String,
+}
+
+impl GyroflowState {
+    fn update_from_compute_params(&mut self) {
+        if let Some(ref cp) = self.compute_params {
+            let ts0 = timestamp_at_frame(0, self.scaled_fps);
+            let ft0 = FrameTransform::at_timestamp(cp, ts0, 0);
+            let kp = &ft0.kernel_params;
+            self.row_count = kp.matrix_count as usize;
+            self.fx = kp.f[0];
+            self.fy = kp.f[1];
+            self.cx = kp.c[0];
+            self.cy = kp.c[1];
+            self.k  = kp.k;
+            self.distortion_model = kp.distortion_model as i32;
+            self.r_limit = kp.r_limit;
+        }
+    }
+}
+
+/// Create an empty GyroflowState. Must call gyroflow_load_video() next.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyroflow_create(lens_db_dir: *const c_char) -> *mut GyroflowState {
+    let stab = StabilizationManager::default();
+
+    // Load lens profiles from external directory if provided
+    if !lens_db_dir.is_null() {
+        if let Ok(dir) = unsafe { CStr::from_ptr(lens_db_dir) }.to_str() {
+            let _lock = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
+            let old = std::env::current_dir().ok();
+            let _ = std::env::set_current_dir(dir);
+            stab.lens_profile_db.write().load_all();
+            if let Some(old) = old { let _ = std::env::set_current_dir(old); }
+            eprintln!("[gyroflow] Loaded lens profiles from {dir}");
+        }
+    }
+
+    Box::into_raw(Box::new(GyroflowState {
+        stab,
+        compute_params: None,
+        frame_count: 0, row_count: 1, scaled_fps: 0.0,
+        vid_w: 0, vid_h: 0, fps: 0.0,
+        fx: 0.0, fy: 0.0, cx: 0.0, cy: 0.0,
+        k: [0.0; 12], distortion_model: 0, r_limit: 0.0,
+        lens_info: String::new(),
+    }))
+}
+
+/// Load video file and auto-detect gyro data. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyroflow_load_video(
+    handle: *mut GyroflowState,
+    video_path: *const c_char,
+) -> c_int {
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), Box<dyn std::error::Error>> {
+        let s = unsafe { &mut *handle };
+        let path_str = unsafe { CStr::from_ptr(video_path) }.to_str()?;
+        let canonical = std::fs::canonicalize(path_str)?;
+        let url = format!("file://{}", canonical.display());
+        let mut file = std::fs::File::open(&canonical)?;
+        let file_size = file.metadata()?.len() as usize;
+
+        eprintln!("[gyroflow] Loading: {}", canonical.display());
+        s.stab.load_video_file(&mut file, file_size, &url, None, false)
+            .map_err(|e| format!("load_video_file: {e:?}"))?;
+
+        let (vid_w, vid_h, fps, frame_count) = {
+            let p = s.stab.params.read();
+            (p.size.0, p.size.1, p.fps, p.frame_count)
+        };
+        s.vid_w = vid_w;
+        s.vid_h = vid_h;
+        s.fps = fps;
+        s.frame_count = frame_count;
+        eprintln!("[gyroflow] {}×{} @ {:.3} fps, {} frames", vid_w, vid_h, fps, frame_count);
+        Ok(())
+    }));
+    match res {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => { eprintln!("[gyroflow] load_video error: {e}"); -1 }
+        Err(_) => { eprintln!("[gyroflow] load_video panicked"); -1 }
+    }
+}
+
+/// Load lens profile from file. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyroflow_load_lens(
+    handle: *mut GyroflowState,
+    lens_path: *const c_char,
+) -> c_int {
+    if handle.is_null() || lens_path.is_null() { return -1; }
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| -> Result<(), Box<dyn std::error::Error>> {
+        let s = unsafe { &mut *handle };
+        let path_str = unsafe { CStr::from_ptr(lens_path) }.to_str()?;
+        let content = std::fs::read_to_string(path_str)?;
+        let json: JVal = serde_json::from_str(&content)?;
+
+        if let Some(cal) = json.get("calibration_data") {
+            let cal_str = serde_json::to_string(cal)?;
+            s.stab.load_lens_profile(&cal_str);
+            eprintln!("[gyroflow] Loaded lens from calibration_data in {path_str}");
+        } else {
+            let cal_str = serde_json::to_string(&json)?;
+            s.stab.load_lens_profile(&cal_str);
+            eprintln!("[gyroflow] Loaded lens profile: {path_str}");
+        }
+        Ok(())
+    }));
+    match res {
+        Ok(Ok(())) => 0,
+        Ok(Err(e)) => { eprintln!("[gyroflow] load_lens error: {e}"); -1 }
+        Err(_) => -1
+    }
+}
+
+/// Set a numeric parameter. Key is a null-terminated C string.
+/// Supported keys: smoothness, smoothness_pitch, smoothness_yaw, smoothness_roll,
+/// fov, lens_correction_amount, adaptive_zoom, max_zoom, zooming_method,
+/// horizon_lock_amount, horizon_lock_roll, use_gravity_vectors,
+/// frame_readout_time, video_speed, gyro_offset
+#[unsafe(no_mangle)]
+pub extern "C" fn gyroflow_set_param(
+    handle: *mut GyroflowState,
+    key: *const c_char,
+    value: f64,
+) -> c_int {
+    if handle.is_null() || key.is_null() { return -1; }
+    let s = unsafe { &mut *handle };
+    let k = match unsafe { CStr::from_ptr(key) }.to_str() {
+        Ok(k) => k,
+        Err(_) => return -1,
+    };
+    let stab = &s.stab;
+    match k {
+        "smoothness" => { stab.smoothing.write().current_mut().set_parameter("smoothness", value); }
+        "smoothness_pitch" => { stab.smoothing.write().current_mut().set_parameter("smoothness_pitch", value); }
+        "smoothness_yaw" => { stab.smoothing.write().current_mut().set_parameter("smoothness_yaw", value); }
+        "smoothness_roll" => { stab.smoothing.write().current_mut().set_parameter("smoothness_roll", value); }
+        "fov" => { stab.params.write().fov = value; }
+        "lens_correction_amount" => { stab.set_lens_correction_amount(value); }
+        "adaptive_zoom" => { stab.set_adaptive_zoom(value); }
+        "max_zoom" => { stab.params.write().max_zoom = Some(value); }
+        "zooming_method" => { stab.set_zooming_method(value as i32); }
+        "horizon_lock_amount" => { stab.set_horizon_lock(value * 100.0, 0.0, false, 0.0); }
+        "horizon_lock_roll" => { stab.set_horizon_lock(0.0, value, false, 0.0); }
+        "use_gravity_vectors" => { if value > 0.5 { stab.set_use_gravity_vectors(true); } }
+        "frame_readout_time" => { stab.params.write().frame_readout_time = value; }
+        "video_speed" => { stab.params.write().video_speed = value; }
+        "gyro_offset" => { stab.set_offset(0, value); }
+        _ => {
+            eprintln!("[gyroflow] Unknown param: {k}");
+            return -1;
+        }
+    }
+    0
+}
+
+/// Set a string parameter.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyroflow_set_param_str(
+    handle: *mut GyroflowState,
+    key: *const c_char,
+    value: *const c_char,
+) -> c_int {
+    if handle.is_null() || key.is_null() || value.is_null() { return -1; }
+    let s = unsafe { &mut *handle };
+    let k = match unsafe { CStr::from_ptr(key) }.to_str() { Ok(k) => k, Err(_) => return -1 };
+    let v = match unsafe { CStr::from_ptr(value) }.to_str() { Ok(v) => v, Err(_) => return -1 };
+    match k {
+        "imu_orientation" => {
+            s.stab.set_imu_orientation(v.to_string());
+        }
+        _ => {
+            eprintln!("[gyroflow] Unknown string param: {k}");
+            return -1;
+        }
+    }
+    0
+}
+
+/// Run recompute_blocking() and update compute_params. Returns 0 on success.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyroflow_recompute(handle: *mut GyroflowState) -> c_int {
+    if handle.is_null() { return -1; }
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        let s = unsafe { &mut *handle };
+        s.stab.recompute_blocking();
+        let cp = ComputeParams::from_manager(&s.stab);
+        s.scaled_fps = cp.scaled_fps;
+
+        // Update lens info from lens profile
+        {
+            let lens = s.stab.lens.read();
+            let id = &lens.identifier;
+            if !id.is_empty() {
+                s.lens_info = id.clone();
+            }
+        }
+
+        s.compute_params = Some(cp);
+        s.update_from_compute_params();
+
+        eprintln!("[gyroflow] Recomputed: row_count={} scaled_fps={:.3} dist_model={}",
+                  s.row_count, s.scaled_fps, s.distortion_model);
+    }));
+    match res {
+        Ok(()) => 0,
+        Err(_) => { eprintln!("[gyroflow] recompute panicked"); -1 }
+    }
+}
+
+/// Get per-frame matrices. Same output format as gyrocore_get_frame_at_ts.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyroflow_get_frame(
+    handle: *const GyroflowState,
+    ts_sec: f64,
+    output: *mut f32,
+) -> c_int {
+    if handle.is_null() || output.is_null() { return -1; }
+    let s = unsafe { &*handle };
+    let cp = match &s.compute_params {
+        Some(cp) => cp,
+        None => return -1,
+    };
+
+    let ts_ms = ts_sec * 1000.0;
+    let fi = ((ts_ms * s.scaled_fps / 1000.0).round() as i64)
+        .max(0).min(s.frame_count as i64 - 1) as usize;
+
+    let ft = FrameTransform::at_timestamp(cp, ts_ms, fi);
+    let mat_len = ft.matrices.len();
+    let total = s.row_count * 14 + 9;
+    let out = std::slice::from_raw_parts_mut(output, total);
+
+    for row in 0..s.row_count {
+        let m = if mat_len > 1 {
+            ft.matrices.get(row).or_else(|| ft.matrices.last()).unwrap()
+        } else {
+            ft.matrices.first().unwrap_or(&[0.0_f32; 14])
+        };
+        let base = row * 14;
+        out[base..base + 14].copy_from_slice(&m[..14]);
+    }
+
+    let kp = &ft.kernel_params;
+    let pf_base = s.row_count * 14;
+    out[pf_base]     = kp.f[0];
+    out[pf_base + 1] = kp.f[1];
+    out[pf_base + 2] = kp.c[0];
+    out[pf_base + 3] = kp.c[1];
+    out[pf_base + 4] = kp.k[0];
+    out[pf_base + 5] = kp.k[1];
+    out[pf_base + 6] = kp.k[2];
+    out[pf_base + 7] = kp.k[3];
+    out[pf_base + 8] = kp.fov;
+
+    total as c_int
+}
+
+/// Write 96-byte params blob (same format as gyrocore_get_params).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyroflow_get_params(
+    handle: *const GyroflowState,
+    buf: *mut u8,
+) -> c_int {
+    if handle.is_null() || buf.is_null() { return -1; }
+    let s = &*handle;
+    let out = std::slice::from_raw_parts_mut(buf, 96);
+    let mut w = std::io::Cursor::new(out);
+    let _ = w.write_all(&(s.frame_count as u32).to_le_bytes());
+    let _ = w.write_all(&(s.row_count   as u32).to_le_bytes());
+    let _ = w.write_all(&(s.vid_w       as u32).to_le_bytes());
+    let _ = w.write_all(&(s.vid_h       as u32).to_le_bytes());
+    let _ = w.write_all(&s.fps.to_le_bytes());
+    let _ = w.write_all(&s.fx.to_le_bytes());
+    let _ = w.write_all(&s.fy.to_le_bytes());
+    let _ = w.write_all(&s.cx.to_le_bytes());
+    let _ = w.write_all(&s.cy.to_le_bytes());
+    for ki in &s.k {
+        let _ = w.write_all(&ki.to_le_bytes());
+    }
+    let _ = w.write_all(&s.distortion_model.to_le_bytes());
+    let _ = w.write_all(&s.r_limit.to_le_bytes());
+    0
+}
+
+/// Copy lens info string into buf. Returns string length or -1.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyroflow_get_lens_info(
+    handle: *const GyroflowState,
+    buf: *mut u8,
+    buf_len: c_int,
+) -> c_int {
+    if handle.is_null() || buf.is_null() || buf_len <= 0 { return -1; }
+    let s = &*handle;
+    let bytes = s.lens_info.as_bytes();
+    let copy_len = bytes.len().min((buf_len - 1) as usize);
+    std::ptr::copy_nonoverlapping(bytes.as_ptr(), buf, copy_len);
+    *buf.add(copy_len) = 0;
+    copy_len as c_int
+}
+
+/// Free the GyroflowState.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyroflow_free(handle: *mut GyroflowState) {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
     }

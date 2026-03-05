@@ -93,7 +93,7 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     // MARK: - Gyroflow warp pipeline
 
     /// Set from main thread (MPVPlayerNSView.loadGyroCore); read in draw().
-    fileprivate var gyroCore: GyroCore?
+    fileprivate var activeGyro: GyroCoreProvider?
 
     // Intermediate FBO — mpv renders here; warp pass reads this and writes to displayFBO
     private var stabFBO:  GLuint = 0
@@ -742,8 +742,8 @@ void main() {
     }
 
     /// Call from main thread to attach/detach gyro stabilization.
-    func loadGyroCore(_ core: GyroCore?) {
-        gyroCore = core
+    func loadGyroCore(_ core: GyroCoreProvider?) {
+        activeGyro = core
         lastGyroFrameIdx = nil   // reset monotonic guard
         waitingForGyro = false   // gyro ready (or detach) -> allow rendering
         pendingFrame = true
@@ -937,11 +937,11 @@ void main() {
         var gyroFrameRepeated = false
 
         // ── Intermediate FBO sizing ──────────────────────────────────────────
-        let gyroActive = gyroCore?.isReady == true && warpProg != 0
+        let gyroActive = activeGyro?.isReady == true && warpProg != 0
         let vidW: GLsizei, vidH: GLsizei
         if gyroActive {
-            vidW = GLsizei(gyroCore!.gyroVideoW)
-            vidH = GLsizei(gyroCore!.gyroVideoH)
+            vidW = GLsizei(activeGyro!.gyroVideoW)
+            vidH = GLsizei(activeGyro!.gyroVideoH)
         } else {
             vidW = w; vidH = h
         }
@@ -972,7 +972,7 @@ void main() {
         if ts >= 0 { mdkRenderedTime = ts }
 
         // ── Gyro matrix AFTER Pass 1 (uses renderVideo timestamp) ────────────
-        if let core = gyroCore, core.isReady {
+        if let core = activeGyro, core.isReady {
             let renderTime = max(0, mdkRenderedTime)
             var fi = max(0, min(Int((renderTime * core.gyroFps).rounded()),
                                 core.frameCount - 1))
@@ -991,7 +991,7 @@ void main() {
         let hasStab = (gyroResult != nil || gyroFrameRepeated) && warpProg != 0
 
         // ── Pass 2: gyroflow per-row warp (stabTex -> displayFBO) ─────────────
-        if hasStab, let core = gyroCore {
+        if hasStab, let core = activeGyro {
             let vH = Int(core.gyroVideoH)
             let vW = core.gyroVideoW
 
@@ -1191,7 +1191,7 @@ class MPVPlayerNSView: NSView {
     }
 
     // Gyro stabilization pass-through
-    nonisolated func loadGyroCore(_ core: GyroCore?) {
+    nonisolated func loadGyroCore(_ core: GyroCoreProvider?) {
         mpvLayer.loadGyroCore(core)
     }
     /// Suppress rendering until gyro is ready — prevents unstabilized first-frame flash.

@@ -4,9 +4,8 @@ import Foundation
 /// Loads mdk.framework at runtime via dlopen.
 ///
 /// Search order:
-///   1. App bundle Resources/lib/mdk.framework  — distribution
-///   2. Gyroflow.app Frameworks/mdk.framework   — development fallback
-///   3. Homebrew /opt/homebrew / /usr/local      — development fallback
+///   1. Gyroflow.app Frameworks/mdk.framework
+///   2. Homebrew /opt/homebrew / /usr/local
 ///
 /// MDK C API symbols are resolved via the bridging header + `-undefined dynamic_lookup`
 /// linker flag. No dlsym needed — just call C functions directly after dlopen succeeds.
@@ -18,11 +17,7 @@ class LibMDK: @unchecked Sendable {
     private var handle: UnsafeMutableRawPointer?
 
     private init() {
-        var searchPaths: [String] = []
-        if let resPath = Bundle.main.resourcePath {
-            searchPaths.append("\(resPath)/lib/mdk.framework/mdk")
-        }
-        searchPaths += [
+        let searchPaths: [String] = [
             "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Versions/A/mdk",
             "/opt/homebrew/lib/mdk.framework/mdk",
             "/usr/local/lib/mdk.framework/mdk",

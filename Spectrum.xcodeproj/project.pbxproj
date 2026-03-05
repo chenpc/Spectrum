@@ -329,7 +329,6 @@
 				B0000001 /* Sources */,
 				AD000001 /* Frameworks */,
 				B0000002 /* Resources */,
-				DC000001 /* Bundle libmpv */,
 				DC000002 /* Bundle libgyrocore */,
 			);
 			buildRules = (
@@ -446,25 +445,6 @@
 			shellPath = /bin/bash;
 			shellScript = "set -e\nSVG=\"${SRCROOT}/Spectrum/Resources/AppIcon.svg\"\nOUT=\"${SRCROOT}/Spectrum/Assets.xcassets/AppIcon.appiconset\"\nTMP=\"${DERIVED_FILE_DIR}/icon-gen\"\nmkdir -p \"$TMP\"\nqlmanage -t -s 1024 -o \"$TMP\" \"$SVG\" 2>/dev/null\ncp \"$TMP/AppIcon.svg.png\" \"$OUT/icon_1024x1024.png\"\nfor S in 512 256 128 64 32 16; do\n  sips -z $S $S \"$TMP/AppIcon.svg.png\" --out \"$OUT/icon_${S}x${S}.png\" 2>/dev/null\ndone\nrm -rf \"$TMP\"\n";
 		};
-		DC000001 /* Bundle libmpv */ = {
-			isa = PBXShellScriptBuildPhase;
-			alwaysOutOfDate = 1;
-			buildActionMask = 2147483647;
-			files = (
-			);
-			inputFileListPaths = (
-			);
-			inputPaths = (
-			);
-			name = "Bundle libmpv";
-			outputFileListPaths = (
-			);
-			outputPaths = (
-			);
-			runOnlyForDeploymentPostprocessing = 0;
-			shellPath = /bin/bash;
-			shellScript = "# Copy pre-built dylibs into app bundle\nSRC_DIR=\"${SRCROOT}/Spectrum/Resources/lib\"\nDST_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nmkdir -p \"$DST_DIR\"\nfor f in \"$SRC_DIR\"/*.dylib; do\n    [ -f \"$f\" ] || continue\n    cp -f \"$f\" \"$DST_DIR/\"\ndone\necho \"Bundled $(ls -1 \"$DST_DIR\"/*.dylib 2>/dev/null | wc -l | tr -d ' ') dylibs\"\n";
-		};
 		DC000002 /* Bundle libgyrocore */ = {
 			isa = PBXShellScriptBuildPhase;
 			alwaysOutOfDate = 1;
@@ -482,7 +462,7 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/bash;
-			shellScript = "set -e\n\nLIB_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nDEST=\"$LIB_DIR/libgyrocore_c.dylib\"\nGW_DIR=\"${SRCROOT}/gyro-wrapper\"\nGW_DYLIB=\"$GW_DIR/target/release/libgyrocore_c.dylib\"\n\nmkdir -p \"$LIB_DIR\"\n\n# Build gyro-wrapper only when source is newer than the existing dylib\nif [ -f \"$GW_DIR/Cargo.toml\" ] && command -v cargo >/dev/null 2>&1; then\n  NEED_BUILD=0\n  if [ ! -f \"$GW_DYLIB\" ]; then\n    NEED_BUILD=1\n  else\n    # Rebuild if Cargo.toml or any src/ file is newer than the dylib\n    NEWER=$(find \"$GW_DIR/src\" \"$GW_DIR/Cargo.toml\" -newer \"$GW_DYLIB\" 2>/dev/null | head -1)\n    if [ -n \"$NEWER\" ]; then\n      NEED_BUILD=1\n    fi\n  fi\n  if [ \"$NEED_BUILD\" -eq 1 ]; then\n    echo \"note: Building libgyrocore_c (cargo release)...\"\n    (cd \"$GW_DIR\" && cargo build --release 2>&1 | tail -5)\n  else\n    echo \"note: libgyrocore_c up-to-date, skipping cargo build\"\n  fi\nfi\n\n# Copy into app bundle only if source is newer than destination\nif [ -f \"$GW_DYLIB\" ]; then\n  if [ ! -f \"$DEST\" ] || [ \"$GW_DYLIB\" -nt \"$DEST\" ]; then\n    cp \"$GW_DYLIB\" \"$DEST\"\n    codesign --force --sign - \"$DEST\" 2>/dev/null || true\n    echo \"note: Bundled libgyrocore_c from gyro-wrapper\"\n  fi\nelse\n  # Fallback: ~/gyroflow/target/release/\n  GF=\"$HOME/gyroflow/target/release/libgyrocore_c.dylib\"\n  if [ -f \"$GF\" ]; then\n    if [ ! -f \"$DEST\" ] || [ \"$GF\" -nt \"$DEST\" ]; then\n      cp \"$GF\" \"$DEST\"\n      codesign --force --sign - \"$DEST\" 2>/dev/null || true\n      echo \"note: Bundled libgyrocore_c from ~/gyroflow\"\n    fi\n  else\n    echo \"warning: libgyrocore_c.dylib not found. Install Rust toolchain or pre-build gyro-wrapper.\"\n    exit 0\n  fi\nfi\n";
+			shellScript = "set -e\n\nLIB_DIR=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/lib\"\nDEST=\"$LIB_DIR/libgyrocore_c.dylib\"\nGW_DIR=\"${SRCROOT}/gyro-wrapper\"\nGW_DYLIB=\"$GW_DIR/target/release/libgyrocore_c.dylib\"\n\nmkdir -p \"$LIB_DIR\"\n\n# Build gyro-wrapper only when source is newer than the existing dylib\nif [ -f \"$GW_DIR/Cargo.toml\" ] && command -v cargo >/dev/null 2>&1; then\n  NEED_BUILD=0\n  if [ ! -f \"$GW_DYLIB\" ]; then\n    NEED_BUILD=1\n  else\n    # Rebuild if Cargo.toml or any src/ file is newer than the dylib\n    NEWER=$(find \"$GW_DIR/src\" \"$GW_DIR/Cargo.toml\" -newer \"$GW_DYLIB\" 2>/dev/null | head -1)\n    if [ -n \"$NEWER\" ]; then\n      NEED_BUILD=1\n    fi\n  fi\n  if [ \"$NEED_BUILD\" -eq 1 ]; then\n    echo \"note: Building libgyrocore_c (cargo release)...\"\n    (cd \"$GW_DIR\" && cargo build --release 2>&1 | tail -5)\n  else\n    echo \"note: libgyrocore_c up-to-date, skipping cargo build\"\n  fi\nfi\n\n# Copy into app bundle only if source is newer than destination\nif [ -f \"$GW_DYLIB\" ]; then\n  if [ ! -f \"$DEST\" ] || [ \"$GW_DYLIB\" -nt \"$DEST\" ]; then\n    cp \"$GW_DYLIB\" \"$DEST\"\n    codesign --force --sign - \"$DEST\" 2>/dev/null || true\n    echo \"note: Bundled libgyrocore_c from gyro-wrapper\"\n  fi\nelse\n  # Fallback: ~/gyroflow/target/release/\n  GF=\"$HOME/gyroflow/target/release/libgyrocore_c.dylib\"\n  if [ -f \"$GF\" ]; then\n    if [ ! -f \"$DEST\" ] || [ \"$GF\" -nt \"$DEST\" ]; then\n      cp \"$GF\" \"$DEST\"\n      codesign --force --sign - \"$DEST\" 2>/dev/null || true\n      echo \"note: Bundled libgyrocore_c from ~/gyroflow\"\n    fi\n  else\n    echo \"warning: libgyrocore_c.dylib not found. Install Rust toolchain or pre-build gyro-wrapper.\"\n    exit 0\n  fi\nfi\n\n# Symlink Gyroflow.app camera_presets into app bundle\nPRESET_SRC=\"/Applications/Gyroflow.app/Contents/Resources/camera_presets\"\nPRESET_DST=\"${BUILT_PRODUCTS_DIR}/${CONTENTS_FOLDER_PATH}/Resources/camera_presets\"\nif [ -d \"$PRESET_SRC\" ] && [ ! -e \"$PRESET_DST\" ]; then\n    ln -sf \"$PRESET_SRC\" \"$PRESET_DST\"\n    echo \"note: Symlinked camera_presets from Gyroflow.app\"\nfi\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 

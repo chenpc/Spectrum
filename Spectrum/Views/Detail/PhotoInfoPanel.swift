@@ -545,7 +545,8 @@ private struct GyroConfigSection: View {
             perAxis: globalPerAxis,
             smoothnessPitch: globalSmoothnessPitch,
             smoothnessYaw: globalSmoothnessYaw,
-            smoothnessRoll: globalSmoothnessRoll
+            smoothnessRoll: globalSmoothnessRoll,
+            lensDbDir: "/Applications/Gyroflow.app/Contents/Resources"
         )
     }
 
