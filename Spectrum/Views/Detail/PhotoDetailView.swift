@@ -824,5 +824,20 @@ struct PhotoDetailView: View {
         hlgCGImage = entry.hlgCGImage
         hdrFormat = entry.hdrFormat
         isHDR = entry.hdrFormat != nil
+
+        prefetchAdjacentImages()
+    }
+
+    private func prefetchAdjacentImages() {
+        let flatPhotos = viewModel?.flatPhotos ?? []
+        guard let idx = flatPhotos.firstIndex(where: { $0.persistentModelID == photo.persistentModelID }) else { return }
+        for offset in [-1, 1] {
+            let ni = idx + offset
+            guard flatPhotos.indices.contains(ni) else { continue }
+            let adj = flatPhotos[ni]
+            guard !adj.isVideo else { continue }
+            let bm = adj.resolveBookmarkData(from: folders)
+            ImagePreloadCache.prefetch(path: adj.filePath, bookmarkData: bm)
+        }
     }
 }

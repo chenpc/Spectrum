@@ -33,6 +33,35 @@ struct CachedImageEntry: @unchecked Sendable {
 
 enum ImagePreloadCache {
 
+    // MARK: - LRU Cache
+
+    @MainActor private static var cache: [String: CachedImageEntry] = [:]
+    @MainActor private static var cacheOrder: [String] = []
+    private static let maxCacheSize = 5
+
+    @MainActor static func cachedEntry(for path: String) -> CachedImageEntry? {
+        cache[path]
+    }
+
+    @MainActor static func prefetch(path: String, bookmarkData: Data?) {
+        guard cache[path] == nil else { return }
+        Task.detached {
+            _ = await loadImageEntry(path: path, bookmarkData: bookmarkData)
+        }
+    }
+
+    @MainActor private static func storeInCache(path: String, entry: CachedImageEntry) {
+        if let idx = cacheOrder.firstIndex(of: path) {
+            cacheOrder.remove(at: idx)
+        }
+        cacheOrder.append(path)
+        cache[path] = entry
+        while cacheOrder.count > maxCacheSize {
+            let oldest = cacheOrder.removeFirst()
+            cache.removeValue(forKey: oldest)
+        }
+    }
+
     // MARK: - Lightweight HDR type detection (no AVPlayer created)
 
     static func detectVideoHDRType(
@@ -100,11 +129,19 @@ enum ImagePreloadCache {
 
     // MARK: - Image loading
 
-    static func loadImageEntry(
+    @MainActor static func loadImageEntry(
         path: String,
         bookmarkData: Data?
     ) async -> CachedImageEntry {
-        await Task.detached {
+        if let cached = cache[path] {
+            // Move to end of LRU order
+            if let idx = cacheOrder.firstIndex(of: path) {
+                cacheOrder.remove(at: idx)
+                cacheOrder.append(path)
+            }
+            return cached
+        }
+        let entry = await Task.detached {
             // Skip if the source file no longer exists — avoids IIOImageSource errors
             guard FileManager.default.fileExists(atPath: path) else {
                 return CachedImageEntry(image: nil, hlgCGImage: nil, hdrFormat: nil)
@@ -147,6 +184,8 @@ enum ImagePreloadCache {
 
             return CachedImageEntry(image: img, hlgCGImage: hlgCGImage, hdrFormat: hdrFormat)
         }.value
+        storeInCache(path: path, entry: entry)
+        return entry
     }
 
     // MARK: - Private helpers
