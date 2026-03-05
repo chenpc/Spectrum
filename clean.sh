@@ -24,6 +24,15 @@ else
     echo "  - Spectrum.dmg (already clean)"
 fi
 
+# testmpv build artifact
+TESTMPV_DYLIB="$SCRIPT_DIR/testmpv/libgyrocore_c.dylib"
+if [ -f "$TESTMPV_DYLIB" ]; then
+    rm -f "$TESTMPV_DYLIB"
+    echo "  ✓ testmpv/libgyrocore_c.dylib"
+else
+    echo "  - testmpv/libgyrocore_c.dylib (already clean)"
+fi
+
 # Rust build cache (gyro-wrapper)
 TARGET_DIR="$SCRIPT_DIR/gyro-wrapper/target"
 if [ -d "$TARGET_DIR" ]; then

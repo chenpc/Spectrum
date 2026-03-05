@@ -46,6 +46,9 @@
 		AA100002 /* VideoHDRDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100002 /* VideoHDRDetectionTests.swift */; };
 		AA100003 /* GyroConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100003 /* GyroConfigTests.swift */; };
 		AA100004 /* PhotoResolveBookmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100004 /* PhotoResolveBookmarkTests.swift */; };
+		AA100005 /* ImagePreloadCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100005 /* ImagePreloadCacheTests.swift */; };
+		AA100006 /* EditOpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100006 /* EditOpTests.swift */; };
+		AA100007 /* PhotoEditOpsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100007 /* PhotoEditOpsTests.swift */; };
 		AA100010 /* hlg_correctly_tagged.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100010 /* hlg_correctly_tagged.HIF */; };
 		AA100011 /* hlg_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100011 /* hlg_mislabeled.HIF */; };
 		AA100012 /* slog3_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100012 /* slog3_mislabeled.HIF */; };
@@ -114,6 +117,9 @@
 		AB100002 /* VideoHDRDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoHDRDetectionTests.swift; sourceTree = "<group>"; };
 		AB100003 /* GyroConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfigTests.swift; sourceTree = "<group>"; };
 		AB100004 /* PhotoResolveBookmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoResolveBookmarkTests.swift; sourceTree = "<group>"; };
+		AB100005 /* ImagePreloadCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCacheTests.swift; sourceTree = "<group>"; };
+		AB100006 /* EditOpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOpTests.swift; sourceTree = "<group>"; };
+		AB100007 /* PhotoEditOpsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditOpsTests.swift; sourceTree = "<group>"; };
 		AB100010 /* hlg_correctly_tagged.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_correctly_tagged.HIF; sourceTree = "<group>"; };
 		AB100011 /* hlg_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_mislabeled.HIF; sourceTree = "<group>"; };
 		AB100012 /* slog3_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = slog3_mislabeled.HIF; sourceTree = "<group>"; };
@@ -312,6 +318,9 @@
 				AB100002 /* VideoHDRDetectionTests.swift */,
 				AB100003 /* GyroConfigTests.swift */,
 				AB100004 /* PhotoResolveBookmarkTests.swift */,
+				AB100005 /* ImagePreloadCacheTests.swift */,
+				AB100006 /* EditOpTests.swift */,
+				AB100007 /* PhotoEditOpsTests.swift */,
 				AE100002 /* Fixtures */,
 			);
 			path = SpectrumTests;
@@ -536,6 +545,9 @@
 				AA100002 /* VideoHDRDetectionTests.swift in Sources */,
 				AA100003 /* GyroConfigTests.swift in Sources */,
 				AA100004 /* PhotoResolveBookmarkTests.swift in Sources */,
+				AA100005 /* ImagePreloadCacheTests.swift in Sources */,
+				AA100006 /* EditOpTests.swift in Sources */,
+				AA100007 /* PhotoEditOpsTests.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -755,6 +767,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -773,6 +786,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
+				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

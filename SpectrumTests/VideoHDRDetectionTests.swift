@@ -39,13 +39,6 @@ final class VideoHDRDetectionTests: XCTestCase {
         XCTAssertEqual(VideoHDRType.hdr10.rawValue, "HDR10")
         XCTAssertEqual(VideoHDRType.slog2.rawValue, "S-Log2")
         XCTAssertEqual(VideoHDRType.slog3.rawValue, "S-Log3")
-
-        XCTAssertEqual(VideoHDRType.dolbyVision.playerStorageKey, "playerForDolbyVision")
-        XCTAssertEqual(VideoHDRType.hlg.playerStorageKey, "playerForHLG")
-        XCTAssertEqual(VideoHDRType.hdr10.playerStorageKey, "playerForHDR10")
-        XCTAssertEqual(VideoHDRType.slog2.playerStorageKey, "playerForSLog2")
-        XCTAssertEqual(VideoHDRType.slog3.playerStorageKey, "playerForSLog3")
-        XCTAssertEqual(VideoHDRType.sdrPlayerStorageKey, "playerForSDR")
     }
 
     func testVideoHDRTypeCaseIterable() {

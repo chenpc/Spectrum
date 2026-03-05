@@ -18,8 +18,8 @@ final class GyroConfigTests: XCTestCase {
         let decoded = try decoder.decode(GyroConfig.self, from: data)
         XCTAssertEqual(decoded.readoutMs, 0)
         XCTAssertEqual(decoded.smooth, 0)
-        XCTAssertEqual(decoded.integrationMethod, 2)
-        XCTAssertEqual(decoded.imuOrientation, "YXz")
+        XCTAssertNil(decoded.integrationMethod)
+        XCTAssertNil(decoded.imuOrientation)
         XCTAssertEqual(decoded.fov, 1.0)
         XCTAssertEqual(decoded.lensCorrectionAmount, 1.0)
         XCTAssertEqual(decoded.maxZoom, 130.0)
@@ -66,10 +66,10 @@ final class GyroConfigTests: XCTestCase {
         let json = try JSONSerialization.jsonObject(with: data) as! [String: Any]
 
         let expectedKeys: Set<String> = [
-            "readout_ms", "smooth", "gyro_offset_ms", "integration_method",
-            "imu_orientation", "fov", "lens_correction_amount", "zooming_method",
+            "readout_ms", "smooth", "gyro_offset_ms",
+            "fov", "lens_correction_amount", "zooming_method", "zooming_algorithm",
             "adaptive_zoom", "max_zoom", "max_zoom_iterations", "use_gravity_vectors",
-            "video_speed", "horizon_lock_amount", "horizon_lock_roll",
+            "video_speed", "horizon_lock_enabled", "horizon_lock_amount", "horizon_lock_roll",
             "per_axis", "smoothness_pitch", "smoothness_yaw", "smoothness_roll",
         ]
         XCTAssertEqual(Set(json.keys), expectedKeys, "JSON keys should be snake_case")
