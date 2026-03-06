@@ -3,6 +3,16 @@ import OpenGL.GL3
 import CoreVideo
 import Darwin
 
+/// Boxed context for MDK prepare callback — carries the layer reference
+/// and load generation so stale callbacks can be detected and discarded.
+private final class PrepareContext {
+    unowned let layer: MPVOpenGLLayer
+    let generation: Int
+    init(layer: MPVOpenGLLayer, generation: Int) {
+        self.layer = layer; self.generation = generation
+    }
+}
+
 // MARK: - Display Peak Nits
 
 /// Query the display's actual peak HDR luminance via CoreDisplay private API.
@@ -110,6 +120,8 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     private var mdkAPI: UnsafePointer<mdkPlayerAPI>?
     private var mdkGLAPI = mdkGLRenderAPI()
     private var mdkReady = false
+    /// Incremented on each mdkLoadFile(); stale prepare callbacks check this to bail out.
+    private var mdkLoadGeneration: Int = 0
     private var mdkMuted = true
     private var mdkDuration: Double = 0
     /// Timestamp (seconds) of the last frame rendered by MDK's renderVideo()
@@ -508,12 +520,17 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
         // Without this, prepare() can block waiting for the previous decode to finish.
         api.pointee.setState(obj, MDK_State_Stopped)
         mdkReady = false
+        mdkLoadGeneration += 1
         api.pointee.setMedia(obj, path)
 
-        let selfRef = Unmanaged.passUnretained(self).toOpaque()
+        // Box layer + generation so the C callback can detect stale invocations.
+        let ctx = Unmanaged.passRetained(PrepareContext(layer: self, generation: mdkLoadGeneration)).toOpaque()
         api.pointee.prepare(obj, 0, mdkPrepareCallback(cb: { position, boost, opaque in
             guard let opaque else { return true }
-            let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(opaque).takeUnretainedValue()
+            let box = Unmanaged<PrepareContext>.fromOpaque(opaque).takeRetainedValue()
+            let layer = box.layer
+            // Stale callback from a previous load — discard.
+            guard layer.mdkLoadGeneration == box.generation else { return false }
             guard position >= 0 else { return false }
             // Read media info for duration and color space
             if let api = layer.mdkAPI, let rawObj = api.pointee.object,
@@ -525,9 +542,6 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
                     let cs = codec.color_space
                     let doviProfile = codec.dovi_profile
 
-                    // DV P8.4 always → PQ (even when mediaInfo reports HLG)
-                    // Otherwise follow detected color_space.
-                    // MDK setColorSpace is thread-safe; CALayer props must go to main.
                     let mdkCS: MDK_ColorSpace
                     let csInfo: String
                     let layerCS: CFString
@@ -549,8 +563,6 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
 
                     api.pointee.setColorSpace(rawObj, mdkCS, nil)
                     layer.mdkColorspaceInfo = csInfo
-                    // Explicitly commit CATransaction to avoid
-                    // "deleted thread with uncommitted CATransaction" warnings.
                     CATransaction.begin()
                     layer.colorspace = CGColorSpace(name: layerCS)
                     layer.wantsExtendedDynamicRangeContent = edr
@@ -558,9 +570,8 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
                 }
             }
             layer.mdkReady = true
-            // Play immediately — deferred from user pressing Space.
             return true
-        }, opaque: selfRef), MDK_SeekFlag_FromStart)
+        }, opaque: ctx), MDK_SeekFlag_FromStart)
 
         api.pointee.setState(obj, MDK_State_Playing)
     }
