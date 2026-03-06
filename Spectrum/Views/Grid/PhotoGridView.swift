@@ -25,9 +25,8 @@ struct PhotoGridView: View {
     @State private var isMounting = false
     @State private var pendingPaths: [String] = []
     @State private var selectedItemId: String?
-    @State private var currentSections: [TimelineSection] = []
     @State private var photoToDelete: Photo? = nil
-    @State private var visibleSectionCount = 10
+    @State private var displayPhotos: [Photo] = []
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
 
     // Folder clipboard and edit state
@@ -81,8 +80,8 @@ struct PhotoGridView: View {
         )
     }
 
-    /// Photos directly in the current folder (one level only)
-    private var directPhotos: [Photo] {
+    /// Photos directly in the current folder (one level only), computed from @Query.
+    private func computeDirectPhotos() -> [Photo] {
         guard let path = effectivePath else { return [] }
         let prefix = path.hasSuffix("/") ? path : path + "/"
         return allPhotos.filter { photo in
@@ -92,14 +91,10 @@ struct PhotoGridView: View {
         }
     }
 
-    /// Stable hash of directPhotos date values — used to trigger section recomputation
-    /// outside of body to avoid mutating @Observable during view evaluation.
-    private var sectionTaskId: Int {
-        var hasher = Hasher()
-        for p in directPhotos {
-            hasher.combine(p.dateTaken.timeIntervalSinceReferenceDate)
-        }
-        return hasher.finalize()
+    private func refreshDisplayPhotos() {
+        let photos = computeDirectPhotos()
+        displayPhotos = photos
+        viewModel.flatPhotos = photos
     }
 
     private let columns = [
@@ -107,8 +102,7 @@ struct PhotoGridView: View {
     ]
 
     var body: some View {
-        let sections = Array(currentSections.prefix(visibleSectionCount))
-        let flatItems = buildFlatItems(sections: sections)
+        let flatItems = buildFlatItems()
 
         GeometryReader { geo in
             let columnCount = max(1, Int((geo.size.width + 2) / 152))
@@ -182,7 +176,7 @@ struct PhotoGridView: View {
                             }
                         }
 
-                        if sections.isEmpty && subfolders.isEmpty && pendingPaths.isEmpty && !isScanning {
+                        if displayPhotos.isEmpty && subfolders.isEmpty && pendingPaths.isEmpty && !isScanning {
                             ContentUnavailableView(
                                 "No Photos",
                                 systemImage: "photo.on.rectangle.angled",
@@ -191,46 +185,32 @@ struct PhotoGridView: View {
                             .frame(maxWidth: .infinity, minHeight: 200)
                         }
 
-                        ForEach(Array(sections.enumerated()), id: \.element.id) { idx, section in
-                            Section {
-                                LazyVGrid(columns: columns, spacing: 2) {
-                                    ForEach(section.photos) { photo in
-                                        PhotoThumbnailView(
-                                            photo: photo,
-                                            isSelected: selectedItemId == photo.filePath,
-                                            folderBookmarkData: folder?.bookmarkData
-                                        )
-                                        .id(photo.filePath)
-                                        .simultaneousGesture(TapGesture(count: 2).onEnded {
-                                            onDoubleClick?(photo)
-                                        })
-                                        .onTapGesture {
-                                            selectedItemId = photo.filePath
-                                            selectedPhoto = photo
-                                        }
-                                        .contextMenu {
-                                            PhotoContextMenu(
-                                                photo: photo,
-                                                bookmarkData: folder?.bookmarkData,
-                                                allFolders: allFolders,
-                                                onDelete: { photoToDelete = photo }
-                                            )
-                                        }
-                                    }
-                                }
-                                .padding(.horizontal, 2)
-                            } header: {
-                                TimelineSectionHeader(
-                                    verbatimLabel: section.label,
-                                    count: section.photos.count
+                        LazyVGrid(columns: columns, spacing: 2) {
+                            ForEach(displayPhotos) { photo in
+                                PhotoThumbnailView(
+                                    photo: photo,
+                                    isSelected: selectedItemId == photo.filePath,
+                                    folderBookmarkData: folder?.bookmarkData
                                 )
-                            }
-                            .onAppear {
-                                if idx == sections.count - 1, visibleSectionCount < currentSections.count {
-                                    visibleSectionCount += 10
+                                .id(photo.filePath)
+                                .simultaneousGesture(TapGesture(count: 2).onEnded {
+                                    onDoubleClick?(photo)
+                                })
+                                .onTapGesture {
+                                    selectedItemId = photo.filePath
+                                    selectedPhoto = photo
+                                }
+                                .contextMenu {
+                                    PhotoContextMenu(
+                                        photo: photo,
+                                        bookmarkData: folder?.bookmarkData,
+                                        allFolders: allFolders,
+                                        onDelete: { photoToDelete = photo }
+                                    )
                                 }
                             }
                         }
+                        .padding(.horizontal, 2)
                     }
                 }
                 .onChange(of: selectedItemId) { _, newId in
@@ -260,11 +240,11 @@ struct PhotoGridView: View {
             }
         }
         .overlay {
-            if isMounting && directPhotos.isEmpty && subfolders.isEmpty {
+            if isMounting && displayPhotos.isEmpty && subfolders.isEmpty {
                 ProgressView("Connecting…")
                     .padding()
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-            } else if isScanning && directPhotos.isEmpty && subfolders.isEmpty && pendingPaths.isEmpty {
+            } else if isScanning && displayPhotos.isEmpty && subfolders.isEmpty && pendingPaths.isEmpty {
                 ProgressView("Scanning…")
                     .padding()
                     .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
@@ -273,6 +253,9 @@ struct PhotoGridView: View {
         .task(id: "\(effectivePath ?? "")_\(folderChangeToken)") {
             await scanCurrentLevel()
         }
+        .onAppear {
+            refreshDisplayPhotos()
+        }
         .onReceive(NotificationCenter.default.publisher(for: FolderMonitor.folderDidChange)) { note in
             guard let changedPath = note.userInfo?["path"] as? String,
                   let ePath = effectivePath,
@@ -280,15 +263,13 @@ struct PhotoGridView: View {
             else { return }
             folderChangeToken += 1
         }
-        .task(id: sectionTaskId) {
-            currentSections = viewModel.timelineSections(from: directPhotos)
-        }
         .onChange(of: effectivePath) { _, newPath in
             selectedItemId = nil
             pendingPaths = []
             isMounting = false
             isScanning = true
-            visibleSectionCount = 10
+            // Immediately show photos already in DB for this folder
+            refreshDisplayPhotos()
             // Load from cache synchronously to avoid a flash of inferredSubfolders
             let path = newPath ?? folder?.path ?? ""
             if let cached = FolderListCache.shared.entries(for: path) {
@@ -299,10 +280,14 @@ struct PhotoGridView: View {
                 scannedSubfolders = nil
             }
         }
-        .onChange(of: directPhotos) { _, newPhotos in
+        .onChange(of: allPhotos.count) { _, _ in
             guard !pendingPaths.isEmpty else { return }
-            let scannedPaths = Set(newPhotos.map(\.filePath))
-            pendingPaths = pendingPaths.filter { !scannedPaths.contains($0) }
+            let currentPhotos = computeDirectPhotos()
+            let scannedPaths = Set(currentPhotos.map(\.filePath))
+            let remaining = pendingPaths.filter { !scannedPaths.contains($0) }
+            if remaining.count != pendingPaths.count {
+                pendingPaths = remaining
+            }
         }
         .alert("Rename Folder", isPresented: Binding(
             get: { renamingInfo != nil },
@@ -343,11 +328,9 @@ struct PhotoGridView: View {
         }
     }
 
-    private func buildFlatItems(sections: [TimelineSection]) -> [String] {
+    private func buildFlatItems() -> [String] {
         var items: [String] = subfolders.map(\.path)
-        for section in sections {
-            items.append(contentsOf: section.photos.map(\.filePath))
-        }
+        items.append(contentsOf: displayPhotos.map(\.filePath))
         return items
     }
 
@@ -375,7 +358,7 @@ struct PhotoGridView: View {
 
     private func syncSelection() {
         if let id = selectedItemId,
-           let photo = directPhotos.first(where: { $0.filePath == id }) {
+           let photo = displayPhotos.first(where: { $0.filePath == id }) {
             selectedPhoto = photo
         } else {
             selectedPhoto = nil
@@ -386,7 +369,7 @@ struct PhotoGridView: View {
         guard let id = selectedItemId else { return }
         if let sf = subfolders.first(where: { $0.path == id }) {
             onNavigateToSubfolder?(sf.path)
-        } else if let photo = directPhotos.first(where: { $0.filePath == id }) {
+        } else if let photo = displayPhotos.first(where: { $0.filePath == id }) {
             onDoubleClick?(photo)
         }
     }
@@ -435,7 +418,7 @@ struct PhotoGridView: View {
                 includingPropertiesForKeys: [.isRegularFileKey],
                 options: [.skipsHiddenFiles, .skipsPackageDescendants]
             ) {
-                let existingPaths = Set(directPhotos.map(\.filePath))
+                let existingPaths = Set(computeDirectPhotos().map(\.filePath))
                 pendingPaths = contents
                     .filter { $0.isMediaFile && !existingPaths.contains($0.path) }
                     .map(\.path)
@@ -448,6 +431,7 @@ struct PhotoGridView: View {
         try? await scanner.scanFolder(id: folder.persistentModelID, subPath: folderPath)
         pendingPaths = []
         isScanning = false
+        refreshDisplayPhotos()
     }
 
     private func performRename(info: SubfolderInfo, newName: String) async {
@@ -548,6 +532,7 @@ struct PhotoGridView: View {
                 selectedPhoto = nil
                 selectedItemId = nil
             }
+            refreshDisplayPhotos()
         } catch {
             errorMessage = fileErrorMessage(error)
         }
