@@ -2,6 +2,7 @@ import AppKit
 import OpenGL.GL3
 import CoreVideo
 import Darwin
+import os
 
 /// Boxed context for MDK prepare callback — carries the layer reference
 /// and load generation so stale callbacks can be detected and discarded.
@@ -107,8 +108,10 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     private var precompMats: [Float]? = nil
     private var precompFrameIdx: Int = -1
     private var precompLens: GyroLensSnapshot? = nil
-    private let precompLock = NSLock()
-    private let gyroCoreLock = NSLock()
+    // os_unfair_lock supports priority inheritance — prevents priority inversion
+    // when the draw thread (user-interactive) waits on precomp (user-interactive).
+    private var precompLockStorage = os_unfair_lock()
+    private var gyroCoreLockStorage = os_unfair_lock()
     private var lastLensSnapshot: GyroLensSnapshot? = nil
 
     /// When true, suppress rendering until gyroCore is ready.
@@ -713,26 +716,26 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
                 lastGyroFrameIdx = fi
 
                 // Check precomputed result for this frame index
-                precompLock.lock()
+                os_unfair_lock_lock(&precompLockStorage)
                 let cachedMats = precompMats
                 let cachedIdx = precompFrameIdx
                 let cachedLens = precompLens
                 precompMats = nil; precompFrameIdx = -1; precompLens = nil
-                precompLock.unlock()
+                os_unfair_lock_unlock(&precompLockStorage)
 
                 if cachedIdx == fi, let mats = cachedMats, let lens = cachedLens {
                     // Precomp hit — use cached matrices + lens snapshot
                     gyroMatrices = mats
                     gyroMatChanged = true
                     lastLensSnapshot = lens
-                } else if gyroCoreLock.try() {
+                } else if os_unfair_lock_trylock(&gyroCoreLockStorage) {
                     // Precomp miss — sync fallback (only if precomp not in-flight)
                     if let (buf, changed) = core.computeMatrixAtTime(timeSec: renderTime) {
                         gyroMatrices = Array(buf)
                         gyroMatChanged = changed
                     }
                     lastLensSnapshot = GyroLensSnapshot(from: core)
-                    gyroCoreLock.unlock()
+                    os_unfair_lock_unlock(&gyroCoreLockStorage)
                 } else {
                     // Precomp in-flight — reuse previous frame's matTex
                     gyroFrameRepeated = true
@@ -901,17 +904,17 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
             if nextFi != gyroCurrentFi {
                 gyroPrecompQueue.async { [weak self] in
                     guard let self else { return }
-                    self.gyroCoreLock.lock()
-                    defer { self.gyroCoreLock.unlock() }
+                    os_unfair_lock_lock(&self.gyroCoreLockStorage)
+                    defer { os_unfair_lock_unlock(&self.gyroCoreLockStorage) }
                     guard let c = self.activeGyro, c.isReady else { return }
                     guard let (buf, _) = c.computeMatrixAtTime(timeSec: nextTime) else { return }
                     let mats = Array(buf)
                     let lens = GyroLensSnapshot(from: c)
-                    self.precompLock.lock()
+                    os_unfair_lock_lock(&self.precompLockStorage)
                     self.precompMats = mats
                     self.precompFrameIdx = nextFi
                     self.precompLens = lens
-                    self.precompLock.unlock()
+                    os_unfair_lock_unlock(&self.precompLockStorage)
                 }
             }
         }
