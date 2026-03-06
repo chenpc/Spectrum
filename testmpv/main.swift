@@ -631,6 +631,71 @@ class MPVOpenGLLayer: CAOpenGLLayer {
     /// Timestamp (seconds) of the last frame rendered by MDK's renderVideo()
     private var mdkRenderedTime: Double = 0
 
+    // ── Detected video info (set once in prepare callback) ──
+    private(set) var videoWidth: Int = 0
+    private(set) var videoHeight: Int = 0
+    private(set) var videoCodec: String = "-"
+    private(set) var videoFormatName: String = "-"
+    private(set) var detectedColorSpace: String = "-"
+    private(set) var detectedDoviProfile: Int = 0
+
+    // ── Colorspace cycling ─────────────────────────────────
+    private static let mdkColorSpaces: [(MDK_ColorSpace, String)] = [
+        (MDK_ColorSpace_BT709,                   "BT.709"),
+        (MDK_ColorSpace_BT2100_PQ,               "PQ"),
+        (MDK_ColorSpace_BT2100_HLG,              "HLG"),
+        (MDK_ColorSpace_scRGB,                   "scRGB"),
+        (MDK_ColorSpace_ExtendedLinearDisplayP3,  "ExtLinP3"),
+        (MDK_ColorSpace_ExtendedSRGB,             "ExtSRGB"),
+        (MDK_ColorSpace_ExtendedLinearSRGB,       "ExtLinSRGB"),
+    ]
+    private static let layerColorSpaces: [(CFString, String)] = [
+        (CGColorSpace.sRGB,                "sRGB"),
+        (CGColorSpace.itur_2100_PQ,        "PQ"),
+        (CGColorSpace.itur_2100_HLG,       "HLG"),
+        (CGColorSpace.displayP3,           "Display P3"),
+        (CGColorSpace.extendedSRGB,        "Ext sRGB"),
+        (CGColorSpace.extendedLinearSRGB,  "Ext Lin sRGB"),
+        (CGColorSpace.linearSRGB,          "Lin sRGB"),
+    ]
+    var mdkCSIndex = 1   // start at PQ
+    var layerCSIndex = 1 // start at PQ
+    var mdkCSLabel = "PQ"
+    var layerCSLabel = "PQ"
+
+    func cycleMDKColorSpace() {
+        guard let api = mdkAPI, let obj = api.pointee.object else { return }
+        mdkCSIndex = (mdkCSIndex + 1) % Self.mdkColorSpaces.count
+        let (cs, label) = Self.mdkColorSpaces[mdkCSIndex]
+        api.pointee.setColorSpace(obj, cs, nil)
+        mdkCSLabel = label
+        print("[color] MDK → \(label)")
+    }
+
+    func cycleCALayerColorSpace() {
+        layerCSIndex = (layerCSIndex + 1) % Self.layerColorSpaces.count
+        let (name, label) = Self.layerColorSpaces[layerCSIndex]
+        colorspace = CGColorSpace(name: name)
+        let needsEDR = (name != CGColorSpace.sRGB && name != CGColorSpace.linearSRGB)
+        wantsExtendedDynamicRangeContent = needsEDR
+        layerCSLabel = label
+        print("[color] CALayer → \(label)  EDR=\(needsEDR)")
+    }
+
+    static func colorSpaceLabel(_ cs: MDK_ColorSpace, dovi: Int) -> String {
+        if dovi > 0 { return "DV P\(dovi)" }
+        switch cs {
+        case MDK_ColorSpace_BT709:                  return "BT.709"
+        case MDK_ColorSpace_BT2100_PQ:               return "PQ"
+        case MDK_ColorSpace_BT2100_HLG:              return "HLG"
+        case MDK_ColorSpace_scRGB:                   return "scRGB"
+        case MDK_ColorSpace_ExtendedLinearDisplayP3:  return "ExtLinP3"
+        case MDK_ColorSpace_ExtendedSRGB:             return "ExtSRGB"
+        case MDK_ColorSpace_ExtendedLinearSRGB:       return "ExtLinSRGB"
+        default:                                      return "Unknown(\(cs.rawValue))"
+        }
+    }
+
     // update callback 觸發時間
     var callbackTime: CFTimeInterval = 0
     // frame counter（每 60 幀印一次 log）
@@ -1182,24 +1247,35 @@ void main() {
                     MDK_VideoStreamCodecParameters(&info.pointee.video[0], &codec)
                     let cs = codec.color_space
                     let doviProfile = codec.dovi_profile
+                    // Store detected info
+                    layer.videoWidth = Int(codec.width)
+                    layer.videoHeight = Int(codec.height)
+                    layer.videoCodec = codec.codec.map { String(cString: $0) } ?? "-"
+                    layer.videoFormatName = codec.format_name.map { String(cString: $0) } ?? "-"
+                    layer.detectedDoviProfile = Int(doviProfile)
+                    layer.detectedColorSpace = MPVOpenGLLayer.colorSpaceLabel(cs, dovi: Int(doviProfile))
                     print("[mdk] Media: duration=\(layer.mdkDuration)s  color_space=\(cs.rawValue)  dovi_profile=\(doviProfile)")
 
                     // DV P8.4 (Apple) → PQ;  HLG → HLG;  Other → PQ
                     if cs == MDK_ColorSpace_BT2100_HLG && doviProfile != 8 {
                         // HLG content: MDK output HLG, CALayer use HLG
                         api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_HLG, nil)
+                        layer.mdkCSLabel = "HLG"; layer.mdkCSIndex = 6
                         print("[mdk] Colorspace: HLG → HLG")
                         DispatchQueue.main.async {
                             layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
                             layer.wantsExtendedDynamicRangeContent = true
+                            layer.layerCSLabel = "HLG"; layer.layerCSIndex = 2
                         }
                     } else {
                         // DV P8.4, PQ, or other: MDK output PQ, CALayer use PQ
                         api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_PQ, nil)
+                        layer.mdkCSLabel = "PQ"; layer.mdkCSIndex = 1
                         print("[mdk] Colorspace: \(doviProfile == 8 ? "DV P8.4" : "default") → PQ")
                         DispatchQueue.main.async {
                             layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
                             layer.wantsExtendedDynamicRangeContent = true
+                            layer.layerCSLabel = "PQ"; layer.layerCSIndex = 1
                         }
                     }
                 }
@@ -1274,6 +1350,12 @@ void main() {
         return Double(api.pointee.position(obj)) / 1000.0
     }
 
+    var isEOFReached: Bool {
+        guard let api = mdkAPI else { return false }
+        let obj = api.pointee.object!
+        return api.pointee.mediaStatus(obj).rawValue & MDK_MediaStatus_End.rawValue != 0
+    }
+
     // ─── CAOpenGLLayer 覆寫 ──────────────────────────────
 
     override func copyCGLPixelFormat(forDisplayMask mask: UInt32) -> CGLPixelFormatObj {
@@ -1284,12 +1366,15 @@ void main() {
         cglCtx ?? super.copyCGLContext(forPixelFormat: pf)
     }
 
+    private var lastDrawnSize: CGSize = .zero
+
     override func canDraw(inCGLContext ctx: CGLContextObj,
                           pixelFormat pf: CGLPixelFormatObj,
                           forLayerTime t: CFTimeInterval,
                           displayTime ts: UnsafePointer<CVTimeStamp>?) -> Bool {
-        guard hasPendingFrame else { return false }
-        return mdkAPI != nil && mdkReady
+        guard mdkAPI != nil, mdkReady else { return false }
+        if bounds.size != lastDrawnSize { return true }
+        return hasPendingFrame
     }
 
     override func draw(inCGLContext ctx: CGLContextObj,
@@ -1302,6 +1387,15 @@ void main() {
         // CGLLockContext：確保多執行緒時 OpenGL context 使用安全
         CGLLockContext(ctx)
         defer { CGLUnlockContext(ctx) }
+
+        lastDrawnSize = bounds.size
+
+        // ── EOF 偵測：暫停並 seek 回開頭，避免 MDK 顯示浮水印 ──
+        if isEOFReached {
+            setPause(true)
+            seek(0, absolute: true)
+            return
+        }
 
         // IINA 方式：用 GL_VIEWPORT 取得實際 FBO 尺寸（比 layer.bounds 可靠）
         var dims = [GLint](repeating: 0, count: 4)
@@ -1559,6 +1653,19 @@ class MPVView: NSView {
     var droppedFrames: Int     { mpvLayer.droppedFrames  }
     var stabilityScore: Float  { mpvLayer.stabilityScore }
     var isFloat: Bool          { mpvLayer.isFloat        }
+
+    func cycleMDKColorSpace() { mpvLayer.cycleMDKColorSpace() }
+    func cycleCALayerColorSpace() { mpvLayer.cycleCALayerColorSpace() }
+    var mdkCSLabel: String { mpvLayer.mdkCSLabel }
+    var layerCSLabel: String { mpvLayer.layerCSLabel }
+
+    // Video info pass-throughs
+    var videoWidth: Int       { mpvLayer.videoWidth }
+    var videoHeight: Int      { mpvLayer.videoHeight }
+    var videoCodec: String    { mpvLayer.videoCodec }
+    var videoFormatName: String { mpvLayer.videoFormatName }
+    var detectedColorSpace: String { mpvLayer.detectedColorSpace }
+    var detectedDoviProfile: Int   { mpvLayer.detectedDoviProfile }
 }
 
 // ════════════════════════════════════════════════════════
@@ -1692,6 +1799,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     var window: NSWindow!
     var mpvView: MPVView!
     var statsLabel: NSTextField!
+    var infoLabel: NSTextField!
     var statsTimer: Timer?
 
     // ── Stabilization state ──────────────────────────────
@@ -1760,6 +1868,33 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             container.trailingAnchor.constraint(equalTo: window.contentView!.trailingAnchor, constant: -8),
         ])
 
+        // ── Video info badge (top-left) ──────────────────────────
+        let infoContainer = NSView()
+        infoContainer.wantsLayer = true
+        infoContainer.layer?.backgroundColor = NSColor.black.withAlphaComponent(0.55).cgColor
+        infoContainer.layer?.cornerRadius = 5
+        infoContainer.translatesAutoresizingMaskIntoConstraints = false
+
+        infoLabel = NSTextField(labelWithString: "–")
+        infoLabel.font = NSFont.monospacedSystemFont(ofSize: 11, weight: .regular)
+        infoLabel.textColor = NSColor.white.withAlphaComponent(0.75)
+        infoLabel.isBezeled = false
+        infoLabel.drawsBackground = false
+        infoLabel.translatesAutoresizingMaskIntoConstraints = false
+        infoLabel.maximumNumberOfLines = 0
+
+        infoContainer.addSubview(infoLabel)
+        window.contentView!.addSubview(infoContainer)
+
+        NSLayoutConstraint.activate([
+            infoLabel.topAnchor.constraint(equalTo: infoContainer.topAnchor, constant: 5),
+            infoLabel.bottomAnchor.constraint(equalTo: infoContainer.bottomAnchor, constant: -5),
+            infoLabel.leadingAnchor.constraint(equalTo: infoContainer.leadingAnchor, constant: 8),
+            infoLabel.trailingAnchor.constraint(equalTo: infoContainer.trailingAnchor, constant: -8),
+            infoContainer.topAnchor.constraint(equalTo: window.contentView!.topAnchor, constant: 8),
+            infoContainer.leadingAnchor.constraint(equalTo: window.contentView!.leadingAnchor, constant: 8),
+        ])
+
         statsTimer = Timer.scheduledTimer(withTimeInterval: 0.25, repeats: true) { [weak self] _ in
             guard let self else { return }
             let fps     = self.mpvView.renderFPS
@@ -1788,10 +1923,24 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             let str = NSMutableAttributedString(string: "●", attributes: dotAttrs)
             str.append(NSAttributedString(string: tail, attributes: baseAttrs))
             self.statsLabel.attributedStringValue = str
+
+            // Video info badge
+            let v = self.mpvView!
+            var lines: [String] = []
+            if v.videoWidth > 0 {
+                lines.append("\(v.videoWidth)×\(v.videoHeight)")
+            }
+            if v.videoCodec != "-" { lines.append(v.videoCodec) }
+            if v.videoFormatName != "-" { lines.append(v.videoFormatName) }
+            lines.append("Detected: \(v.detectedColorSpace)")
+            lines.append("MDK: \(v.mdkCSLabel)  Layer: \(v.layerCSLabel)")
+            self.infoLabel.stringValue = lines.joined(separator: "\n")
         }
         // ──────────────────────────────────────────────────────────
 
         // ── 鍵盤快捷鍵 ────────────────────────────────────────
+        // 5 (23)     : cycle MDK colorspace
+        // 6 (22)     : cycle CALayer colorspace
         // M (46)     : toggle mute
         // S (1)      : Phase 1：切換原始↔穩定化（若無則觸發 gyroflow 渲染）
         // R (15)     : gyro 穩定化 on/off
@@ -1881,6 +2030,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                 self.mpvView.resetGyroFrameIdx()
                 self.updateTitle()
                 return nil
+            case 23:                                         // 5：cycle MDK colorspace
+                self.mpvView.cycleMDKColorSpace()
+                self.updateTitle()
+                return nil
+            case 22:                                         // 6：cycle CALayer colorspace
+                self.mpvView.cycleCALayerColorSpace()
+                self.updateTitle()
+                return nil
             case 5:                                          // G：切換 gyro method
                 self.gyroMethod = self.gyroMethod == "spectrum" ? "gyroflow" : "spectrum"
                 print("[gyro] method = \(self.gyroMethod)")
@@ -1946,9 +2103,6 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let readout  = GyroCore.readoutMs(for: fps)
         let lensPath = findGyroflowFile(for: videoPath)
 
-        // 暫停 mpv，避免 gyrocore 初始化期間顯示未穩定化畫面
-        mpvView.setPause(true)
-
         var cfg = GyroConfig()
         cfg.readoutMs = gyroRSEnabled ? readout : 0.0
         cfg.smooth = gyroSmoothness
@@ -1959,16 +2113,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             guard let self, self.activeGyro === server else { return }
             self.mpvView.loadGyroCore(server)
             self.mpvView.seek(0, absolute: true)
-            self.mpvView.setPause(false)
             print("[gyro] ✅ 穩定化啟動 (\(self.gyroMethod))")
             self.updateTitle()
         }
         let onError: (GyroCoreProvider, String) -> Void = { [weak self] server, msg in
             print("[gyro] ❌ \(msg)")
             DispatchQueue.main.async {
-                if self?.activeGyro === server { self?.activeGyro = nil }
-                self?.mpvView.setPause(false)
-                self?.updateTitle()
+                guard let self else { return }
+                if self.activeGyro === server { self.activeGyro = nil }
+                self.updateTitle()
             }
         }
 
@@ -2056,6 +2209,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateTitle(status: String? = nil) {
         let name = originalPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "testmpv"
         let depth = mpvView.isFloat ? 16 : 8
+        let csStr = "  MDK=\(mpvView.mdkCSLabel) Layer=\(mpvView.layerCSLabel)"
         if let s = status {
             window.title = "testmpv [MDK] — \(s)"
         } else if stabManager.isRendering {
@@ -2067,12 +2221,12 @@ class AppDelegate: NSObject, NSApplicationDelegate {
                                 gyroSmoothness, gyroRSEnabled ? "ON" : "OFF", Int(gyroOffsetMs)) + syncStr + ptsStr
             let methodStr = gyroMethod == "gyroflow" ? "gyroflow" : "gyro"
             window.title = srv.isReady
-                ? "\(name) [MDK] [\(methodStr) \(params)]  depth=\(depth)"
+                ? "\(name) [MDK] [\(methodStr) \(params)]  depth=\(depth)\(csStr)"
                 : "\(name) [MDK] [\(methodStr) 初始化中…]"
         } else if isShowingStabilized {
-            window.title = "\(name) [MDK] [Phase 1]  depth=\(depth)"
+            window.title = "\(name) [MDK] [Phase 1]  depth=\(depth)\(csStr)"
         } else {
-            window.title = "\(name) [MDK] depth=\(depth)"
+            window.title = "\(name) [MDK] depth=\(depth)\(csStr)"
         }
     }
 

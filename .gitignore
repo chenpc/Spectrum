@@ -44,3 +44,9 @@ testmpv/matexport
 
 # Local signing config (per-machine DEVELOPMENT_TEAM)
 Config/Local.xcconfig
+
+# Test media (large binary files, download separately)
+test-media/
+
+# Obsidian editor settings
+docs/.obsidian/

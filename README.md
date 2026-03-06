@@ -29,8 +29,8 @@ Spectrum solves all three: HDR photos render with full EDR headroom, HDR video p
 - **S-Log2 / S-Log3** — Sony's log gamma curves with proper EOTF rendering
 - **All HDR formats** — HLG, HDR10, Dolby Vision, S-Log2, S-Log3, SDR
 - **HDR/SDR toggle** — Switch between HDR and SDR during playback
-- **Hardware decoding** — VideoToolbox acceleration
-- **Playback diagnostics** — On-screen badge showing render FPS, stability metric, codec info, and dropped frame counts
+- **Hardware decoding** — VideoToolbox acceleration via [MDK](https://github.com/aspect-build/mdk-sdk)
+- **Playback diagnostics** — On-screen badge showing render FPS, video FPS, frame consistency (CV), colorspace info, and gyro stability index
 
 ### Real-Time Gyro Stabilization (Gyroflow)
 
@@ -40,6 +40,7 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 - **Sony IBIS support** — Per-scanline in-body image stabilization data correction (tested with ZV-E1)
 - **Per-video config** — Each video can have custom gyro settings (smoothing, sync offset, horizon lock, etc.), stored in XMP sidecar
 - **Configurable parameters** — Smoothing (global or per-axis pitch/yaw/roll), gyro sync offset, lens profile, FOV scaling, horizon lock, adaptive zoom
+- **Dual engines** — Toggle between Spectrum (one-shot) and Gyroflow (incremental recompute) stabilization methods
 - **Toggle on/off** — Press `s` during playback to enable/disable stabilization in real time
 
 ### Browsing & Navigation
@@ -76,6 +77,7 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 
 - macOS 14.0 (Sonoma) or later
 - HDR display recommended (e.g. Apple Pro Display XDR, MacBook Pro with Liquid Retina XDR)
+- Video playback requires [MDK](https://github.com/aspect-build/mdk-sdk) — automatically loaded from [Gyroflow.app](https://gyroflow.xyz) or Homebrew (`brew install mdk-sdk`)
 
 ## Build
 
