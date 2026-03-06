@@ -178,7 +178,7 @@ final class GyroCore: @unchecked Sendable {
                           config:    GyroConfig,
                           onReady:   @Sendable @escaping () -> Void,
                           onError:   @Sendable @escaping (String) -> Void) {
-        guard let fn = fnLoad else { onError("loadCore: fnLoad missing"); return }
+        guard let fn = fnLoad else { DispatchQueue.main.async { onError("loadCore: fnLoad missing") }; return }
 
         let lensDesc = lensPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "none"
         lensProfileName = lensDesc
@@ -203,7 +203,7 @@ final class GyroCore: @unchecked Sendable {
         } else {
             handle = videoPath.withCString { vp in configJSON.withCString { cj in fn(vp, nil, cj) } }
         }
-        guard let handle else { onError("gyrocore_load failed (no gyro data?)"); return }
+        guard let handle else { DispatchQueue.main.async { onError("gyrocore_load failed (no gyro data?)") }; return }
         coreHandle = handle
 
         // Read 96-byte params blob
@@ -211,7 +211,7 @@ final class GyroCore: @unchecked Sendable {
         let rc = buf.withUnsafeMutableBytes { ptr in
             fnGetParams?(handle, ptr.baseAddress!) ?? -1
         }
-        guard rc == 0 else { onError("gyrocore_get_params failed"); return }
+        guard rc == 0 else { DispatchQueue.main.async { onError("gyrocore_get_params failed") }; return }
 
         frameCount = Int(buf.withUnsafeBytes { $0.load(fromByteOffset:  0, as: UInt32.self) })
         rowCount   = Int(buf.withUnsafeBytes { $0.load(fromByteOffset:  4, as: UInt32.self) })
@@ -249,6 +249,14 @@ final class GyroCore: @unchecked Sendable {
         rawBuf  = [Float](repeating: 0, count: rowCount * 14 + 9)
         matsBuf = [Float](repeating: 0, count: Int(gyroVideoH) * 16)
         cachedFrameIdx = -1
+
+        guard frameCount > 0 else {
+            print("[gyro] gyrocore_load succeeded but frameCount=0 — no usable gyro data")
+            if let handle = coreHandle, let fn = fnFree { fn(handle) }
+            coreHandle = nil
+            DispatchQueue.main.async { onError("No gyro data (0 frames)") }
+            return
+        }
 
         readyLock.lock(); _isReady = true; readyLock.unlock()
         print(String(format: "[gyro] Ready: %d frames x %d rows  f=[%.1f,%.1f]  c=[%.1f,%.1f]  %dx%d@%.3ffps",

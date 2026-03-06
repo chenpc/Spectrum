@@ -97,6 +97,10 @@ struct PhotoDetailView: View {
             removeSpaceMonitor()
             showCursor()
         }
+        .onChange(of: photo.filePath) { _, _ in
+            // Immediately clear stale gyro state to prevent badge flash
+            mpvController.reset()
+        }
         .task(id: photo.filePath) {
             isCropMode = false
             if photo.isVideo {

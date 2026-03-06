@@ -143,6 +143,14 @@ final class GyroFlowCore: @unchecked Sendable {
             // Read params
             self.readParams(handle)
 
+            guard self.frameCount > 0 else {
+                print("[gyroflow] load succeeded but frameCount=0 — no usable gyro data")
+                self.fnFree?(handle)
+                self.coreHandle = nil
+                DispatchQueue.main.async { onError("No gyro data (0 frames)") }
+                return
+            }
+
             // Pre-allocate buffers
             let total = self.rowCount * 14 + 9
             self.matBuf = [Float](repeating: 0, count: total)
