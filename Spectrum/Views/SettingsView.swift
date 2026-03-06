@@ -3,12 +3,10 @@ import SwiftUI
 struct SettingsView: View {
     var body: some View {
         TabView {
-            AppearanceSettingsTab()
-                .tabItem { Label("Appearance", systemImage: "paintbrush") }
+            GeneralSettingsTab()
+                .tabItem { Label("General", systemImage: "gearshape") }
             CacheSettingsTab()
                 .tabItem { Label("Cache", systemImage: "internaldrive") }
-            PlaybackSettingsTab()
-                .tabItem { Label("Playback", systemImage: "play.circle") }
             GyroSettingsTab()
                 .tabItem { Label("Gyro", systemImage: "gyroscope") }
             // TODO: [Backlog] Face/Object Detection — Vision framework VNDetectFaceRectanglesRequest
@@ -17,10 +15,11 @@ struct SettingsView: View {
     }
 }
 
-// MARK: - Appearance
+// MARK: - General (Appearance + Playback)
 
-private struct AppearanceSettingsTab: View {
+private struct GeneralSettingsTab: View {
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
+    @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
 
     var body: some View {
         Form {
@@ -31,6 +30,10 @@ private struct AppearanceSettingsTab: View {
                     Text("Dark").tag("dark")
                 }
                 .pickerStyle(.radioGroup)
+            }
+
+            Section("Playback") {
+                Toggle("Show diagnostics badge", isOn: $showMPVDiagBadge)
             }
         }
         .formStyle(.grouped)
@@ -72,21 +75,6 @@ private struct CacheSettingsTab: View {
         }
         .formStyle(.grouped)
         .task { thumbSize = await ThumbnailService.shared.diskCacheSize() }
-    }
-}
-
-// MARK: - Playback
-
-private struct PlaybackSettingsTab: View {
-    @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
-
-    var body: some View {
-        Form {
-            Section("Diagnostics") {
-                Toggle("Show diagnostics badge", isOn: $showMPVDiagBadge)
-            }
-        }
-        .formStyle(.grouped)
     }
 }
 
