@@ -276,7 +276,9 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
             guard let opaque else { return }
             let layer = Unmanaged<MPVOpenGLLayer>.fromOpaque(opaque).takeUnretainedValue()
             layer.pendingFrame = true
+            CATransaction.begin()
             layer.setNeedsDisplay()
+            CATransaction.commit()
         }, opaque: selfRef))
 
         // Default PQ output for HDR (overridden per-content in prepareForContent)
