@@ -279,22 +279,42 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
             layer.setNeedsDisplay()
         }, opaque: selfRef))
 
-        // Default PQ output for HDR
+        // Default PQ output for HDR (overridden per-content in prepareForContent)
         api.pointee.setColorSpace(obj, MDK_ColorSpace_BT2100_PQ, nil)
     }
 
     // MARK: - HDR configuration
 
     /// Apply CALayer colorspace for the given content and HDR state.
+    /// When toggling off, also tells MDK to output BT.709 so the tone-mapped pixels
+    /// match the sRGB CALayer colorspace (instead of PQ pixels in an sRGB container).
     func applyHDRSettings(showHDR: Bool, hdrType: VideoHDRType?) {
-        if showHDR && hdrType != nil {
+        if showHDR, let hdrType {
             wantsExtendedDynamicRangeContent = true
+            switch hdrType {
+            case .hdr10:
+                colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+                setMDKColorSpace(MDK_ColorSpace_BT2100_PQ, info: "PQ")
+            case .dolbyVision, .slog2, .slog3:
+                colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+                setMDKColorSpace(MDK_ColorSpace_BT2100_PQ, info: "PQ")
+            case .hlg:
+                colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                setMDKColorSpace(MDK_ColorSpace_BT2100_HLG, info: "HLG")
+            }
         } else {
             colorspace = CGColorSpace(name: CGColorSpace.sRGB)
             wantsExtendedDynamicRangeContent = false
+            setMDKColorSpace(MDK_ColorSpace_BT709, info: "BT.709")
         }
         pendingFrame = true
         setNeedsDisplay()
+    }
+
+    private func setMDKColorSpace(_ cs: MDK_ColorSpace, info: String) {
+        guard let api = mdkAPI, let obj = api.pointee.object else { return }
+        api.pointee.setColorSpace(obj, cs, nil)
+        mdkColorspaceInfo = info
     }
 
     /// Convenience: call on new file load (always starts in HDR mode).
@@ -502,30 +522,34 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
 
                     // DV P8.4 always → PQ (even when mediaInfo reports HLG)
                     // Otherwise follow detected color_space.
-                    // CALayer colorspace + EDR are thread-safe to set.
+                    // MDK setColorSpace is thread-safe; CALayer props must go to main.
+                    let mdkCS: MDK_ColorSpace
+                    let csInfo: String
+                    let layerCS: CFString
+                    let edr: Bool
+
                     if doviProfile == 8 {
-                        // Dolby Vision P8.4 → PQ
-                        api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_PQ, nil)
-                        layer.mdkColorspaceInfo = "PQ"
-                        layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-                        layer.wantsExtendedDynamicRangeContent = true
+                        mdkCS = MDK_ColorSpace_BT2100_PQ; csInfo = "PQ"
+                        layerCS = CGColorSpace.itur_2100_PQ; edr = true
                     } else if cs == MDK_ColorSpace_BT2100_HLG {
-                        api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_HLG, nil)
-                        layer.mdkColorspaceInfo = "HLG"
-                        layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-                        layer.wantsExtendedDynamicRangeContent = true
+                        mdkCS = MDK_ColorSpace_BT2100_HLG; csInfo = "HLG"
+                        layerCS = CGColorSpace.itur_2100_HLG; edr = true
                     } else if cs == MDK_ColorSpace_BT2100_PQ {
-                        api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT2100_PQ, nil)
-                        layer.mdkColorspaceInfo = "PQ"
-                        layer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-                        layer.wantsExtendedDynamicRangeContent = true
+                        mdkCS = MDK_ColorSpace_BT2100_PQ; csInfo = "PQ"
+                        layerCS = CGColorSpace.itur_2100_PQ; edr = true
                     } else {
-                        // SDR / BT.709 / unknown → BT.709, no EDR
-                        api.pointee.setColorSpace(rawObj, MDK_ColorSpace_BT709, nil)
-                        layer.mdkColorspaceInfo = "BT.709"
-                        layer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-                        layer.wantsExtendedDynamicRangeContent = false
+                        mdkCS = MDK_ColorSpace_BT709; csInfo = "BT.709"
+                        layerCS = CGColorSpace.sRGB; edr = false
                     }
+
+                    api.pointee.setColorSpace(rawObj, mdkCS, nil)
+                    layer.mdkColorspaceInfo = csInfo
+                    // Explicitly commit CATransaction to avoid
+                    // "deleted thread with uncommitted CATransaction" warnings.
+                    CATransaction.begin()
+                    layer.colorspace = CGColorSpace(name: layerCS)
+                    layer.wantsExtendedDynamicRangeContent = edr
+                    CATransaction.commit()
                 }
             }
             layer.mdkReady = true
