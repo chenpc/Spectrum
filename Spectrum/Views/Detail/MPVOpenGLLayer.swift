@@ -504,6 +504,9 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
     private func mdkLoadFile(_ path: String) {
         guard let api = mdkAPI else { return }
         let obj = api.pointee.object!
+        // Stop any in-progress playback/prepare before loading new media.
+        // Without this, prepare() can block waiting for the previous decode to finish.
+        api.pointee.setState(obj, MDK_State_Stopped)
         mdkReady = false
         api.pointee.setMedia(obj, path)
 
