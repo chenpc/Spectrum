@@ -277,6 +277,12 @@ class MPVOpenGLLayer: CAOpenGLLayer, @unchecked Sendable {
         ]
         api.pointee.setVideoDecoders(obj, &decoders)
 
+        // Raise decoder thread priority to reduce priority inversion with
+        // the user-interactive draw thread calling renderVideo() synchronously.
+        api.pointee.setProperty(obj, "thread_priority", "99")
+        // Minimize decode buffering — reduces the window where renderVideo() blocks.
+        api.pointee.setProperty(obj, "buffer", "0")
+
         // Start muted
         api.pointee.setMute(obj, true)
         mdkMuted = true
