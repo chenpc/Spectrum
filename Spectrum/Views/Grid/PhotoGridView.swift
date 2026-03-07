@@ -179,7 +179,7 @@ struct PhotoGridView: View {
     private var inferredSubfolders: [SubfolderInfo] {
         guard let path = effectivePath else { return [] }
         let prefix = path.hasSuffix("/") ? path : path + "/"
-        var seen = [String: (path: String, date: Date)]()  // subfolder name → (cover path, cover date)
+        var seen = [String: (path: String, date: Date)]()
         for photo in allPhotos {
             guard photo.filePath.hasPrefix(prefix) else { continue }
             let relative = String(photo.filePath.dropFirst(prefix.count))
@@ -510,6 +510,7 @@ struct PhotoGridView: View {
                         }
                     }
                 }
+                .id(effectivePath)
                 .onChange(of: lastSelectedId) { _, newId in
                     if let newId {
                         withAnimation {
@@ -518,12 +519,8 @@ struct PhotoGridView: View {
                     }
                 }
             }
-            .focusedSceneValue(\.photoNavigation, PhotoNavigationAction(
-                navigateLeft: { navigate(by: -1, in: flatItems) },
-                navigateRight: { navigate(by: 1, in: flatItems) },
-                navigateUp: { navigate(by: -columnCount, in: flatItems, clamp: false) },
-                navigateDown: { navigate(by: columnCount, in: flatItems, clamp: false) },
-                enter: { activateSelection() }
+            .focusedSceneValue(\.photoNavigation, navigationAction(
+                flatItems: flatItems, columnCount: columnCount, viewHeight: geo.size.height
             ))
             .focusedSceneValue(\.folderEditAction, currentFolderEditAction)
             .focusedSceneValue(\.deletePhotoAction, !selectedItemIds.isEmpty ? { triggerDeleteSelected() } : nil)
@@ -664,6 +661,20 @@ struct PhotoGridView: View {
         var items: [String] = subfolders.map(\.path)
         items.append(contentsOf: displayPhotos.map(\.filePath))
         return items
+    }
+
+    private func navigationAction(flatItems: [String], columnCount: Int, viewHeight: CGFloat) -> PhotoNavigationAction {
+        let rowsPerPage = max(1, Int(viewHeight / 152))
+        let pageSize = rowsPerPage * columnCount
+        return PhotoNavigationAction(
+            navigateLeft: { navigate(by: -1, in: flatItems) },
+            navigateRight: { navigate(by: 1, in: flatItems) },
+            navigateUp: { navigate(by: -columnCount, in: flatItems, clamp: false) },
+            navigateDown: { navigate(by: columnCount, in: flatItems, clamp: false) },
+            pageUp: { navigate(by: -pageSize, in: flatItems) },
+            pageDown: { navigate(by: pageSize, in: flatItems) },
+            enter: { activateSelection() }
+        )
     }
 
     private func navigate(by offset: Int, in flatItems: [String], clamp: Bool = true) {
@@ -817,6 +828,7 @@ struct PhotoGridView: View {
 
         // Step 1: Fresh filesystem listing — detects additions/removals.
         let dirs = await scanner.listSubfolders(id: folder.persistentModelID, path: effectivePath)
+        guard !Task.isCancelled else { isScanning = false; return }
         let freshSubfolders = dirs
             .map { SubfolderInfo(name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate) }
             .sorted { subfoldersAreInOrder($0, $1) }
@@ -826,24 +838,28 @@ struct PhotoGridView: View {
         if let bm = folder.bookmarkData,
            let rootURL = try? BookmarkService.resolveBookmark(bm) {
             let targetURL = folderPath.map { URL(fileURLWithPath: $0) } ?? rootURL
-            let started = rootURL.startAccessingSecurityScopedResource()
-            defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
-            if let contents = try? FileManager.default.contentsOfDirectory(
-                at: targetURL,
-                includingPropertiesForKeys: [.isRegularFileKey],
-                options: [.skipsHiddenFiles, .skipsPackageDescendants]
-            ) {
-                let existingPaths = Set(computeDirectPhotos().map(\.filePath))
-                pendingPaths = contents
+            let existingPaths = Set(computeDirectPhotos().map(\.filePath))
+            let pending = await Task.detached(priority: .userInitiated) {
+                let started = rootURL.startAccessingSecurityScopedResource()
+                defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
+                guard let contents = try? FileManager.default.contentsOfDirectory(
+                    at: targetURL,
+                    includingPropertiesForKeys: [.isRegularFileKey],
+                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
+                ) else { return [String]() }
+                return contents
                     .filter { $0.isMediaFile && !existingPaths.contains($0.path) }
                     .map(\.path)
                     .sorted()
-            }
+            }.value
+            guard !Task.isCancelled else { isScanning = false; return }
+            pendingPaths = pending
         }
 
         // Step 3: Delta scan — reads EXIF, inserts Photo records, removes deleted files.
         // Photos trickle into the grid as @Query propagates each batch save.
         try? await scanner.scanFolder(id: folder.persistentModelID, subPath: folderPath)
+        guard !Task.isCancelled else { isScanning = false; return }
         pendingPaths = []
         isScanning = false
         refreshDisplayPhotos()

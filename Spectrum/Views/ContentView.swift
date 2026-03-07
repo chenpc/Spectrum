@@ -27,6 +27,8 @@ struct PhotoNavigationAction {
     let navigateRight: () -> Void
     let navigateUp: () -> Void
     let navigateDown: () -> Void
+    let pageUp: () -> Void
+    let pageDown: () -> Void
     let enter: () -> Void
 }
 
@@ -162,6 +164,8 @@ struct ContentView: View {
             },
             navigateUp: {},
             navigateDown: {},
+            pageUp: {},
+            pageDown: {},
             enter: {}
         )
     }

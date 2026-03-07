@@ -18,6 +18,22 @@ actor FolderScanner {
         return relative.isEmpty ? rootURL : rootURL.appendingPathComponent(relative)
     }
 
+    /// Fetch direct-child photos for a given directory prefix (one DB fetch, reused for multiple purposes).
+    private func directChildPhotos(levelPrefix: String) -> [Photo] {
+        let allPhotos: [Photo]
+        do {
+            allPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
+        } catch {
+            Log.scanner.warning("Failed to fetch photos: \(error.localizedDescription, privacy: .public)")
+            return []
+        }
+        return allPhotos.filter { photo in
+            guard photo.filePath.hasPrefix(levelPrefix) else { return false }
+            let relative = String(photo.filePath.dropFirst(levelPrefix.count))
+            return !relative.contains("/")
+        }
+    }
+
     /// Scan one level of a folder (non-recursive).
     /// - `subPath`: optional subfolder path to scan instead of root
     /// - `clearAll`: if true, delete ALL photos for this folder first (used on app launch)
@@ -42,10 +58,9 @@ actor FolderScanner {
         if clearAll {
             // Delete all photos belonging to this folder
             let folderPrefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
-            let descriptor = FetchDescriptor<Photo>()
             let allPhotos: [Photo]
             do {
-                allPhotos = try modelContext.fetch(descriptor)
+                allPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
             } catch {
                 Log.scanner.warning("Failed to fetch photos for clearAll: \(error.localizedDescription, privacy: .public)")
                 allPhotos = []
@@ -59,6 +74,8 @@ actor FolderScanner {
                 Log.scanner.warning("Failed to save after clearAll: \(error.localizedDescription, privacy: .public)")
             }
         }
+
+        try Task.checkCancellation()
 
         // Collect media URLs — one level only
         let fm = FileManager.default
@@ -77,27 +94,22 @@ actor FolderScanner {
         // All media paths at this level (used for delta removal later)
         let allDiskMediaPaths = Set(contents.filter { $0.isMediaFile }.map(\.path))
 
-        // Skip duplicates already in DB
-        let existingPaths: Set<String> = {
-            let descriptor = FetchDescriptor<Photo>()
-            let photos: [Photo]
-            do {
-                photos = try modelContext.fetch(descriptor)
-            } catch {
-                Log.scanner.warning("Failed to fetch existing photos: \(error.localizedDescription, privacy: .public)")
-                photos = []
-            }
-            return Set(photos.map(\.filePath))
-        }()
+        // Fetch level photos once — reused for existing-check, delta removal, and live photo pairing
+        let levelPrefix = targetURL.path.hasSuffix("/") ? targetURL.path : targetURL.path + "/"
+        let levelPhotos = directChildPhotos(levelPrefix: levelPrefix)
+        let existingPaths = Set(levelPhotos.map(\.filePath))
 
         let mediaURLs = contents.filter { url in
             url.isMediaFile && !existingPaths.contains(url.path)
         }
 
+        try Task.checkCancellation()
+
         // Process collected URLs
         var batch: [Photo] = []
 
         for fileURL in mediaURLs {
+            guard !Task.isCancelled else { break }
             let filePath = fileURL.path
             let resourceValues = try? fileURL.resourceValues(forKeys: [.fileSizeKey])
             let isVideo = fileURL.isVideoFile
@@ -206,25 +218,19 @@ actor FolderScanner {
             }
         }
 
+        guard !Task.isCancelled else { return }
+
+        // Re-fetch level photos after inserts for live photo pairing + delta removal
+        let updatedLevelPhotos = directChildPhotos(levelPrefix: levelPrefix)
+
         // Live Photo pairing: match image + short .mov by base filename
-        pairLivePhotos(levelPrefix: (targetURL.path.hasSuffix("/") ? targetURL.path : targetURL.path + "/"))
+        pairLivePhotos(levelPhotos: updatedLevelPhotos)
 
         // Delta removal: when not doing a full clear, remove DB entries for files
         // that existed at this level in the previous scan but are no longer on disk.
         if !clearAll {
-            let levelPrefix = targetURL.path + "/"
-            let allDbPhotos: [Photo]
-            do {
-                allDbPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
-            } catch {
-                Log.scanner.warning("Failed to fetch photos for delta removal: \(error.localizedDescription, privacy: .public)")
-                allDbPhotos = []
-            }
             var deletedAny = false
-            for photo in allDbPhotos {
-                guard photo.filePath.hasPrefix(levelPrefix) else { continue }
-                let relative = String(photo.filePath.dropFirst(levelPrefix.count))
-                guard !relative.contains("/") else { continue }   // direct children only
+            for photo in updatedLevelPhotos {
                 guard !allDiskMediaPaths.contains(photo.filePath) else { continue }
                 modelContext.delete(photo)
                 deletedAny = true
@@ -240,21 +246,7 @@ actor FolderScanner {
     }
 
     /// Pair Live Photos: for each image, if a short .mov with the same base name exists, link them.
-    private func pairLivePhotos(levelPrefix: String) {
-        let allDbPhotos: [Photo]
-        do {
-            allDbPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
-        } catch {
-            return
-        }
-
-        // Filter to direct children of this level
-        let levelPhotos = allDbPhotos.filter { photo in
-            guard photo.filePath.hasPrefix(levelPrefix) else { return false }
-            let relative = String(photo.filePath.dropFirst(levelPrefix.count))
-            return !relative.contains("/")
-        }
-
+    private func pairLivePhotos(levelPhotos: [Photo]) {
         // Build lookup by lowercase base name (without extension)
         var imagesByBase: [String: [Photo]] = [:]
         var videosByBase: [String: [Photo]] = [:]

@@ -169,53 +169,50 @@ actor ThumbnailService {
         if url.pathExtension.lowercased() == "svg" {
             return generateAndCacheSVGThumbnail(from: url, to: diskURL)
         }
-        // Image path continues synchronously below (no inner Task needed —
-        // the actor executor is already a background thread).
 
-        // Run synchronously on the actor's executor — already a background thread.
-        // Wrapping in Task { } would create an unstructured task that doesn't inherit
-        // the caller's QoS, causing a priority inversion.
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
+        return await Task.detached(priority: .userInitiated) {
+            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
 
-        let options: [CFString: Any] = [
-            kCGImageSourceThumbnailMaxPixelSize: thumbnailSize,
-            kCGImageSourceCreateThumbnailFromImageAlways: true,
-            kCGImageSourceCreateThumbnailWithTransform: true
-        ]
+            let options: [CFString: Any] = [
+                kCGImageSourceThumbnailMaxPixelSize: self.thumbnailSize,
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true
+            ]
 
-        guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
-        else { return nil }
+            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
+            else { return nil }
 
-        // Strip alpha for opaque photos to avoid "AlphaPremulLast" warnings
-        let opaqueImage: CGImage
-        if cgImage.alphaInfo != .none && cgImage.alphaInfo != .noneSkipLast && cgImage.alphaInfo != .noneSkipFirst,
-           let colorSpace = cgImage.colorSpace,
-           let ctx = CGContext(
-               data: nil,
-               width: cgImage.width,
-               height: cgImage.height,
-               bitsPerComponent: cgImage.bitsPerComponent,
-               bytesPerRow: 0,
-               space: colorSpace,
-               bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-           ) {
-            ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-            opaqueImage = ctx.makeImage() ?? cgImage
-        } else {
-            opaqueImage = cgImage
-        }
+            // Strip alpha for opaque photos to avoid "AlphaPremulLast" warnings
+            let opaqueImage: CGImage
+            if cgImage.alphaInfo != .none && cgImage.alphaInfo != .noneSkipLast && cgImage.alphaInfo != .noneSkipFirst,
+               let colorSpace = cgImage.colorSpace,
+               let ctx = CGContext(
+                   data: nil,
+                   width: cgImage.width,
+                   height: cgImage.height,
+                   bitsPerComponent: cgImage.bitsPerComponent,
+                   bytesPerRow: 0,
+                   space: colorSpace,
+                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
+               ) {
+                ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
+                opaqueImage = ctx.makeImage() ?? cgImage
+            } else {
+                opaqueImage = cgImage
+            }
 
-        guard let destination = CGImageDestinationCreateWithURL(
-            diskURL as CFURL, "public.heic" as CFString, 1, nil
-        ) else {
-            return NSImage(cgImage: opaqueImage, size: NSSize(width: opaqueImage.width, height: opaqueImage.height))
-        }
+            guard let destination = CGImageDestinationCreateWithURL(
+                diskURL as CFURL, "public.heic" as CFString, 1, nil
+            ) else {
+                return NSImage(cgImage: opaqueImage, size: NSSize(width: opaqueImage.width, height: opaqueImage.height))
+            }
 
-        CGImageDestinationAddImage(destination, opaqueImage, nil)
-        CGImageDestinationFinalize(destination)
+            CGImageDestinationAddImage(destination, opaqueImage, nil)
+            CGImageDestinationFinalize(destination)
 
-        return NSImage(contentsOf: diskURL)
-            ?? NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            return NSImage(contentsOf: diskURL)
+                ?? NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        }.value
     }
 
     private func generateAndCacheSVGThumbnail(from url: URL, to diskURL: URL) -> NSImage? {

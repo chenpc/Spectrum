@@ -90,6 +90,18 @@ struct PhotoNavigationCommands: Commands {
             .keyboardShortcut(.downArrow, modifiers: [])
             .disabled(navigation == nil)
 
+            Button("Page Up") {
+                navigation?.pageUp()
+            }
+            .keyboardShortcut(.pageUp, modifiers: [])
+            .disabled(navigation == nil)
+
+            Button("Page Down") {
+                navigation?.pageDown()
+            }
+            .keyboardShortcut(.pageDown, modifiers: [])
+            .disabled(navigation == nil)
+
             Divider()
 
             Button("Open") {
