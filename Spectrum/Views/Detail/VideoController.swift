@@ -1,14 +1,13 @@
 import SwiftUI
 
-// MARK: - MPVController
+// MARK: - VideoController
 
-/// Observable state for MDK playback; polled via background queue at ~4 Hz.
+/// Observable state for video playback; polled via background queue at ~4 Hz.
 ///
-/// Property reads (mpv C API calls) happen on `pollQueue` (background) to keep the
-/// main thread free for `layer.display()` calls — this is the primary fix for high CV.
+/// Property reads happen on `pollQueue` (background) to keep the main thread free.
 /// Only the lightweight @Observable setter assignments are dispatched back to main.
 @Observable
-final class MPVController: @unchecked Sendable {
+final class VideoController: @unchecked Sendable {
     var isPlaying: Bool = false
     var currentTime: Double = 0
     var duration: Double = 0
@@ -22,10 +21,16 @@ final class MPVController: @unchecked Sendable {
     private(set) var videoFPS: Double = 0
     /// CALayer colorspace display name (e.g. "PQ", "HLG", "sRGB").
     private(set) var layerColorspaceInfo: String = "-"
-    /// MDK setColorSpace value (e.g. "PQ", "HLG", "BT.709").
-    private(set) var mdkColorspaceInfo: String = "-"
-    /// Latest gyro computeMatrix time in ms (0 when gyro inactive).
-    private(set) var gyroComputeMs: Double = 0
+    /// Decode colorspace info (e.g. "Video BT.2020", "V.2020 HLG->PQ").
+    private(set) var decodeColorspaceInfo: String = "-"
+    /// Pixel format (e.g. "YCbCr 10bit Video Range").
+    private(set) var pixelFormatInfo: String = "-"
+    /// Codec info (e.g. "dvh1 DV P8.4"), nil for non-DV.
+    private(set) var codecInfo: String? = nil
+    /// Color space (e.g. "BT.2020", "BT.709").
+    private(set) var colorSpaceInfo: String = "-"
+    /// True when DV content uses AVPlayerLayer.
+    private(set) var isAVFLayerMode: Bool = false
     /// Gyro Stability Index: RMS inter-frame rotation angle (radians). Lower = more stable.
     private(set) var gyroSI: Double = 0
 
@@ -54,7 +59,7 @@ final class MPVController: @unchecked Sendable {
 
     /// Prevents repeated seek(0) when EOF persists across poll cycles.
     private var didRewindOnEOF = false
-    private weak var nsView: MPVPlayerNSView?
+    private weak var nsView: VideoPlayerNSView?
     /// Serial background queue: reads properties off the main thread.
     private let pollQueue = DispatchQueue(label: "com.spectrum.mpv.poll", qos: .utility)
     private var isPolling = false
@@ -83,8 +88,11 @@ final class MPVController: @unchecked Sendable {
         renderStability = 1
         videoFPS = 0
         layerColorspaceInfo = "-"
-        mdkColorspaceInfo = "-"
-        gyroComputeMs = 0
+        decodeColorspaceInfo = "-"
+        pixelFormatInfo = "-"
+        codecInfo = nil
+        colorSpaceInfo = "-"
+        isAVFLayerMode = false
         didRewindOnEOF = false
     }
 
@@ -206,7 +214,7 @@ final class MPVController: @unchecked Sendable {
         )
     }
 
-    func startPolling(view: MPVPlayerNSView) {
+    func startPolling(view: VideoPlayerNSView) {
         guard nsView !== view else { return }   // already polling this view
         nsView = view
         // If gyro started loading before the view was attached, suppress rendering now.
@@ -217,6 +225,10 @@ final class MPVController: @unchecked Sendable {
         if gyroStabEnabled, let core = activeGyro {
             view.loadGyroCore(core)
         }
+        // Sync playback + volume/mute state to new view
+        view.setPause(!isPlaying)
+        view.setVolume(volume)
+        view.setMute(isMuted)
         view.startDisplayLink()
         isPolling = true
         schedulePoll()
@@ -240,6 +252,10 @@ final class MPVController: @unchecked Sendable {
         let eof     = v.isEOFReached
         let ct      = eof ? 0.0 : v.currentTime
         let playing = eof ? false : !v.isPaused
+        if eof {
+            let realTime = v.currentTime
+            print("[AVF-poll] EOF detected  duration=\(d)s  realTime=\(realTime)s  paused=\(v.isPaused)")
+        }
 
         // Diagnostics (only read when badge is enabled — zero overhead otherwise)
         let diag = diagnosticsEnabled
@@ -247,10 +263,13 @@ final class MPVController: @unchecked Sendable {
         let cv      = diag ? v.renderCV      : 0
         let stab    = diag ? v.renderStability : 1
         let vfps    = diag ? v.videoFPS      : 0
-        let gyroMs = diag ? (activeGyro?.lastFetchMs ?? 0) : 0
         let si      = diag ? v.gyroSI : 0
         let csInfo  = diag ? v.layerColorspaceInfo : "-"
-        let mdkCS   = diag ? v.mdkColorspaceInfo : "-"
+        let decCS   = diag ? v.decodeColorspaceInfo : "-"
+        let pixFmt  = diag ? v.pixelFormatInfo : "-"
+        let codec   = diag ? v.codecInfo : nil
+        let csInfo2 = diag ? v.colorSpaceInfo : "-"
+        let avfLayer = v.isAVFLayerMode
 
         // Main thread only does fast property assignments.
         DispatchQueue.main.async { [weak self] in
@@ -274,10 +293,13 @@ final class MPVController: @unchecked Sendable {
                 self.renderCV = cv
                 self.renderStability = stab
                 if vfps > 0 { self.videoFPS = vfps }
-                self.gyroComputeMs = gyroMs
                 self.gyroSI = si
                 self.layerColorspaceInfo = csInfo
-                self.mdkColorspaceInfo = mdkCS
+                self.decodeColorspaceInfo = decCS
+                self.pixelFormatInfo = pixFmt
+                self.codecInfo = codec
+                self.colorSpaceInfo = csInfo2
+                self.isAVFLayerMode = avfLayer
             }
         }
 
@@ -309,4 +331,22 @@ final class MPVController: @unchecked Sendable {
         currentTime = seconds
         nsView?.seek(to: seconds)
     }
+
+    // MARK: - Volume
+
+    var volume: Float = 1.0 {
+        didSet { nsView?.setVolume(volume) }
+    }
+    var isMuted: Bool = false {
+        didSet { nsView?.setMute(isMuted) }
+    }
+
+    func toggleMute() { isMuted.toggle() }
+
+    // MARK: - Colorspace / Decode mode
+
+    @MainActor func cycleColorspace() { nsView?.cycleColorspace() }
+    func cycleDecodeMode() { nsView?.cycleDecodeMode() }
+    @MainActor func setColorspace(index: Int) { nsView?.setColorspace(index: index) }
+    func setDecodeMode(index: Int) { nsView?.setDecodeMode(index: index) }
 }

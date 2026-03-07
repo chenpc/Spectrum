@@ -1,9 +1,9 @@
 import SwiftUI
 
-// MARK: - MPVControlBar
+// MARK: - VideoControlBar
 
-struct MPVControlBar: View {
-    let controller: MPVController
+struct VideoControlBar: View {
+    let controller: VideoController
     @State private var isScrubbing = false
     @State private var scrubPosition: Double = 0   // normalised 0…1
 
@@ -53,6 +53,32 @@ struct MPVControlBar: View {
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .leading)
+
+            // Mute toggle
+            Button {
+                controller.toggleMute()
+            } label: {
+                Image(systemName: controller.isMuted ? "speaker.slash.fill"
+                      : controller.volume > 0.5 ? "speaker.wave.2.fill"
+                      : controller.volume > 0 ? "speaker.wave.1.fill"
+                      : "speaker.fill")
+                    .font(.system(size: 12))
+                    .frame(width: 20, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(controller.isMuted ? .secondary : .primary)
+
+            // Volume slider
+            Slider(value: Binding(
+                get: { controller.isMuted ? 0 : controller.volume },
+                set: {
+                    controller.volume = $0
+                    if $0 > 0 { controller.isMuted = false }
+                }
+            ), in: 0...1)
+            .controlSize(.small)
+            .frame(width: 60)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

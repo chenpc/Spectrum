@@ -35,6 +35,7 @@ class HLGNSView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layer?.contentsGravity = .resizeAspect
+        layer?.contentsFormat = .RGBA16Float
     }
     required init?(coder: NSCoder) { fatalError() }
 

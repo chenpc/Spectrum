@@ -31,17 +31,18 @@
 		AA00001D /* ImagePreloadCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB00001D /* ImagePreloadCache.swift */; };
 		AA000028 /* CacheSidebarFooter.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000028 /* CacheSidebarFooter.swift */; };
 		AA000029 /* FolderClipboard.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000029 /* FolderClipboard.swift */; };
+		AA000099 /* StatusBarModel.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000099 /* StatusBarModel.swift */; };
 		AA000031 /* NetworkVolumeService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000031 /* NetworkVolumeService.swift */; };
 		AA000032 /* FolderListCache.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000032 /* FolderListCache.swift */; };
-		AA000051 /* MPVOpenGLLayer.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* MPVOpenGLLayer.swift */; };
-		AA000077 /* WarpShader.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000077 /* WarpShader.swift */; };
-		AA000078 /* MPVPlayerNSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000078 /* MPVPlayerNSView.swift */; };
+		AA000051 /* AVFMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* AVFMetalView.swift */; };
+		AA000077 /* MetalShaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000077 /* MetalShaders.swift */; };
+		AA000078 /* VideoPlayerNSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000078 /* VideoPlayerNSView.swift */; };
 		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
 		AA000079 /* GyroConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000079 /* GyroConfig.swift */; };
 		AA000082 /* GyroFlowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000082 /* GyroFlowCore.swift */; };
 		AA000054 /* HDRImageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000054 /* HDRImageViews.swift */; };
-		AA000055 /* MPVController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* MPVController.swift */; };
-		AA000056 /* MPVControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000056 /* MPVControlBar.swift */; };
+		AA000055 /* VideoController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* VideoController.swift */; };
+		AA000056 /* VideoControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000056 /* VideoControlBar.swift */; };
 		AA100001 /* ImageHDRDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100001 /* ImageHDRDetectionTests.swift */; };
 		AA100002 /* VideoHDRDetectionTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100002 /* VideoHDRDetectionTests.swift */; };
 		AA100003 /* GyroConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100003 /* GyroConfigTests.swift */; };
@@ -63,7 +64,7 @@
 		AA000075 /* CGImageRotation.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000075 /* CGImageRotation.swift */; };
 		AA000076 /* XMPSidecarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000076 /* XMPSidecarService.swift */; };
 		AA000080 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = AB000080 /* Localizable.xcstrings */; };
-		AA000090 /* MDKLib.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000090 /* MDKLib.swift */; };
+		AA200001 /* ImportPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB200001 /* ImportPanelView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -102,17 +103,18 @@
 		AB00001D /* ImagePreloadCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCache.swift; sourceTree = "<group>"; };
 		AB000028 /* CacheSidebarFooter.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CacheSidebarFooter.swift; sourceTree = "<group>"; };
 		AB000029 /* FolderClipboard.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderClipboard.swift; sourceTree = "<group>"; };
+		AB000099 /* StatusBarModel.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarModel.swift; sourceTree = "<group>"; };
 		AB000031 /* NetworkVolumeService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NetworkVolumeService.swift; sourceTree = "<group>"; };
 		AB000032 /* FolderListCache.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderListCache.swift; sourceTree = "<group>"; };
-		AB000051 /* MPVOpenGLLayer.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVOpenGLLayer.swift; sourceTree = "<group>"; };
-		AB000077 /* WarpShader.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = WarpShader.swift; sourceTree = "<group>"; };
-		AB000078 /* MPVPlayerNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVPlayerNSView.swift; sourceTree = "<group>"; };
+		AB000051 /* AVFMetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVFMetalView.swift; sourceTree = "<group>"; };
+		AB000077 /* MetalShaders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalShaders.swift; sourceTree = "<group>"; };
+		AB000078 /* VideoPlayerNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerNSView.swift; sourceTree = "<group>"; };
 		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
 		AB000079 /* GyroConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfig.swift; sourceTree = "<group>"; };
 		AB000082 /* GyroFlowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroFlowCore.swift; sourceTree = "<group>"; };
 		AB000054 /* HDRImageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRImageViews.swift; sourceTree = "<group>"; };
-		AB000055 /* MPVController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVController.swift; sourceTree = "<group>"; };
-		AB000056 /* MPVControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MPVControlBar.swift; sourceTree = "<group>"; };
+		AB000055 /* VideoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoController.swift; sourceTree = "<group>"; };
+		AB000056 /* VideoControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoControlBar.swift; sourceTree = "<group>"; };
 		AB100001 /* ImageHDRDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImageHDRDetectionTests.swift; sourceTree = "<group>"; };
 		AB100002 /* VideoHDRDetectionTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoHDRDetectionTests.swift; sourceTree = "<group>"; };
 		AB100003 /* GyroConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfigTests.swift; sourceTree = "<group>"; };
@@ -137,8 +139,7 @@
 		AB000075 /* CGImageRotation.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGImageRotation.swift; sourceTree = "<group>"; };
 		AB000076 /* XMPSidecarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPSidecarService.swift; sourceTree = "<group>"; };
 		AB000080 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
-		AB000090 /* MDKLib.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MDKLib.swift; sourceTree = "<group>"; };
-		AB000091 /* Spectrum-Bridging-Header.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = "Spectrum-Bridging-Header.h"; sourceTree = "<group>"; };
+		AB200001 /* ImportPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportPanelView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -174,7 +175,6 @@
 			children = (
 				AB000001 /* SpectrumApp.swift */,
 				AB000017 /* Spectrum.entitlements */,
-				AB000091 /* Spectrum-Bridging-Header.h */,
 				AB00001C /* Assets.xcassets */,
 				AB000080 /* Localizable.xcstrings */,
 				AE000003 /* Models */,
@@ -206,6 +206,7 @@
 				AB000002 /* ContentView.swift */,
 				AE000010 /* Sidebar */,
 				AE000011 /* Grid */,
+				AE200001 /* Import */,
 				AE000012 /* Detail */,
 			);
 			path = Views;
@@ -215,7 +216,6 @@
 			isa = PBXGroup;
 			children = (
 				AB000070 /* Log.swift */,
-				AB000090 /* MDKLib.swift */,
 				AB000079 /* GyroConfig.swift */,
 				AB000053 /* GyroCore.swift */,
 				AB000082 /* GyroFlowCore.swift */,
@@ -226,6 +226,7 @@
 				AB000018 /* VideoMetadataService.swift */,
 				AB00001D /* ImagePreloadCache.swift */,
 				AB000029 /* FolderClipboard.swift */,
+				AB000099 /* StatusBarModel.swift */,
 				AB000032 /* FolderListCache.swift */,
 				AB000031 /* NetworkVolumeService.swift */,
 				AB000071 /* FolderMonitor.swift */,
@@ -277,11 +278,11 @@
 				AB00000B /* PhotoDetailView.swift */,
 				AB000054 /* HDRImageViews.swift */,
 				AB00000C /* PhotoInfoPanel.swift */,
-				AB000051 /* MPVOpenGLLayer.swift */,
-				AB000077 /* WarpShader.swift */,
-				AB000078 /* MPVPlayerNSView.swift */,
-				AB000055 /* MPVController.swift */,
-				AB000056 /* MPVControlBar.swift */,
+				AB000051 /* AVFMetalView.swift */,
+				AB000077 /* MetalShaders.swift */,
+				AB000078 /* VideoPlayerNSView.swift */,
+				AB000055 /* VideoController.swift */,
+				AB000056 /* VideoControlBar.swift */,
 				AB000073 /* CropOverlayView.swift */,
 			);
 			path = Detail;
@@ -337,6 +338,14 @@
 				AB100015 /* sdr_photo.jpg */,
 			);
 			path = Fixtures;
+			sourceTree = "<group>";
+		};
+		AE200001 /* Import */ = {
+			isa = PBXGroup;
+			children = (
+				AB200001 /* ImportPanelView.swift */,
+			);
+			path = Import;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -499,6 +508,7 @@
 				AA000007 /* SidebarView.swift in Sources */,
 				AA000028 /* CacheSidebarFooter.swift in Sources */,
 				AA000008 /* PhotoGridView.swift in Sources */,
+				AA200001 /* ImportPanelView.swift in Sources */,
 				AA000009 /* PhotoThumbnailView.swift in Sources */,
 				AA00000A /* TimelineSectionHeader.swift in Sources */,
 				AA00000B /* PhotoDetailView.swift in Sources */,
@@ -512,18 +522,18 @@
 				AA000015 /* URL+ImageTypes.swift in Sources */,
 				AA000016 /* Date+Formatting.swift in Sources */,
 				AA000017 /* VideoMetadataService.swift in Sources */,
-				AA000090 /* MDKLib.swift in Sources */,
 				AA000079 /* GyroConfig.swift in Sources */,
 				AA000053 /* GyroCore.swift in Sources */,
 				AA000082 /* GyroFlowCore.swift in Sources */,
-				AA000051 /* MPVOpenGLLayer.swift in Sources */,
-				AA000077 /* WarpShader.swift in Sources */,
-				AA000078 /* MPVPlayerNSView.swift in Sources */,
+				AA000051 /* AVFMetalView.swift in Sources */,
+				AA000077 /* MetalShaders.swift in Sources */,
+				AA000078 /* VideoPlayerNSView.swift in Sources */,
 				AA000054 /* HDRImageViews.swift in Sources */,
-				AA000055 /* MPVController.swift in Sources */,
-				AA000056 /* MPVControlBar.swift in Sources */,
+				AA000055 /* VideoController.swift in Sources */,
+				AA000056 /* VideoControlBar.swift in Sources */,
 				AA00001D /* ImagePreloadCache.swift in Sources */,
 				AA000029 /* FolderClipboard.swift in Sources */,
+				AA000099 /* StatusBarModel.swift in Sources */,
 				AA000032 /* FolderListCache.swift in Sources */,
 				AA000031 /* NetworkVolumeService.swift in Sources */,
 				8070F3122F43487D0095B967 /* SettingsView.swift in Sources */,
@@ -609,7 +619,6 @@
 				GCC_OPTIMIZATION_LEVEL = 0;
 				GCC_PREPROCESSOR_DEFINITIONS = (
 					"DEBUG=1",
-					"GL_SILENCE_DEPRECATION=1",
 					"$(inherited)",
 				);
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
@@ -677,7 +686,6 @@
 				GCC_C_LANGUAGE_STANDARD = gnu17;
 				GCC_NO_COMMON_BLOCKS = YES;
 				GCC_PREPROCESSOR_DEFINITIONS = (
-					"GL_SILENCE_DEPRECATION=1",
 					"$(inherited)",
 				);
 				GCC_TREAT_WARNINGS_AS_ERRORS = YES;
@@ -714,16 +722,16 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
+
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = "-undefined dynamic_lookup";
+
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Spectrum/Spectrum-Bridging-Header.h";
+
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 			};
@@ -744,16 +752,16 @@
 				ENABLE_HARDENED_RUNTIME = YES;
 				ENABLE_USER_SELECTED_FILES = readwrite;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
+
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.photography";
 				INFOPLIST_KEY_NSHumanReadableCopyright = "";
 				LD_RUNPATH_SEARCH_PATHS = "@executable_path/../Frameworks";
 				MARKETING_VERSION = 1.0;
-				OTHER_LDFLAGS = "-undefined dynamic_lookup";
+
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.Spectrum;
 				PRODUCT_NAME = "$(TARGET_NAME)";
 				SWIFT_EMIT_LOC_STRINGS = YES;
-				SWIFT_OBJC_BRIDGING_HEADER = "Spectrum/Spectrum-Bridging-Header.h";
+
 				SWIFT_STRICT_CONCURRENCY = complete;
 				SWIFT_VERSION = 5.0;
 			};
@@ -767,7 +775,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
+
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";
@@ -786,7 +794,7 @@
 				CURRENT_PROJECT_VERSION = 1;
 				DEAD_CODE_STRIPPING = YES;
 				GENERATE_INFOPLIST_FILE = YES;
-				HEADER_SEARCH_PATHS = "/Applications/Gyroflow.app/Contents/Frameworks/mdk.framework/Headers/c";
+
 				MARKETING_VERSION = 1.0;
 				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumTests;
 				PRODUCT_NAME = "$(TARGET_NAME)";

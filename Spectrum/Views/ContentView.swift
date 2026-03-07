@@ -62,8 +62,8 @@ struct GyroConfigBindingKey: FocusedValueKey {
     typealias Value = Binding<String?>
 }
 
-struct MpvControllerKey: FocusedValueKey {
-    typealias Value = MPVController
+struct VideoControllerKey: FocusedValueKey {
+    typealias Value = VideoController
 }
 
 extension FocusedValues {
@@ -71,9 +71,9 @@ extension FocusedValues {
         get { self[GyroConfigBindingKey.self] }
         set { self[GyroConfigBindingKey.self] = newValue }
     }
-    var mpvController: MPVController? {
-        get { self[MpvControllerKey.self] }
-        set { self[MpvControllerKey.self] = newValue }
+    var videoController: VideoController? {
+        get { self[VideoControllerKey.self] }
+        set { self[VideoControllerKey.self] = newValue }
     }
     var photoNavigation: PhotoNavigationAction? {
         get { self[PhotoNavigationKey.self] }
@@ -91,7 +91,7 @@ extension FocusedValues {
         get { self[DeletePhotoActionKey.self] }
         set { self[DeletePhotoActionKey.self] = newValue }
     }
-    var mpvPlayPause: (() -> Void)? {
+    var videoPlayPause: (() -> Void)? {
         get { self[MpvPlayPauseKey.self] }
         set { self[MpvPlayPauseKey.self] = newValue }
     }
@@ -133,6 +133,8 @@ struct ContentView: View {
     @State private var selectedPhoto: Photo?
     @State private var detailPhoto: Photo?
     @State private var showInspector = false
+    @State private var showImportPanel = false
+    private let importModel = ImportPanelModel.shared
     @State private var isPhotoHDR = false
     @State private var isFullScreen = false
     @State private var viewModel = LibraryViewModel()
@@ -198,6 +200,9 @@ struct ContentView: View {
             detailPhoto = nil
             selectedPhoto = nil
         }
+        .onChange(of: importModel.sourceURL) { _, newURL in
+            if newURL != nil { showImportPanel = true }
+        }
         .task {
             // On app launch: delta scan — keep cached data for instant display,
             // add new files and remove deleted files in the background.
@@ -228,52 +233,81 @@ struct ContentView: View {
 
     @ViewBuilder
     private var normalContent: some View {
-        NavigationSplitView(columnVisibility: $columnVisibility) {
-            SidebarView(selection: $selectedSidebarItem)
-        } detail: {
-            Group {
-                if let photo = detailPhoto {
-                    photoDetail(photo, showInspector: $showInspector)
-                        .toolbar {
-                            ToolbarItem(placement: .navigation) {
-                                Button {
-                                    detailPhoto = nil
-                                } label: {
-                                    Label("Back", systemImage: "chevron.left")
+        HStack(spacing: 0) {
+            NavigationSplitView(columnVisibility: $columnVisibility) {
+                SidebarView(selection: $selectedSidebarItem)
+            } detail: {
+                Group {
+                    if let photo = detailPhoto {
+                        photoDetail(photo, showInspector: $showInspector)
+                            .toolbar {
+                                ToolbarItem(placement: .navigation) {
+                                    Button {
+                                        detailPhoto = nil
+                                    } label: {
+                                        Label("Back", systemImage: "chevron.left")
+                                    }
+                                }
+                                ToolbarItem {
+                                    importToolbarButton
+                                }
+                                ToolbarItem {
+                                    Button {
+                                        enterFullScreen()
+                                    } label: {
+                                        Image(systemName: "arrow.up.left.and.arrow.down.right.square")
+                                    }
+                                    .help("Full Screen")
+                                    .keyboardShortcut("f", modifiers: .command)
                                 }
                             }
-                            ToolbarItem {
-                                Button {
-                                    enterFullScreen()
-                                } label: {
-                                    Image(systemName: "arrow.up.left.and.arrow.down.right.square")
+                    } else if case .subfolder(let folder, let subPath) = selectedSidebarItem {
+                        gridContent
+                            .toolbar {
+                                ToolbarItem(placement: .navigation) {
+                                    Button {
+                                        navigateToParent(folder: folder, subPath: subPath)
+                                    } label: {
+                                        Label("Back", systemImage: "chevron.left")
+                                    }
                                 }
-                                .help("Full Screen")
-                                .keyboardShortcut("f", modifiers: .command)
-                            }
-                        }
-                } else if case .subfolder(let folder, let subPath) = selectedSidebarItem {
-                    gridContent
-                        .toolbar {
-                            ToolbarItem(placement: .navigation) {
-                                Button {
-                                    navigateToParent(folder: folder, subPath: subPath)
-                                } label: {
-                                    Label("Back", systemImage: "chevron.left")
+                                ToolbarItem {
+                                    importToolbarButton
                                 }
                             }
-                        }
-                } else {
-                    gridContent
+                    } else {
+                        gridContent
+                            .toolbar {
+                                ToolbarItem {
+                                    importToolbarButton
+                                }
+                            }
+                    }
+                }
+            }
+            .inspector(isPresented: $showInspector) {
+                if let photo = detailPhoto ?? selectedPhoto {
+                    PhotoInfoPanel(photo: photo, isHDR: isPhotoHDR)
+                        .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
+                }
+            }
+
+            if showImportPanel {
+                Divider()
+                ImportPanelView(model: importModel) {
+                    showImportPanel = false
                 }
             }
         }
-        .inspector(isPresented: $showInspector) {
-            if let photo = detailPhoto ?? selectedPhoto {
-                PhotoInfoPanel(photo: photo, isHDR: isPhotoHDR)
-                    .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
-            }
+    }
+
+    private var importToolbarButton: some View {
+        Button {
+            showImportPanel.toggle()
+        } label: {
+            Image(systemName: "square.and.arrow.down")
         }
+        .help("Import")
     }
 
     private func handleEscape() {

@@ -29,7 +29,7 @@ Spectrum solves all three: HDR photos render with full EDR headroom, HDR video p
 - **S-Log2 / S-Log3** — Sony's log gamma curves with proper EOTF rendering
 - **All HDR formats** — HLG, HDR10, Dolby Vision, S-Log2, S-Log3, SDR
 - **HDR/SDR toggle** — Switch between HDR and SDR during playback
-- **Hardware decoding** — VideoToolbox acceleration via [MDK](https://github.com/aspect-build/mdk-sdk)
+- **Hardware decoding** — VideoToolbox acceleration via AVFoundation + Metal two-pass rendering pipeline
 - **Playback diagnostics** — On-screen badge showing render FPS, video FPS, frame consistency (CV), colorspace info, and gyro stability index
 
 ### Real-Time Gyro Stabilization (Gyroflow)
@@ -47,10 +47,20 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 
 - **Folder-based browsing** — Scan existing folders directly, no import or copy
 - **Timeline grid** — Photos grouped by date (Today, This Week, This Month, Older) with adaptive column layout
-- **Keyboard navigation** — Arrow keys to move, Enter to open, Escape to go back
+- **Multi-select** — Cmd+click to toggle, Shift+click for range select, marquee (rubber-band) selection
+- **Keyboard navigation** — Arrow keys to move, Enter to open, Escape to go back, Delete to trash
 - **Subfolder tiles** — Subfolders displayed as cover-image tiles, sorted by most recent photo
 - **Sidebar** — Folder tree with breadcrumb navigation, context menu (rename, copy, cut, paste, show in Finder)
 - **Drag & drop** — Add folders by dragging from Finder
+
+### Import Panel
+
+- **Import from folder** — Browse external folders (SD card, external drive) and drag date-grouped media into your library
+- **Date grouping** — Files auto-grouped by EXIF date with expand/collapse all toggle
+- **Copy or move** — Drag groups or individual files; right-click for copy/cut
+- **Context menu import** — Right-click any subfolder in grid view to add it to the import panel
+- **Async file I/O** — All copy/move operations run in background without blocking UI
+- **Status bar** — Unified progress bar at bottom of grid showing scan, copy, paste, and import progress with completion messages
 
 ### Metadata & Inspector
 
@@ -77,7 +87,7 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 
 - macOS 14.0 (Sonoma) or later
 - HDR display recommended (e.g. Apple Pro Display XDR, MacBook Pro with Liquid Retina XDR)
-- Video playback requires [MDK](https://github.com/aspect-build/mdk-sdk) — automatically loaded from [Gyroflow.app](https://gyroflow.xyz) or Homebrew (`brew install mdk-sdk`)
+- Video playback uses AVFoundation + Metal (no external dependencies)
 
 ## Build
 

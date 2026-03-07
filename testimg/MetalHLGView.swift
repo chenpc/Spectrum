@@ -2,7 +2,7 @@ import Cocoa
 import Metal
 import QuartzCore
 
-// MARK: - Metal HLG View (Mode 8: FFmpeg + Metal shader)
+// MARK: - Metal HLG View (Mode 7: CGImage + Metal HLG shader)
 
 class MetalHLGView: NSView {
     private var metalLayer: CAMetalLayer?
@@ -33,9 +33,9 @@ class MetalHLGView: NSView {
         ml.pixelFormat = .rgba16Float
         ml.wantsExtendedDynamicRangeContent = true
         ml.framebufferOnly = false
+        ml.colorspace = CGColorSpace(name: CGColorSpace.extendedLinearDisplayP3)
         ml.backgroundColor = NSColor.black.cgColor
         ml.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
-        // Do NOT set drawableSize — let CAMetalLayer auto-track from frame × contentsScale
         ml.frame = bounds
         ml.autoresizingMask = [.layerWidthSizable, .layerHeightSizable]
         layer?.addSublayer(ml)
@@ -58,10 +58,9 @@ class MetalHLGView: NSView {
     struct FragmentParams {
         int   hdrEnabled;
         float maxEDR;
-        float imgAspect;   // image width / height
+        float imgAspect;
     };
 
-    // Full-screen quad
     vertex VertexOut hlgVertex(uint vid [[vertex_id]]) {
         float2 positions[4] = { {-1,-1}, {1,-1}, {-1,1}, {1,1} };
         float2 uvs[4]       = { {0,1},   {1,1},  {0,0},  {1,0} };
@@ -71,7 +70,6 @@ class MetalHLGView: NSView {
         return out;
     }
 
-    // HLG EOTF (ARIB STD-B67 inverse OETF)
     float hlg_eotf(float Ep) {
         const float a = 0.17883277;
         const float b = 0.28466892;
@@ -85,12 +83,22 @@ class MetalHLGView: NSView {
         return E;
     }
 
-    // BT.2020 → Display P3 matrix
+    // BT.2020 → Display P3 (precise, from ICC spec)
+    // Derived: P3_from_XYZ * XYZ_from_BT2020
     constant float3x3 bt2020_to_p3 = float3x3(
-        float3( 1.3434, -0.0653,  0.0025),  // column 0
-        float3(-0.2822,  1.0760, -0.0197),   // column 1
-        float3(-0.0612, -0.0107,  1.0172)    // column 2
+        float3( 1.3437, -0.0653,  0.0028),
+        float3(-0.2825,  1.0762, -0.0196),
+        float3(-0.0611, -0.0109,  1.0168)
     );
+
+    // BT.2100 HLG OOTF: scene-linear → display-linear
+    // Applies system gamma (1.2 for nominal HLG) to luminance channel
+    float3 hlg_ootf(float3 rgb, float gamma) {
+        float Ys = dot(rgb, float3(0.2627, 0.6780, 0.0593));  // BT.2020 luminance
+        if (Ys <= 0.0) return float3(0.0);
+        float factor = pow(Ys, gamma - 1.0);
+        return rgb * factor;
+    }
 
     fragment float4 hlgFragment(VertexOut in [[stage_in]],
                                  texture2d<float> tex [[texture(0)]],
@@ -98,22 +106,27 @@ class MetalHLGView: NSView {
         constexpr sampler s(filter::linear, address::clamp_to_edge);
         float4 pixel = tex.sample(s, in.uv);
 
-        // Apply HLG EOTF → scene linear BT.2020
-        float3 linear2020 = float3(
+        // Step 1: HLG inverse OETF → scene-linear BT.2020
+        float3 sceneLinear = float3(
             hlg_eotf(pixel.r),
             hlg_eotf(pixel.g),
             hlg_eotf(pixel.b)
         );
 
-        // BT.2020 → Display P3
-        float3 p3 = bt2020_to_p3 * linear2020;
-        p3 = clamp(p3, 0.0, 100.0);
+        // Step 2: OOTF — scene-linear → display-linear (system gamma = 1.2)
+        float3 displayLinear = hlg_ootf(sceneLinear, 1.2);
+
+        // Step 3: BT.2020 → Display P3 gamut conversion
+        float3 p3 = bt2020_to_p3 * displayLinear;
+        p3 = max(p3, 0.0);
 
         if (params.hdrEnabled) {
-            // HDR: output EDR values (scale for HLG peak ~3.77x SDR)
-            return float4(p3 * 3.77, 1.0);
+            // EDR output: scale by maxEDR so peak white maps to screen headroom
+            // HLG nominal peak after OOTF(1.2) ≈ 1.0, scale to available EDR
+            float scale = params.maxEDR;
+            return float4(p3 * scale, 1.0);
         } else {
-            // SDR: Reinhard tone map + gamma 2.2
+            // SDR: Reinhard tone map + sRGB gamma
             float3 mapped = p3 / (p3 + 1.0);
             mapped = pow(mapped, float3(1.0 / 2.2));
             return float4(mapped, 1.0);
@@ -134,29 +147,32 @@ class MetalHLGView: NSView {
         }
     }
 
-    // MARK: - Upload decoded image
+    // MARK: - Configure from CGImage
 
-    func configure(decoded: DecodedImageData, hdr: Bool, colorSpace: CGColorSpace? = nil) {
+    func configure(cgImage: CGImage, hdr: Bool, colorSpace: CGColorSpace? = nil) {
         showHDR = hdr
-        if let cs = colorSpace {
-            metalLayer?.colorspace = cs
-        }
+        // Layer colorspace stays extendedLinearDisplayP3 — shader outputs linear P3
         guard let device else { return }
+        guard let extracted = extractRGBA16(from: cgImage) else {
+            print("[metal] failed to extract RGBA16 from CGImage")
+            return
+        }
+        defer { free(extracted.data) }
 
         let desc = MTLTextureDescriptor.texture2DDescriptor(
             pixelFormat: .rgba16Unorm,
-            width: decoded.width,
-            height: decoded.height,
+            width: extracted.width,
+            height: extracted.height,
             mipmapped: false)
         desc.usage = [.shaderRead]
         guard let tex = device.makeTexture(descriptor: desc) else {
             print("[metal] texture creation failed")
             return
         }
-        tex.replace(region: MTLRegionMake2D(0, 0, decoded.width, decoded.height),
+        tex.replace(region: MTLRegionMake2D(0, 0, extracted.width, extracted.height),
                     mipmapLevel: 0,
-                    withBytes: decoded.data,
-                    bytesPerRow: decoded.stride)
+                    withBytes: extracted.data,
+                    bytesPerRow: extracted.stride)
         texture = tex
         render()
     }
@@ -175,18 +191,15 @@ class MetalHLGView: NSView {
         let drawW = Double(drawable.texture.width)
         let drawH = Double(drawable.texture.height)
 
-        // Compute letterboxed/pillarboxed viewport to maintain aspect ratio
         let imgAspect = Double(texture.width) / Double(texture.height)
         let drawAspect = drawW / drawH
         let vpX, vpY, vpW, vpH: Double
         if imgAspect > drawAspect {
-            // Image wider than view → pillarbox (black bars top/bottom)
             vpW = drawW
             vpH = drawW / imgAspect
             vpX = 0
             vpY = (drawH - vpH) / 2
         } else {
-            // Image taller than view → letterbox (black bars left/right)
             vpH = drawH
             vpW = drawH * imgAspect
             vpX = (drawW - vpW) / 2

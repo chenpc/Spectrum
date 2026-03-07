@@ -19,7 +19,7 @@ struct SettingsView: View {
 
 private struct GeneralSettingsTab: View {
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
-    @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
+    @AppStorage("showDiagBadge") private var showDiagBadge: Bool = true
 
     var body: some View {
         Form {
@@ -33,7 +33,7 @@ private struct GeneralSettingsTab: View {
             }
 
             Section("Playback") {
-                Toggle("Show diagnostics badge", isOn: $showMPVDiagBadge)
+                Toggle("Show diagnostics badge", isOn: $showDiagBadge)
             }
         }
         .formStyle(.grouped)

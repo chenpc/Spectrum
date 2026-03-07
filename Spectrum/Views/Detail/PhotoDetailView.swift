@@ -11,31 +11,31 @@ struct PhotoDetailView: View {
     var viewModel: LibraryViewModel?
     @Query private var folders: [ScannedFolder]
     @State private var image: NSImage?
-    @State private var showHDR: Bool = true
+    @State private var showEDR: Bool = true
     @State private var zoomLevel: CGFloat = 1.0
     @State private var containerSize: CGSize = .zero
     @State private var videoHDRType: VideoHDRType?
     @State private var hdrFormat: HDRFormat?
     @State private var hlgCGImage: CGImage?
-    @State private var mpvController = MPVController()
+    @State private var videoController = VideoController()
     @State private var isCropMode = false
     @State private var editingCropRect = CGRect(x: 0.05, y: 0.05, width: 0.9, height: 0.9)
     @State private var activeCrop = CGRect(x: 0, y: 0, width: 1, height: 1)
     @State private var activeRotation: Int = 0
     @State private var activeFlipH: Bool = false
-    @State private var mpvControlsVisible = true
-    @State private var mpvHideTask: Task<Void, Never>? = nil
-    @State private var mpvBarOffset: CGSize = .zero
-    @State private var mpvBarDragStart: CGSize = .zero
+    @State private var controlsVisible = true
+    @State private var hideTask: Task<Void, Never>? = nil
+    @State private var barOffset: CGSize = .zero
+    @State private var barDragStart: CGSize = .zero
     @State private var videoStarted = false
     @State private var posterFrame: CGImage?
-    @State private var mpvPlaybackStarted = false
+    @State private var playbackStarted = false
     // Gyro config (stored in XMP sidecar, not DB)
     @State private var gyroConfigJson: String?
     // Shared
     @State private var spaceKeyMonitor: Any?
     @State private var cursorHidden = false
-    @AppStorage("showMPVDiagBadge") private var showMPVDiagBadge: Bool = true
+    @AppStorage("showDiagBadge") private var showDiagBadge: Bool = true
     @AppStorage("gyroStabEnabled") private var gyroStabEnabled: Bool = true
     @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
     @AppStorage("gyroOffsetMs") private var gyroOffsetMs: Double = 0
@@ -73,22 +73,22 @@ struct PhotoDetailView: View {
             }
         }
         .background(.black)
-        .focusedSceneValue(\.mpvPlayPause, mpvController.togglePlayPause)
+        .focusedSceneValue(\.videoPlayPause, videoController.togglePlayPause)
         .focusedSceneValue(\.gyroConfigBinding, $gyroConfigJson)
-        .focusedSceneValue(\.mpvController, mpvController)
-        .onChange(of: showMPVDiagBadge) { _, enabled in
-            mpvController.diagnosticsEnabled = enabled
+        .focusedSceneValue(\.videoController, videoController)
+        .onChange(of: showDiagBadge) { _, enabled in
+            videoController.diagnosticsEnabled = enabled
         }
-        .onChange(of: mpvController.isPlaying) { _, playing in
-            if playing && !mpvPlaybackStarted {
-                mpvPlaybackStarted = true
+        .onChange(of: videoController.isPlaying) { _, playing in
+            if playing && !playbackStarted {
+                playbackStarted = true
             }
         }
         .onChange(of: gyroConfigJson) { _, _ in
             writeXMPSidecar()
-            guard mpvController.gyroStabEnabled else { return }
-            mpvController.stopGyroStab()
-            let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
+            guard videoController.gyroStabEnabled else { return }
+            videoController.stopGyroStab()
+            let fps = videoController.videoFPS > 0 ? videoController.videoFPS : 30.0
             let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
             startGyro(videoPath: photo.filePath, fps: fps,
                       config: buildGyroConfig(), lensPath: lens)
@@ -99,7 +99,7 @@ struct PhotoDetailView: View {
         }
         .onChange(of: photo.filePath) { _, _ in
             // Immediately clear stale gyro state to prevent badge flash
-            mpvController.reset()
+            videoController.reset()
         }
         .task(id: photo.filePath) {
             isCropMode = false
@@ -192,15 +192,14 @@ struct PhotoDetailView: View {
         activeVideoContent
     }
 
-    /// Active video player (MDK) — created only after user presses play.
+    /// Active video player — created only after user presses play.
     @ViewBuilder
     private var activeVideoContent: some View {
         ZStack(alignment: .bottom) {
-            if mpvPlaybackStarted {
-                MPVPlayerView(path: photo.filePath, bookmarkData: bookmarkData,
-                              controller: mpvController,
-                              hdrType: videoHDRType,
-                              showHDR: showHDR)
+            if playbackStarted {
+                VideoPlayerView(path: photo.filePath, bookmarkData: bookmarkData,
+                              controller: videoController,
+                              showEDR: showEDR)
             } else if let posterFrame {
                 Image(decorative: posterFrame, scale: 1)
                     .resizable()
@@ -211,41 +210,41 @@ struct PhotoDetailView: View {
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            if showMPVDiagBadge {
-                mpvDiagBadge
+            if showDiagBadge {
+                diagBadge
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topTrailing)
             }
 
-            if mpvControlsVisible {
-                MPVControlBar(controller: mpvController)
+            if controlsVisible {
+                VideoControlBar(controller: videoController)
                     .frame(maxWidth: 480)
-                    .offset(mpvBarOffset)
+                    .offset(barOffset)
                     .gesture(
                         DragGesture()
                             .onChanged { v in
-                                mpvBarOffset = CGSize(
-                                    width:  mpvBarDragStart.width  + v.translation.width,
-                                    height: mpvBarDragStart.height + v.translation.height
+                                barOffset = CGSize(
+                                    width:  barDragStart.width  + v.translation.width,
+                                    height: barDragStart.height + v.translation.height
                                 )
-                                resetMPVControlsTimer()
+                                resetControlsTimer()
                             }
                             .onEnded { v in
-                                mpvBarOffset = CGSize(
-                                    width:  mpvBarDragStart.width  + v.translation.width,
-                                    height: mpvBarDragStart.height + v.translation.height
+                                barOffset = CGSize(
+                                    width:  barDragStart.width  + v.translation.width,
+                                    height: barDragStart.height + v.translation.height
                                 )
-                                mpvBarDragStart = mpvBarOffset
+                                barDragStart = barOffset
                             }
                     )
                     .padding(.bottom, 20)
                     .transition(.opacity)
             }
         }
-        .animation(.easeInOut(duration: 0.25), value: mpvControlsVisible)
+        .animation(.easeInOut(duration: 0.25), value: controlsVisible)
         .onContinuousHover { phase in
-            if case .active = phase { resetMPVControlsTimer() }
+            if case .active = phase { resetControlsTimer() }
         }
-        .onAppear { resetMPVControlsTimer() }
+        .onAppear { resetControlsTimer() }
     }
 
     private var isTransposed: Bool { activeRotation == 90 || activeRotation == 270 }
@@ -274,7 +273,7 @@ struct PhotoDetailView: View {
                 ZStack {
                     ScrollView([.horizontal, .vertical]) {
                         Group {
-                            if let hlgCGImage, showHDR, hdrFormat == .hlg {
+                            if let hlgCGImage, showEDR, hdrFormat == .hlg {
                                 HLGImageView(cgImage: hlgCGImage)
                             } else {
                                 HDRImageView(image: image, dynamicRange: imageDynamicRange)
@@ -316,10 +315,10 @@ struct PhotoDetailView: View {
                     }
                 }
                 .overlay(alignment: .topLeading) {
-                    if isHDR && showMPVDiagBadge && !isCropMode {
-                        Button { showHDR.toggle() } label: { hdrBadge }
+                    if isHDR && showDiagBadge && !isCropMode {
+                        Button { showEDR.toggle() } label: { edrBadge }
                             .buttonStyle(.plain)
-                            .help(showHDR ? "Switch to SDR" : "Switch to HDR")
+                            .help(showEDR ? "Switch to SDR" : "Switch to EDR")
                             .padding(12)
                     }
                 }
@@ -453,45 +452,54 @@ struct PhotoDetailView: View {
     }
 
     @ViewBuilder
-    private var mpvDiagBadge: some View {
+    private var diagBadge: some View {
         // Same thresholds as testmpv: green CV<0.05, yellow CV<0.15, red CV≥0.15
-        let cv = mpvController.renderCV
+        let cv = videoController.renderCV
         let dotColor: Color = cv < 0.05 ? .green : cv < 0.15 ? .yellow : .red
-        let videoFPS = mpvController.videoFPS
-        let renderFPS = mpvController.renderFPS
+        let videoFPS = videoController.videoFPS
+        let renderFPS = videoController.renderFPS
 
         VStack(alignment: .trailing, spacing: 4) {
             // Toggle pills — separate row so they look clearly interactive
             HStack(spacing: 4) {
-                if let hdrType = videoHDRType {
-                    togglePill(label: showHDR ? hdrType.rawValue : "SDR",
-                               active: showHDR, color: .orange) {
-                        showHDR.toggle()
+                if videoHDRType != nil && !videoController.isAVFLayerMode {
+                    togglePill(label: showEDR ? "EDR" : "SDR",
+                               active: showEDR, color: .orange) {
+                        showEDR.toggle()
                     }
                 }
-                if mpvController.gyroAvailable {
-                    togglePill(label: mpvController.gyroStabEnabled ? gyroMethod.uppercased() : "GYRO OFF",
-                               active: mpvController.gyroStabEnabled, color: .green) {
+                if videoController.gyroAvailable {
+                    togglePill(label: videoController.gyroStabEnabled ? gyroMethod.uppercased() : "GYRO OFF",
+                               active: videoController.gyroStabEnabled, color: .green) {
                         cycleGyroMethod()
                     }
                 }
             }
 
-            Text("MDK:\(mpvController.mdkColorspaceInfo) · CALayer:\(mpvController.layerColorspaceInfo)")
+            if let codec = videoController.codecInfo {
+                Text("Codec: \(codec)")
+            }
+            Text("Format: \(videoController.pixelFormatInfo)")
+            Text("ColorSpace: \(videoController.colorSpaceInfo)")
+            if videoController.isAVFLayerMode {
+                Text("Render: AVPlayerLayer")
+            } else {
+                Text("Decode: \(videoController.decodeColorspaceInfo)")
+            }
 
             HStack(spacing: 4) {
                 Circle()
                     .fill(renderFPS > 0 ? dotColor : .secondary)
                     .frame(width: 6, height: 6)
                 if videoFPS > 0 {
-                    Text(String(format: "%.1f/%.0f fps", renderFPS, videoFPS))
+                    Text(String(format: "FPS: %.1f/%.0f", renderFPS, videoFPS))
                 } else {
-                    Text(String(format: "%.1f fps", renderFPS))
+                    Text(String(format: "FPS: %.1f", renderFPS))
                 }
-                Text("CV \(String(format: "%.3f", mpvController.renderCV))")
+                Text(String(format: "CV: %.3f", videoController.renderCV))
                     .foregroundStyle(dotColor)
-                if mpvController.gyroStabEnabled && mpvController.gyroSI > 0 {
-                    Text(String(format: "SI %.4f", mpvController.gyroSI))
+                if videoController.gyroStabEnabled && videoController.gyroSI > 0 {
+                    Text(String(format: "SI: %.4f", videoController.gyroSI))
                         .foregroundStyle(.cyan)
                 }
             }
@@ -556,33 +564,33 @@ struct PhotoDetailView: View {
     /// Route to spectrum or gyroflow method based on user setting.
     private func startGyro(videoPath: String, fps: Double, config: GyroConfig, lensPath: String?) {
         if gyroMethod == "gyroflow" {
-            mpvController.startGyroStabGyroflow(videoPath: videoPath, fps: fps,
+            videoController.startGyroStabGyroflow(videoPath: videoPath, fps: fps,
                                                 config: config, lensPath: lensPath)
         } else {
-            mpvController.startGyroStab(videoPath: videoPath, fps: fps,
+            videoController.startGyroStab(videoPath: videoPath, fps: fps,
                                         config: config, lensPath: lensPath)
         }
     }
 
     /// Cycle: spectrum → gyroflow → off → spectrum …
     private func cycleGyroMethod() {
-        if mpvController.gyroStabEnabled {
+        if videoController.gyroStabEnabled {
             if gyroMethod == "spectrum" {
                 // spectrum → gyroflow
-                mpvController.stopGyroStab()
+                videoController.stopGyroStab()
                 gyroMethod = "gyroflow"
-                let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
+                let fps = videoController.videoFPS > 0 ? videoController.videoFPS : 30.0
                 let lens = gyroLensPath.isEmpty ? nil : gyroLensPath
                 startGyro(videoPath: photo.filePath, fps: fps,
                           config: buildGyroConfig(), lensPath: lens)
             } else {
                 // gyroflow → off
-                mpvController.stopGyroStab()
+                videoController.stopGyroStab()
             }
         } else {
             // off → spectrum
             gyroMethod = "spectrum"
-            let fps = mpvController.videoFPS > 0 ? mpvController.videoFPS : 30.0
+            let fps = videoController.videoFPS > 0 ? videoController.videoFPS : 30.0
             let lens = gyroLensPath.isEmpty ? nil : gyroLensPath
             startGyro(videoPath: photo.filePath, fps: fps,
                       config: buildGyroConfig(), lensPath: lens)
@@ -592,35 +600,24 @@ struct PhotoDetailView: View {
     private var isHLGImage: Bool { hdrFormat == .hlg }
 
     private var imageDynamicRange: NSImage.DynamicRange {
-        showHDR && isHDR ? .high : .standard
+        showEDR && isHDR ? .high : .standard
     }
 
-    private var hdrBadgeLabel: String {
-        if let videoType = videoHDRType {
-            return videoType.rawValue
-        }
-        return hdrFormat?.badgeLabel ?? "HDR"
-    }
-
-    private var hdrBadge: some View {
+    private var edrBadge: some View {
         HStack(spacing: 6) {
-            Text(hdrBadgeLabel)
+            Text(showEDR ? "EDR" : "SDR")
                 .font(.caption.bold())
-                .foregroundStyle(showHDR ? .orange : .secondary)
-            if isHLGImage {
-                let edr = NSScreen.main?.maximumExtendedDynamicRangeColorComponentValue ?? 1.0
-                Text("EDR \(String(format: "%.1f", edr))x")
-                    .font(.caption2)
-                    .foregroundStyle(.secondary)
-            } else if let headroom = photo.headroom {
-                Text("Headroom \(String(format: "%.1f", headroom))x")
+                .foregroundStyle(showEDR ? .orange : .secondary)
+            let edr = NSScreen.main?.maximumExtendedDynamicRangeColorComponentValue ?? 1.0
+            if showEDR && edr > 1.0 {
+                Text("\(String(format: "%.1f", edr))x")
                     .font(.caption2)
                     .foregroundStyle(.secondary)
             }
         }
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(showHDR ? .orange.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 4))
+            .background(showEDR ? .orange.opacity(0.2) : .clear, in: RoundedRectangle(cornerRadius: 4))
             .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 4))
     }
 
@@ -631,17 +628,17 @@ struct PhotoDetailView: View {
         // Reset all player state from previous video
         showCursor()
         isHDR = false
-        showHDR = true
+        showEDR = true
         hdrFormat = nil
         videoHDRType = nil
         videoStarted = false
         posterFrame = nil
-        mpvPlaybackStarted = false
-        mpvController.reset()
-        mpvHideTask?.cancel()
-        mpvControlsVisible = true
-        mpvBarOffset = .zero
-        mpvBarDragStart = .zero
+        playbackStarted = false
+        videoController.reset()
+        hideTask?.cancel()
+        controlsVisible = true
+        barOffset = .zero
+        barDragStart = .zero
         removeSpaceMonitor()
 
         // Read gyro config from XMP sidecar
@@ -691,8 +688,8 @@ struct PhotoDetailView: View {
                 }
             }
 
-            // 3. Configure MDK controller
-            mpvController.diagnosticsEnabled = showMPVDiagBadge
+            // 3. Configure video controller
+            videoController.diagnosticsEnabled = showDiagBadge
 
             // 4. Start gyro loading immediately (in parallel)
             if gyroStabEnabled && GyroCore.dylibFound {
@@ -726,7 +723,7 @@ struct PhotoDetailView: View {
     /// Install key monitor with full playback controls (called after startPlayback).
     private func installActiveKeyMonitor() {
         removeSpaceMonitor()
-        let mpv   = mpvController
+        let mpv   = videoController
         let gyroCfg = buildGyroConfig()
         let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
         let method = gyroMethod
@@ -784,23 +781,23 @@ struct PhotoDetailView: View {
         if !cursorHidden { NSCursor.hide(); cursorHidden = true }
     }
 
-    private func resetMPVControlsTimer() {
-        mpvHideTask?.cancel()
+    private func resetControlsTimer() {
+        hideTask?.cancel()
         showCursor()
-        if !mpvControlsVisible {
-            withAnimation(.easeIn(duration: 0.15)) { mpvControlsVisible = true }
+        if !controlsVisible {
+            withAnimation(.easeIn(duration: 0.15)) { controlsVisible = true }
         }
-        mpvHideTask = Task { @MainActor in
+        hideTask = Task { @MainActor in
             try? await Task.sleep(for: .seconds(3))
             guard !Task.isCancelled else { return }
-            withAnimation(.easeOut(duration: 0.5)) { mpvControlsVisible = false }
+            withAnimation(.easeOut(duration: 0.5)) { controlsVisible = false }
             hideCursor()
         }
     }
 
     private func loadFullImage() async {
         zoomLevel = 1.0
-        showHDR = true
+        showEDR = true
         isHDR = false
         hdrFormat = nil
         hlgCGImage = nil

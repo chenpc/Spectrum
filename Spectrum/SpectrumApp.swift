@@ -112,12 +112,17 @@ struct DeleteCommands: Commands {
             }
             .keyboardShortcut(.delete, modifiers: [])
             .disabled(deletePhoto == nil)
+            Button("Move to Trash") {
+                deletePhoto?()
+            }
+            .keyboardShortcut(KeyEquivalent.deleteForward, modifiers: [])
+            .disabled(deletePhoto == nil)
         }
     }
 }
 
 struct MpvPlaybackCommands: Commands {
-    @FocusedValue(\.mpvPlayPause) var playPause
+    @FocusedValue(\.videoPlayPause) var playPause
 
     var body: some Commands {
         CommandMenu("Playback") {
