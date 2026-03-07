@@ -50,83 +50,76 @@ struct AVFVideoInfo {
     }
 }
 
-func analyzeVideo(asset: AVAsset) -> AVFVideoInfo {
-    nonisolated(unsafe) var info = AVFVideoInfo()
-    nonisolated(unsafe) let unsafeAsset = asset
-    let sem = DispatchSemaphore(value: 0)
-    Task.detached { @Sendable in
-        let asset = unsafeAsset
-        info.duration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
-        let tracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
-        guard let track = tracks.first else { sem.signal(); return }
-        let size = (try? await track.load(.naturalSize)) ?? .zero
-        info.width = Int(size.width)
-        info.height = Int(size.height)
-        info.fps = Double((try? await track.load(.nominalFrameRate)) ?? 0)
-        // Detect rotation from preferredTransform
-        if let transform = try? await track.load(.preferredTransform) {
-            let angle = atan2(transform.b, transform.a)
-            let degrees = Int(round(angle * 180 / .pi))
-            // Normalize to 0, 90, 180, 270
-            info.rotation = ((degrees % 360) + 360) % 360
-        }
-        let descriptions = (try? await track.load(.formatDescriptions)) ?? []
-        for fd in descriptions {
-            let fourCC = CMFormatDescriptionGetMediaSubType(fd)
-            let chars: [Character] = [
-                Character(UnicodeScalar((fourCC >> 24) & 0xFF)!),
-                Character(UnicodeScalar((fourCC >> 16) & 0xFF)!),
-                Character(UnicodeScalar((fourCC >> 8) & 0xFF)!),
-                Character(UnicodeScalar(fourCC & 0xFF)!),
-            ]
-            info.codec = String(chars)
-
-            if let bpc = CMFormatDescriptionGetExtension(fd, extensionKey: "BitsPerComponent" as CFString) {
-                info.bitDepth = bpc as! Int
-            }
-            if let fr = CMFormatDescriptionGetExtension(fd, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) {
-                info.fullRange = (fr as! NSNumber).boolValue
-            }
-
-            if let exts = CMFormatDescriptionGetExtensions(fd) as? [String: Any] {
-                let tfKey = kCMFormatDescriptionExtension_TransferFunction as String
-                let cpKey = kCMFormatDescriptionExtension_ColorPrimaries as String
-                let mxKey = kCMFormatDescriptionExtension_YCbCrMatrix as String
-
-                if let tf = (exts["CVImageBufferTransferFunction"] ?? exts[tfKey]) as? String {
-                    info.transferFunction = tf
-                    if tf.contains("HLG") || tf.contains("ARIB") { info.isHLG = true; info.isHDR = true }
-                    if tf.contains("2084") || tf.contains("PQ") { info.isHDR = true }
-                }
-                if let cp = (exts["CVImageBufferColorPrimaries"] ?? exts[cpKey]) as? String {
-                    info.colorPrimaries = cp
-                }
-                if let mx = (exts["CVImageBufferYCbCrMatrix"] ?? exts[mxKey]) as? String {
-                    info.matrix = mx
-                }
-
-                // Dolby Vision detection
-                if let atoms = exts["SampleDescriptionExtensionAtoms"] as? [String: Any] {
-                    if let dvcC = atoms["dvcC"] as? Data {
-                        info.isDolbyVision = true; info.isHDR = true
-                        if dvcC.count >= 4 {
-                            info.dvProfile = Int(dvcC[2] >> 1)
-                            info.dvLevel = Int(dvcC[2] & 1) << 5 | Int(dvcC[3] >> 3)
-                        }
-                    }
-                    if let dvvC = atoms["dvvC"] as? Data {
-                        info.isDolbyVision = true; info.isHDR = true
-                        if dvvC.count >= 4 {
-                            info.dvProfile = Int(dvvC[2] >> 1)
-                            info.dvLevel = Int(dvvC[2] & 1) << 5 | Int(dvvC[3] >> 3)
-                        }
-                    }
-                }
-            }
-        }
-        sem.signal()
+func analyzeVideo(asset: AVAsset) async -> AVFVideoInfo {
+    var info = AVFVideoInfo()
+    info.duration = CMTimeGetSeconds((try? await asset.load(.duration)) ?? .zero)
+    let tracks = (try? await asset.loadTracks(withMediaType: .video)) ?? []
+    guard let track = tracks.first else { return info }
+    let size = (try? await track.load(.naturalSize)) ?? .zero
+    info.width = Int(size.width)
+    info.height = Int(size.height)
+    info.fps = Double((try? await track.load(.nominalFrameRate)) ?? 0)
+    // Detect rotation from preferredTransform
+    if let transform = try? await track.load(.preferredTransform) {
+        let angle = atan2(transform.b, transform.a)
+        let degrees = Int(round(angle * 180 / .pi))
+        // Normalize to 0, 90, 180, 270
+        info.rotation = ((degrees % 360) + 360) % 360
     }
-    sem.wait()
+    let descriptions = (try? await track.load(.formatDescriptions)) ?? []
+    for fd in descriptions {
+        let fourCC = CMFormatDescriptionGetMediaSubType(fd)
+        let chars: [Character] = [
+            Character(UnicodeScalar((fourCC >> 24) & 0xFF)!),
+            Character(UnicodeScalar((fourCC >> 16) & 0xFF)!),
+            Character(UnicodeScalar((fourCC >> 8) & 0xFF)!),
+            Character(UnicodeScalar(fourCC & 0xFF)!),
+        ]
+        info.codec = String(chars)
+
+        if let bpc = CMFormatDescriptionGetExtension(fd, extensionKey: "BitsPerComponent" as CFString) {
+            info.bitDepth = bpc as! Int
+        }
+        if let fr = CMFormatDescriptionGetExtension(fd, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) {
+            info.fullRange = (fr as! NSNumber).boolValue
+        }
+
+        if let exts = CMFormatDescriptionGetExtensions(fd) as? [String: Any] {
+            let tfKey = kCMFormatDescriptionExtension_TransferFunction as String
+            let cpKey = kCMFormatDescriptionExtension_ColorPrimaries as String
+            let mxKey = kCMFormatDescriptionExtension_YCbCrMatrix as String
+
+            if let tf = (exts["CVImageBufferTransferFunction"] ?? exts[tfKey]) as? String {
+                info.transferFunction = tf
+                if tf.contains("HLG") || tf.contains("ARIB") { info.isHLG = true; info.isHDR = true }
+                if tf.contains("2084") || tf.contains("PQ") { info.isHDR = true }
+            }
+            if let cp = (exts["CVImageBufferColorPrimaries"] ?? exts[cpKey]) as? String {
+                info.colorPrimaries = cp
+            }
+            if let mx = (exts["CVImageBufferYCbCrMatrix"] ?? exts[mxKey]) as? String {
+                info.matrix = mx
+            }
+
+            // Dolby Vision detection
+            if let atoms = exts["SampleDescriptionExtensionAtoms"] as? [String: Any] {
+                if let dvcC = atoms["dvcC"] as? Data {
+                    info.isDolbyVision = true; info.isHDR = true
+                    if dvcC.count >= 4 {
+                        info.dvProfile = Int(dvcC[2] >> 1)
+                        info.dvLevel = Int(dvcC[2] & 1) << 5 | Int(dvcC[3] >> 3)
+                    }
+                }
+                if let dvvC = atoms["dvvC"] as? Data {
+                    info.isDolbyVision = true; info.isHDR = true
+                    if dvvC.count >= 4 {
+                        info.dvProfile = Int(dvvC[2] >> 1)
+                        info.dvLevel = Int(dvvC[2] & 1) << 5 | Int(dvvC[3] >> 3)
+                    }
+                }
+            }
+        }
+    }
     return info
 }
 
@@ -400,75 +393,79 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
         let url = URL(fileURLWithPath: path)
         let asset = AVURLAsset(url: url)
-        videoInfo = analyzeVideo(asset: asset)
-        videoDuration = videoInfo.duration
-        videoRotation = UInt32(videoInfo.rotation)
 
-        // Auto-select pixel format from file's bit depth + range
-        let outputPixelFormat: OSType
-        if videoInfo.bitDepth > 8 {
-            outputPixelFormat = videoInfo.fullRange
-                ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
-                : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
-        } else {
-            outputPixelFormat = videoInfo.fullRange
-                ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
-                : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            let info = await analyzeVideo(asset: asset)
+            self.videoInfo = info
+            self.videoDuration = info.duration
+            self.videoRotation = UInt32(info.rotation)
+
+            // Auto-select pixel format from file's bit depth + range
+            let outputPixelFormat: OSType
+            if info.bitDepth > 8 {
+                outputPixelFormat = info.fullRange
+                    ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
+                    : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
+            } else {
+                outputPixelFormat = info.fullRange
+                    ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
+                    : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+            }
+
+            // Auto-select decode mode from YCbCr matrix + range
+            let fr = info.fullRange
+            if info.matrix.contains("2020") {
+                self.decodeMode = fr ? 1 : 0       // BT.2020 Full/Video
+            } else if info.matrix.contains("601") {
+                self.decodeMode = fr ? 5 : 4       // BT.601 Full/Video
+            } else {
+                self.decodeMode = fr ? 3 : 2       // BT.709 Full/Video (default)
+            }
+
+            // Auto-select colorspace + EDR
+            if info.isDolbyVision {
+                self.metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                self.metalLayer.wantsExtendedDynamicRangeContent = true
+            } else if info.isHLG {
+                self.metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
+                self.metalLayer.wantsExtendedDynamicRangeContent = true
+            } else if info.isHDR {
+                self.metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
+                self.metalLayer.wantsExtendedDynamicRangeContent = true
+            } else {
+                self.metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
+                self.metalLayer.wantsExtendedDynamicRangeContent = false
+            }
+
+            let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
+                kCVPixelBufferPixelFormatTypeKey as String: outputPixelFormat,
+                kCVPixelBufferMetalCompatibilityKey as String: true,
+            ])
+            self.videoOutput = output
+
+            let item = AVPlayerItem(asset: asset)
+            item.add(output)
+            self.playerItem = item
+
+            let newPlayer = AVPlayer(playerItem: item)
+            newPlayer.isMuted = self.isMuted
+            self.player = newPlayer
+
+            // EOF detection
+            self.eofObserver = NotificationCenter.default.addObserver(
+                forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
+            ) { [weak self] _ in
+                self?.isEOFReached = true
+            }
+
+            // DV: auto-enable AVPlayerLayer (Apple applies RPU internally)
+            if info.isDolbyVision {
+                self.enableAVFLayer()
+            }
+
+            Log.player.info("Loaded: \(url.lastPathComponent, privacy: .public)  \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps  transfer=\(info.transferFunction, privacy: .public)  isDV=\(info.isDolbyVision)  matrix=\(info.matrix, privacy: .public)  \(info.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
         }
-
-        // Auto-select decode mode from YCbCr matrix + range
-        let fr = videoInfo.fullRange
-        if videoInfo.matrix.contains("2020") {
-            decodeMode = fr ? 1 : 0       // BT.2020 Full/Video
-        } else if videoInfo.matrix.contains("601") {
-            decodeMode = fr ? 5 : 4       // BT.601 Full/Video
-        } else {
-            decodeMode = fr ? 3 : 2       // BT.709 Full/Video (default)
-        }
-
-        // Auto-select colorspace + EDR
-        if videoInfo.isDolbyVision {
-            metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-            metalLayer.wantsExtendedDynamicRangeContent = true
-        } else if videoInfo.isHLG {
-            metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
-            metalLayer.wantsExtendedDynamicRangeContent = true
-        } else if videoInfo.isHDR {
-            metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
-            metalLayer.wantsExtendedDynamicRangeContent = true
-        } else {
-            metalLayer.colorspace = CGColorSpace(name: CGColorSpace.sRGB)
-            metalLayer.wantsExtendedDynamicRangeContent = false
-        }
-
-        let output = AVPlayerItemVideoOutput(pixelBufferAttributes: [
-            kCVPixelBufferPixelFormatTypeKey as String: outputPixelFormat,
-            kCVPixelBufferMetalCompatibilityKey as String: true,
-        ])
-        videoOutput = output
-
-        let item = AVPlayerItem(asset: asset)
-        item.add(output)
-        playerItem = item
-
-        let newPlayer = AVPlayer(playerItem: item)
-        newPlayer.isMuted = isMuted
-        player = newPlayer
-
-        // EOF detection
-        eofObserver = NotificationCenter.default.addObserver(
-            forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
-        ) { [weak self] _ in
-            self?.isEOFReached = true
-        }
-
-        // DV: auto-enable AVPlayerLayer (Apple applies RPU internally)
-        if videoInfo.isDolbyVision {
-            enableAVFLayer()
-        }
-
-        let vi = videoInfo
-        Log.player.info("Loaded: \(url.lastPathComponent, privacy: .public)  \(vi.width)x\(vi.height)@\(String(format:"%.2f",vi.fps))fps  transfer=\(vi.transferFunction, privacy: .public)  isDV=\(vi.isDolbyVision)  matrix=\(vi.matrix, privacy: .public)  \(vi.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
     }
 
     private func enableAVFLayer() {

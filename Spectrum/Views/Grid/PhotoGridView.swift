@@ -2,131 +2,6 @@ import SwiftUI
 import SwiftData
 import UniformTypeIdentifiers
 
-// MARK: - Marquee Selection
-
-private struct ItemFramePreference: Equatable {
-    let id: String
-    let frame: CGRect
-}
-
-private struct ItemFramePreferenceKey: PreferenceKey {
-    static let defaultValue: [ItemFramePreference] = []
-    static func reduce(value: inout [ItemFramePreference], nextValue: () -> [ItemFramePreference]) {
-        value.append(contentsOf: nextValue())
-    }
-}
-
-private extension View {
-    func reportFrame(id: String) -> some View {
-        self.background(
-            GeometryReader { geo in
-                Color.clear.preference(
-                    key: ItemFramePreferenceKey.self,
-                    value: [ItemFramePreference(id: id, frame: geo.frame(in: .global))]
-                )
-            }
-        )
-    }
-}
-
-/// NSView overlay for marquee selection.
-/// Intercepts ALL left mouseDown. Tracks mouse movement:
-///  - If drag distance >= threshold → marquee mode (select items, draw rectangle)
-///  - If no drag (simple click) → forwards mouseDown+mouseUp to SwiftUI via sendEvent
-/// Right-clicks pass through entirely (hitTest returns nil).
-private final class MarqueeNSView: NSView {
-    /// (startLocal, currentLocal, startGlobal, currentGlobal)
-    var onDragChanged: ((CGPoint, CGPoint, CGPoint, CGPoint) -> Void)?
-    var onDragEnded: (() -> Void)?
-
-    private let minDragDistance: CGFloat = 4
-    private var forwarding = false
-
-    override var isFlipped: Bool { true }
-
-    override func hitTest(_ point: NSPoint) -> NSView? {
-        // While forwarding events, become invisible so SwiftUI receives them
-        guard !forwarding, bounds.contains(point) else { return nil }
-        // Only intercept left mouse button; right-click passes through
-        guard let event = window?.currentEvent, event.type == .leftMouseDown else { return nil }
-        return self
-    }
-
-    override func mouseDown(with event: NSEvent) {
-        let startLoc = convert(event.locationInWindow, from: nil)
-        var isDragging = false
-        var mouseUpEvent: NSEvent?
-
-        window?.trackEvents(matching: [.leftMouseDragged, .leftMouseUp], timeout: .infinity, mode: .eventTracking) { trackEvent, stop in
-            guard let trackEvent else { stop.pointee = true; return }
-
-            switch trackEvent.type {
-            case .leftMouseDragged:
-                let current = self.convert(trackEvent.locationInWindow, from: nil)
-                let dx = current.x - startLoc.x
-                let dy = current.y - startLoc.y
-                if !isDragging {
-                    guard sqrt(dx * dx + dy * dy) >= self.minDragDistance else { return }
-                    isDragging = true
-                }
-                let startGlobal = self.localToGlobal(startLoc)
-                let currentGlobal = self.localToGlobal(current)
-                self.onDragChanged?(
-                    CGPoint(x: startLoc.x, y: startLoc.y),
-                    CGPoint(x: current.x, y: current.y),
-                    startGlobal, currentGlobal
-                )
-
-            case .leftMouseUp:
-                if isDragging {
-                    self.onDragEnded?()
-                } else {
-                    mouseUpEvent = trackEvent
-                }
-                stop.pointee = true
-
-            default:
-                break
-            }
-        }
-
-        // No drag → forward the complete click to SwiftUI
-        if !isDragging {
-            forwarding = true
-            window?.sendEvent(event)
-            if let up = mouseUpEvent {
-                window?.sendEvent(up)
-            }
-            forwarding = false
-        }
-    }
-
-    /// Convert local (flipped) point to SwiftUI `.global` coordinate space.
-    private func localToGlobal(_ point: CGPoint) -> CGPoint {
-        guard let window else { return point }
-        let inWindow = convert(point, to: nil)
-        let contentHeight = window.contentView?.bounds.height ?? 0
-        return CGPoint(x: inWindow.x, y: contentHeight - inWindow.y)
-    }
-}
-
-private struct MarqueeOverlay: NSViewRepresentable {
-    var onDragChanged: (CGPoint, CGPoint, CGPoint, CGPoint) -> Void
-    var onDragEnded: () -> Void
-
-    func makeNSView(context: Context) -> MarqueeNSView {
-        let view = MarqueeNSView()
-        view.onDragChanged = onDragChanged
-        view.onDragEnded = onDragEnded
-        return view
-    }
-
-    func updateNSView(_ nsView: MarqueeNSView, context: Context) {
-        nsView.onDragChanged = onDragChanged
-        nsView.onDragEnded = onDragEnded
-    }
-}
-
 struct SubfolderInfo: Identifiable {
     let name: String
     let path: String
@@ -138,18 +13,18 @@ struct SubfolderInfo: Identifiable {
 struct PhotoGridView: View {
     var viewModel: LibraryViewModel
     @Binding var selectedPhoto: Photo?
+    @Binding var initialSelection: String?
     var onDoubleClick: ((Photo) -> Void)? = nil
     var onNavigateToSubfolder: ((String) -> Void)? = nil
     var folder: ScannedFolder? = nil
     var folderPath: String? = nil
     @Environment(\.modelContext) private var modelContext
-    @Query(sort: \Photo.dateTaken, order: .reverse) private var allPhotos: [Photo]
+    @Query private var allPhotos: [Photo]
 
     /// Live subfolders from filesystem scan (nil = not yet scanned).
     @State private var scannedSubfolders: [SubfolderInfo]? = nil
     @State private var isScanning = true
     @State private var isMounting = false
-    @State private var pendingPaths: [String] = []
     @State private var selectedItemIds: Set<String> = []
     @State private var lastSelectedId: String?
     @State private var photoToDelete: Photo? = nil
@@ -168,13 +43,6 @@ struct PhotoGridView: View {
     @State private var folderChangeToken = 0
     @State private var subfolderToDelete: SubfolderInfo? = nil
 
-    // Marquee selection (local = overlay coords for drawing, global = for hit testing)
-    @State private var marqueeStart: CGPoint? = nil
-    @State private var marqueeEnd: CGPoint? = nil
-    @State private var marqueeStartGlobal: CGPoint? = nil
-    @State private var marqueeEndGlobal: CGPoint? = nil
-    @State private var itemFrames: [ItemFramePreference] = []
-
     /// Subfolders inferred from existing Photo records — available instantly without scanning.
     private var inferredSubfolders: [SubfolderInfo] {
         guard let path = effectivePath else { return [] }
@@ -185,7 +53,13 @@ struct PhotoGridView: View {
             let relative = String(photo.filePath.dropFirst(prefix.count))
             if let slashIndex = relative.firstIndex(of: "/") {
                 let name = String(relative[..<slashIndex])
-                if seen[name] == nil { seen[name] = (path: photo.filePath, date: photo.dateTaken) }
+                if let existing = seen[name] {
+                    if photo.dateTaken > existing.date {
+                        seen[name] = (path: photo.filePath, date: photo.dateTaken)
+                    }
+                } else {
+                    seen[name] = (path: photo.filePath, date: photo.dateTaken)
+                }
             }
         }
         return seen.map { SubfolderInfo(name: $0, path: prefix + $0, coverPath: $1.path, coverDate: $1.date) }
@@ -331,18 +205,30 @@ struct PhotoGridView: View {
             .task(id: "\(effectivePath ?? "")_\(folderChangeToken)") {
                 await scanCurrentLevel()
             }
-            .onAppear { refreshDisplayPhotos() }
+            .onAppear {
+                refreshDisplayPhotos()
+                if let sel = initialSelection {
+                    initialSelection = nil
+                    selectSingle(sel)
+                }
+            }
             .onReceive(NotificationCenter.default.publisher(for: FolderMonitor.folderDidChange)) { note in
                 guard let changedPath = note.userInfo?["path"] as? String,
                       let ePath = effectivePath,
                       ePath.hasPrefix(changedPath) || changedPath.hasPrefix(ePath)
                 else { return }
+                FolderListCache.shared.invalidate(parentPath: ePath)
                 folderChangeToken += 1
             }
             .onChange(of: effectivePath) { _, newPath in
-                selectedItemIds = []
-                lastSelectedId = nil
-                pendingPaths = []
+                if let sel = initialSelection {
+                    initialSelection = nil
+                    selectedItemIds = [sel]
+                    lastSelectedId = sel
+                } else {
+                    selectedItemIds = []
+                    lastSelectedId = nil
+                }
                 isMounting = false
                 isScanning = true
                 refreshDisplayPhotos()
@@ -356,13 +242,7 @@ struct PhotoGridView: View {
                 }
             }
             .onChange(of: allPhotos.count) { _, _ in
-                guard !pendingPaths.isEmpty else { return }
-                let currentPhotos = computeDirectPhotos()
-                let scannedPaths = Set(currentPhotos.map(\.filePath))
-                let remaining = pendingPaths.filter { !scannedPaths.contains($0) }
-                if remaining.count != pendingPaths.count {
-                    pendingPaths = remaining
-                }
+                refreshDisplayPhotos()
             }
     }
 
@@ -395,6 +275,23 @@ struct PhotoGridView: View {
                     .foregroundStyle(.green)
                     .font(.caption)
                 Text(done)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let globalLabel = statusBar.globalLabel {
+                if statusBar.isActive || statusBar.doneMessage != nil {
+                    Text("·").font(.caption).foregroundStyle(.tertiary)
+                }
+                if globalLabel.hasSuffix("…") {
+                    ProgressView()
+                        .scaleEffect(0.5)
+                        .frame(width: 16, height: 16)
+                } else {
+                    Image(systemName: "checkmark.circle.fill")
+                        .foregroundStyle(.green)
+                        .font(.caption)
+                }
+                Text(globalLabel)
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -438,19 +335,7 @@ struct PhotoGridView: View {
             ProgressView("Connecting…")
                 .padding()
                 .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
-        } else if isScanning && displayPhotos.isEmpty && subfolders.isEmpty && pendingPaths.isEmpty {
-            ProgressView("Scanning…")
-                .padding()
-                .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 8))
         }
-    }
-
-    private var marqueeRect: CGRect? {
-        guard let start = marqueeStart, let end = marqueeEnd else { return nil }
-        return CGRect(
-            x: min(start.x, end.x), y: min(start.y, end.y),
-            width: abs(end.x - start.x), height: abs(end.y - start.y)
-        )
     }
 
     private var gridBody: some View {
@@ -463,12 +348,8 @@ struct PhotoGridView: View {
                 ScrollView {
                     LazyVStack(alignment: .leading, spacing: 0, pinnedViews: .sectionHeaders) {
                         subfolderSection
-                        pendingSection
                         emptyPlaceholder
                         photoGridSection
-                    }
-                    .onPreferenceChange(ItemFramePreferenceKey.self) { prefs in
-                        itemFrames = prefs
                     }
                     .background {
                         Color.clear
@@ -478,36 +359,6 @@ struct PhotoGridView: View {
                                 lastSelectedId = nil
                                 syncSelection()
                             }
-                    }
-                }
-                .overlay {
-                    ZStack {
-                        // Invisible NSView to capture mouse drag for marquee
-                        MarqueeOverlay(
-                            onDragChanged: { startLocal, currentLocal, startGlobal, currentGlobal in
-                                marqueeStart = startLocal
-                                marqueeEnd = currentLocal
-                                marqueeStartGlobal = startGlobal
-                                marqueeEndGlobal = currentGlobal
-                                updateMarqueeSelection()
-                            },
-                            onDragEnded: {
-                                marqueeStart = nil
-                                marqueeEnd = nil
-                                marqueeStartGlobal = nil
-                                marqueeEndGlobal = nil
-                            }
-                        )
-
-                        // Marquee rectangle visual
-                        if let rect = marqueeRect {
-                            Rectangle()
-                                .stroke(Color.accentColor, lineWidth: 1)
-                                .background(Color.accentColor.opacity(0.1))
-                                .frame(width: rect.width, height: rect.height)
-                                .position(x: rect.midX, y: rect.midY)
-                                .allowsHitTesting(false)
-                        }
                     }
                 }
                 .id(effectivePath)
@@ -541,7 +392,6 @@ struct PhotoGridView: View {
                             isSelected: selectedItemIds.contains(info.path)
                         )
                         .id(info.path)
-                        .reportFrame(id: info.path)
                         .onTapGesture {
                             handleTap(id: info.path, isFolder: true, event: NSApp.currentEvent)
                         }
@@ -595,27 +445,8 @@ struct PhotoGridView: View {
     }
 
     @ViewBuilder
-    private var pendingSection: some View {
-        if !pendingPaths.isEmpty {
-            Section {
-                LazyVGrid(columns: columns, spacing: 2) {
-                    ForEach(pendingPaths, id: \.self) { path in
-                        PlaceholderTileView(
-                            filePath: path,
-                            bookmarkData: folder?.bookmarkData
-                        )
-                    }
-                }
-                .padding(.horizontal, 2)
-            } header: {
-                TimelineSectionHeader(localizedLabel: "Indexing", count: pendingPaths.count)
-            }
-        }
-    }
-
-    @ViewBuilder
     private var emptyPlaceholder: some View {
-        if displayPhotos.isEmpty && subfolders.isEmpty && pendingPaths.isEmpty && !isScanning {
+        if displayPhotos.isEmpty && subfolders.isEmpty && !isScanning {
             ContentUnavailableView(
                 "No Photos",
                 systemImage: "photo.on.rectangle.angled",
@@ -634,7 +465,6 @@ struct PhotoGridView: View {
                     folderBookmarkData: folder?.bookmarkData
                 )
                 .id(photo.filePath)
-                .reportFrame(id: photo.filePath)
                 .onTapGesture {
                     handleTap(id: photo.filePath, isFolder: false, event: NSApp.currentEvent)
                 }
@@ -760,21 +590,6 @@ struct PhotoGridView: View {
         }
     }
 
-    private func updateMarqueeSelection() {
-        guard let start = marqueeStartGlobal, let end = marqueeEndGlobal else { return }
-        let globalRect = CGRect(
-            x: min(start.x, end.x), y: min(start.y, end.y),
-            width: abs(end.x - start.x), height: abs(end.y - start.y)
-        )
-        var ids = Set<String>()
-        for pref in itemFrames where globalRect.intersects(pref.frame) {
-            ids.insert(pref.id)
-        }
-        selectedItemIds = ids
-        lastSelectedId = ids.first
-        syncSelection()
-    }
-
     private func activateItem(id: String) {
         if let sf = subfolders.first(where: { $0.path == id }) {
             onNavigateToSubfolder?(sf.path)
@@ -834,33 +649,10 @@ struct PhotoGridView: View {
             .sorted { subfoldersAreInOrder($0, $1) }
         scannedSubfolders = freshSubfolders
 
-        // Step 2: Quick filesystem listing — show placeholder cells for files not yet indexed.
-        if let bm = folder.bookmarkData,
-           let rootURL = try? BookmarkService.resolveBookmark(bm) {
-            let targetURL = folderPath.map { URL(fileURLWithPath: $0) } ?? rootURL
-            let existingPaths = Set(computeDirectPhotos().map(\.filePath))
-            let pending = await Task.detached(priority: .userInitiated) {
-                let started = rootURL.startAccessingSecurityScopedResource()
-                defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
-                guard let contents = try? FileManager.default.contentsOfDirectory(
-                    at: targetURL,
-                    includingPropertiesForKeys: [.isRegularFileKey],
-                    options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                ) else { return [String]() }
-                return contents
-                    .filter { $0.isMediaFile && !existingPaths.contains($0.path) }
-                    .map(\.path)
-                    .sorted()
-            }.value
-            guard !Task.isCancelled else { isScanning = false; return }
-            pendingPaths = pending
-        }
-
-        // Step 3: Delta scan — reads EXIF, inserts Photo records, removes deleted files.
+        // Step 2: Delta scan — reads EXIF, inserts Photo records, removes deleted files.
         // Photos trickle into the grid as @Query propagates each batch save.
         try? await scanner.scanFolder(id: folder.persistentModelID, subPath: folderPath)
         guard !Task.isCancelled else { isScanning = false; return }
-        pendingPaths = []
         isScanning = false
         refreshDisplayPhotos()
         statusBar.finish("Scanned \(folderName)")
@@ -1071,6 +863,7 @@ struct PhotoGridView: View {
         } else {
             statusBar.finish("\(doneVerb) \(items.count) files")
             if isCut { importModel.removeItems(processedURLs) }
+            if let ePath = effectivePath { FolderListCache.shared.invalidate(parentPath: ePath) }
             folderChangeToken += 1
         }
     }
@@ -1106,6 +899,7 @@ struct PhotoGridView: View {
         switch copyResult {
         case .success:
             statusBar.finish("Copied \(srcName)")
+            if let ePath = effectivePath { FolderListCache.shared.invalidate(parentPath: ePath) }
             folderChangeToken += 1
         case .failure(let error):
             statusBar.finish()
@@ -1267,42 +1061,6 @@ private struct SubfolderTileView: View {
                 return
             }
             coverImage = await ThumbnailService.shared.thumbnail(for: coverPath, bookmarkData: bookmarkData)
-        }
-    }
-}
-
-private struct PlaceholderTileView: View {
-    let filePath: String
-    let bookmarkData: Data?
-    @State private var thumbnail: NSImage?
-
-    var body: some View {
-        ZStack {
-            if let thumbnail {
-                GeometryReader { geo in
-                    Image(nsImage: thumbnail)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                        .contentShape(Rectangle())
-                }
-            } else {
-                Color.secondary.opacity(0.12)
-                    .overlay {
-                        ProgressView()
-                            .scaleEffect(0.6)
-                    }
-            }
-        }
-        .frame(height: 150)
-        .clipShape(RoundedRectangle(cornerRadius: 8))
-        .task {
-            if let cached = ThumbnailService.shared.cachedThumbnail(for: filePath) {
-                thumbnail = cached
-                return
-            }
-            thumbnail = await ThumbnailService.shared.thumbnail(for: filePath, bookmarkData: bookmarkData)
         }
     }
 }

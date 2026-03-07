@@ -147,6 +147,8 @@ struct ContentView: View {
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
     @AppStorage("lastFolderPath") private var lastFolderPath: String = ""
     @AppStorage("lastSubfolderPath") private var lastSubfolderPath: String = ""
+    /// Path to pre-select when grid appears (after leaving detail or navigating to parent).
+    @State private var returnToSelection: String?
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -235,6 +237,22 @@ struct ContentView: View {
                 try? await scanner.scanFolder(id: folder.persistentModelID, clearAll: false)
             }
 
+            // Prefetch folder tree structure in background
+            let folderIDs = allFolders.map(\.persistentModelID)
+            let container = modelContext.container
+            Task.detached(priority: .utility) {
+                await MainActor.run { StatusBarModel.shared.setGlobal("Indexing folders…") }
+                let bgScanner = FolderScanner(modelContainer: container)
+                for id in folderIDs {
+                    await bgScanner.prefetchFolderTree(id: id) { name in
+                        Task { @MainActor in
+                            StatusBarModel.shared.setGlobal("Indexing \(name)…")
+                        }
+                    }
+                }
+                await MainActor.run { StatusBarModel.shared.setGlobal("Folders indexed") }
+            }
+
             // Start FSEvents monitoring for all folders
             for folder in allFolders {
                 FolderMonitor.shared.startMonitoring(path: folder.path)
@@ -270,6 +288,7 @@ struct ContentView: View {
                             .toolbar {
                                 ToolbarItem(placement: .navigation) {
                                     Button {
+                                        returnToSelection = detailPhoto?.filePath
                                         detailPhoto = nil
                                     } label: {
                                         Label("Back", systemImage: "chevron.left")
@@ -341,6 +360,7 @@ struct ContentView: View {
         if isFullScreen {
             exitFullScreen()
         } else if detailPhoto != nil {
+            returnToSelection = detailPhoto?.filePath
             detailPhoto = nil
         } else if case .subfolder(let folder, let subPath) = selectedSidebarItem {
             navigateToParent(folder: folder, subPath: subPath)
@@ -358,6 +378,7 @@ struct ContentView: View {
     }
 
     private func navigateToParent(folder: ScannedFolder, subPath: String) {
+        returnToSelection = subPath
         let parentPath = URL(fileURLWithPath: subPath).deletingLastPathComponent().path
         if parentPath == folder.path || parentPath.count < folder.path.count {
             selectedSidebarItem = .folder(folder)
@@ -385,6 +406,7 @@ struct ContentView: View {
             PhotoGridView(
                 viewModel: viewModel,
                 selectedPhoto: $selectedPhoto,
+                initialSelection: $returnToSelection,
                 onDoubleClick: { detailPhoto = $0 },
                 onNavigateToSubfolder: { path in
                     selectedSidebarItem = .subfolder(folder, path)
@@ -396,6 +418,7 @@ struct ContentView: View {
             PhotoGridView(
                 viewModel: viewModel,
                 selectedPhoto: $selectedPhoto,
+                initialSelection: $returnToSelection,
                 onDoubleClick: { detailPhoto = $0 },
                 onNavigateToSubfolder: { path in
                     selectedSidebarItem = .subfolder(folder, path)

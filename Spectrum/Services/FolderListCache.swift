@@ -13,6 +13,8 @@ final class FolderListCache: @unchecked Sendable {
     static let shared = FolderListCache()
 
     private var memory: [String: [FolderListEntry]] = [:]
+    /// Paths that have been listed from filesystem this session (cleared on invalidate).
+    private var scannedThisSession: Set<String> = []
     private let lock = NSLock()
     private let fileURL: URL
 
@@ -38,18 +40,29 @@ final class FolderListCache: @unchecked Sendable {
         lock.withLock { memory[parentPath]?.first { $0.path == childPath } }
     }
 
+    /// Returns true if this path has already been scanned from filesystem this session.
+    func isScannedThisSession(_ parentPath: String) -> Bool {
+        lock.withLock { scannedThisSession.contains(parentPath) }
+    }
+
     func setEntries(_ entries: [FolderListEntry], for parentPath: String) {
-        lock.withLock { memory[parentPath] = entries }
+        lock.withLock {
+            memory[parentPath] = entries
+            scannedThisSession.insert(parentPath)
+        }
         persistAsync()
     }
 
     func invalidate(parentPath: String) {
-        lock.withLock { memory[parentPath] = nil }
+        lock.withLock {
+            memory[parentPath] = nil
+            scannedThisSession.remove(parentPath)
+        }
         persistAsync()
     }
 
     func clear() {
-        lock.withLock { memory = [:] }
+        lock.withLock { memory = [:]; scannedThisSession = [] }
         try? FileManager.default.removeItem(at: fileURL)
     }
 

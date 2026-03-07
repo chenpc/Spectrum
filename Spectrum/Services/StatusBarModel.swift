@@ -13,6 +13,9 @@ final class StatusBarModel {
     /// Shows "done" message after task completes, until next task starts
     private(set) var doneMessage: String?
 
+    /// Global background task (e.g. folder tree prefetch) — independent of per-grid scan.
+    private(set) var globalLabel: String?
+
     private init() {}
 
     /// Start an indeterminate task (e.g. scanning)
@@ -50,5 +53,7 @@ final class StatusBarModel {
         doneMessage = message ?? doneMessage
     }
 
-    var isVisible: Bool { isActive || doneMessage != nil }
+    func setGlobal(_ label: String?) { globalLabel = label }
+
+    var isVisible: Bool { isActive || doneMessage != nil || globalLabel != nil }
 }

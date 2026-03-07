@@ -170,7 +170,7 @@ actor ThumbnailService {
             return generateAndCacheSVGThumbnail(from: url, to: diskURL)
         }
 
-        return await Task.detached(priority: .userInitiated) {
+        return await Task.detached(priority: .medium) {
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
 
             let options: [CFString: Any] = [

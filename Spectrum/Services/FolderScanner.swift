@@ -285,6 +285,91 @@ actor FolderScanner {
         }
     }
 
+    /// Recursively cache the entire folder tree under a scanned folder.
+    /// Calls `onProgress` on each newly cached directory (name).
+    func prefetchFolderTree(id: PersistentIdentifier, onProgress: @Sendable @escaping (String) -> Void = { _ in }) {
+        guard let folder = modelContext.model(for: id) as? ScannedFolder,
+              let bookmarkData = folder.bookmarkData else { return }
+        let rootURL: URL
+        do {
+            rootURL = try BookmarkService.resolveBookmark(bookmarkData)
+        } catch { return }
+
+        BookmarkService.withSecurityScope(rootURL) {
+            prefetchRecursive(url: rootURL, rootURL: rootURL, onProgress: onProgress)
+        }
+    }
+
+    private func prefetchRecursive(url: URL, rootURL: URL, onProgress: (String) -> Void) {
+        let fm = FileManager.default
+        let cache = FolderListCache.shared
+        let parentPath = url.path
+
+        guard let contents = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return }
+
+        let dirs = contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        guard !dirs.isEmpty else {
+            cache.setEntries([], for: parentPath)
+            return
+        }
+
+        var entries: [FolderListEntry] = []
+        for dirURL in dirs {
+            // Use cached entry if available AND it has a cover; re-evaluate nil covers
+            if let cached = cache.entry(forChildPath: dirURL.path, underParent: parentPath),
+               cached.coverPath != nil {
+                entries.append(cached)
+            } else {
+                let coverURL = findCoverFile(in: dirURL)
+                let coverPath = coverURL?.path
+                let coverDate = coverPath.flatMap {
+                    try? URL(fileURLWithPath: $0)
+                        .resourceValues(forKeys: [.contentModificationDateKey])
+                        .contentModificationDate
+                }
+                entries.append(FolderListEntry(name: dirURL.lastPathComponent, path: dirURL.path,
+                                               coverPath: coverPath, coverDate: coverDate))
+            }
+        }
+
+        cache.setEntries(entries, for: parentPath)
+        onProgress(url.lastPathComponent)
+
+        // Recurse into subdirectories
+        for dirURL in dirs {
+            prefetchRecursive(url: dirURL, rootURL: rootURL, onProgress: onProgress)
+        }
+    }
+
+    /// Recursively find the first media file under a directory (depth-first).
+    private func findCoverFile(in url: URL, maxDepth: Int = 3) -> URL? {
+        guard maxDepth > 0 else { return nil }
+        let fm = FileManager.default
+        guard let contents = try? fm.contentsOfDirectory(
+            at: url,
+            includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
+            options: [.skipsHiddenFiles, .skipsPackageDescendants]
+        ) else { return nil }
+
+        // Check direct media files first
+        let imageFiles = contents.filter { $0.isImageFile }
+        if let first = imageFiles.first { return first }
+        if let first = contents.first(where: { $0.isMediaFile }) { return first }
+
+        // Recurse into subdirectories
+        let dirs = contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        for dir in dirs {
+            if let found = findCoverFile(in: dir, maxDepth: maxDepth - 1) {
+                return found
+            }
+        }
+        return nil
+    }
+
     /// List immediate subdirectories at a path within a scanned folder.
     /// Uses FolderListCache to skip the inner contentsOfDirectory on cache hits.
     /// Always performs the outer directory listing to detect added/removed folders.
@@ -305,6 +390,12 @@ actor FolderScanner {
         let targetPath = targetURL.path
         let cache = FolderListCache.shared
 
+        // Already scanned this session — return cache directly (FolderMonitor invalidates on changes).
+        if cache.isScannedThisSession(targetPath),
+           let cached = cache.entries(for: targetPath) {
+            return cached.map { (name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate) }
+        }
+
         return BookmarkService.withSecurityScope(rootURL) {
             let fm = FileManager.default
             let contents: [URL]
@@ -323,50 +414,19 @@ actor FolderScanner {
                 .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
 
             let results = dirs.map { dirURL -> (name: String, path: String, coverPath: String?, coverDate: Date?) in
-                // Cache hit: skip inner contentsOfDirectory entirely
-                if let cached = cache.entry(forChildPath: dirURL.path, underParent: targetPath) {
+                // Cache hit: skip inner contentsOfDirectory entirely (but re-evaluate nil covers)
+                if let cached = cache.entry(forChildPath: dirURL.path, underParent: targetPath),
+                   cached.coverPath != nil {
                     return (name: cached.name, path: cached.path,
                             coverPath: cached.coverPath, coverDate: cached.coverDate)
                 }
 
-                // Cache miss: read inner directory to find cover file
-                let subContents: [URL]
-                do {
-                    subContents = try fm.contentsOfDirectory(
-                        at: dirURL,
-                        includingPropertiesForKeys: [.isRegularFileKey],
-                        options: [.skipsHiddenFiles, .skipsPackageDescendants]
-                    )
-                } catch {
-                    Log.scanner.warning("Failed to list contents of \(dirURL.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
-                    subContents = []
-                }
-                let imageFiles = subContents.filter { $0.isImageFile }
-                let coverURL: URL? = imageFiles.first ?? subContents.first { $0.isMediaFile }
+                // Cache miss: recursively find cover file
+                let coverURL = findCoverFile(in: dirURL)
                 let coverPath = coverURL?.path
 
-                // Read EXIF date from cover image
-                var coverDate: Date?
-                if let cp = coverPath,
-                   let source = CGImageSourceCreateWithURL(URL(fileURLWithPath: cp) as CFURL, nil),
-                   let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any] {
-                    let df = DateFormatter()
-                    df.dateFormat = "yyyy:MM:dd HH:mm:ss"
-                    df.locale = Locale(identifier: "en_US_POSIX")
-                    let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
-                    let tiff = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
-                    let candidates: [String?] = [
-                        exif?[kCGImagePropertyExifDateTimeOriginal] as? String,
-                        exif?[kCGImagePropertyExifDateTimeDigitized] as? String,
-                        tiff?[kCGImagePropertyTIFFDateTime] as? String,
-                    ]
-                    for str in candidates.compactMap({ $0 }) {
-                        if let d = df.date(from: str) { coverDate = d; break }
-                    }
-                }
-                // Fallback: use cover file modification time
-                if coverDate == nil, let cp = coverPath {
-                    coverDate = try? URL(fileURLWithPath: cp)
+                let coverDate = coverPath.flatMap {
+                    try? URL(fileURLWithPath: $0)
                         .resourceValues(forKeys: [.contentModificationDateKey])
                         .contentModificationDate
                 }
