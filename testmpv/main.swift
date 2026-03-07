@@ -337,6 +337,7 @@ struct VideoInfo {
     var isHLG: Bool = false
     var isDolbyVision: Bool = false
     var dvProfile: Int = 0
+    var rotation: Int = 0
 }
 
 func analyzeVideo(asset: AVAsset) -> VideoInfo {
@@ -404,6 +405,14 @@ func analyzeVideo(asset: AVAsset) -> VideoInfo {
             }
         }
     }
+
+    // Detect video rotation from preferredTransform
+    let transform = track.preferredTransform
+    let angle = atan2(transform.b, transform.a)
+    let degrees = Int(round(angle * 180 / .pi))
+    info.rotation = ((degrees % 360) + 360) % 360
+    if info.rotation != 0 { print("[AVF] Video rotation: \(info.rotation)°") }
+
     return info
 }
 
@@ -668,11 +677,20 @@ struct VertexOut {
 };
 
 // Fullscreen triangle (3 vertices, no VBO needed)
-vertex VertexOut vertexPassthrough(uint vid [[vertex_id]]) {
+vertex VertexOut vertexPassthrough(uint vid [[vertex_id]],
+                                   constant uint &rotation [[buffer(0)]]) {
     VertexOut out;
     float2 uv = float2((vid << 1) & 2, vid & 2);
-    out.texCoord = uv;
     out.position = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+    float2 centered = uv - 0.5;
+    if (rotation == 90u) {
+        centered = float2(centered.y, -centered.x);
+    } else if (rotation == 180u) {
+        centered = float2(-centered.x, -centered.y);
+    } else if (rotation == 270u) {
+        centered = float2(-centered.y, centered.x);
+    }
+    out.texCoord = centered + 0.5;
     return out;
 }
 
@@ -960,6 +978,7 @@ class MetalVideoView: NSView {
 
     // [1] Decode conversion mode (YCbCr→RGB shader)
     private var decodeMode: UInt32 = 0
+    private var videoRotation: UInt32 = 0
     private static let decodeModes: [String] = [
         "Video BT.2020", "Full BT.2020", "Video BT.709", "Full BT.709",
         "Video BT.601", "Full BT.601", "Video 2020 NoClamp", "Full 2020 NoClamp",
@@ -1089,6 +1108,7 @@ class MetalVideoView: NSView {
         let url = URL(fileURLWithPath: path)
         let asset = AVURLAsset(url: url)
         videoInfo = analyzeVideo(asset: asset)
+        videoRotation = UInt32(videoInfo.rotation)
         duration = videoInfo.duration
 
         // Clean up AVF layer if active
@@ -1375,6 +1395,8 @@ class MetalVideoView: NSView {
                         enc1.setFragmentTexture(tex, index: 0)
                     }
                 }
+                var rot = videoRotation
+                enc1.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 0)
                 enc1.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 enc1.endEncoding()
             }
@@ -1422,6 +1444,8 @@ class MetalVideoView: NSView {
                     print("[gyro] WarpUniforms size=\(MemoryLayout<WarpUniforms>.size) stride=\(MemoryLayout<WarpUniforms>.stride) align=\(MemoryLayout<WarpUniforms>.alignment)")
                 }
                 enc2.setFragmentBytes(&uniforms, length: MemoryLayout<WarpUniforms>.size, index: 0)
+                var rot2: UInt32 = 0
+                enc2.setVertexBytes(&rot2, length: MemoryLayout<UInt32>.size, index: 0)
                 enc2.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 enc2.endEncoding()
             }
@@ -1447,6 +1471,8 @@ class MetalVideoView: NSView {
                         encoder.setFragmentTexture(texCbCr, index: 1)
                         var mode = decodeMode
                         encoder.setFragmentBytes(&mode, length: MemoryLayout<UInt32>.size, index: 0)
+                        var rot = videoRotation
+                        encoder.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 0)
                         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                     }
                 } else {
@@ -1460,6 +1486,8 @@ class MetalVideoView: NSView {
                         encoder.setViewport(viewport)
                         encoder.setRenderPipelineState(bgraPipeline)
                         encoder.setFragmentTexture(tex, index: 0)
+                        var rot = videoRotation
+                        encoder.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 0)
                         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                     }
                 }

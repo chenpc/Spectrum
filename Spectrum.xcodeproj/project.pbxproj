@@ -37,6 +37,7 @@
 		AA000051 /* AVFMetalView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000051 /* AVFMetalView.swift */; };
 		AA000077 /* MetalShaders.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000077 /* MetalShaders.swift */; };
 		AA000078 /* VideoPlayerNSView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000078 /* VideoPlayerNSView.swift */; };
+		8C5B17E8992D43E6B3A937EE /* LivePhotoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8314D5B529E4E2B909FD903 /* LivePhotoPlayerView.swift */; };
 		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
 		AA000079 /* GyroConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000079 /* GyroConfig.swift */; };
 		AA000082 /* GyroFlowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000082 /* GyroFlowCore.swift */; };
@@ -109,6 +110,7 @@
 		AB000051 /* AVFMetalView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AVFMetalView.swift; sourceTree = "<group>"; };
 		AB000077 /* MetalShaders.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = MetalShaders.swift; sourceTree = "<group>"; };
 		AB000078 /* VideoPlayerNSView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoPlayerNSView.swift; sourceTree = "<group>"; };
+		F8314D5B529E4E2B909FD903 /* LivePhotoPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoPlayerView.swift; sourceTree = "<group>"; };
 		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
 		AB000079 /* GyroConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfig.swift; sourceTree = "<group>"; };
 		AB000082 /* GyroFlowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroFlowCore.swift; sourceTree = "<group>"; };
@@ -281,6 +283,7 @@
 				AB000051 /* AVFMetalView.swift */,
 				AB000077 /* MetalShaders.swift */,
 				AB000078 /* VideoPlayerNSView.swift */,
+				F8314D5B529E4E2B909FD903 /* LivePhotoPlayerView.swift */,
 				AB000055 /* VideoController.swift */,
 				AB000056 /* VideoControlBar.swift */,
 				AB000073 /* CropOverlayView.swift */,
@@ -528,6 +531,7 @@
 				AA000051 /* AVFMetalView.swift in Sources */,
 				AA000077 /* MetalShaders.swift in Sources */,
 				AA000078 /* VideoPlayerNSView.swift in Sources */,
+				8C5B17E8992D43E6B3A937EE /* LivePhotoPlayerView.swift in Sources */,
 				AA000054 /* HDRImageViews.swift in Sources */,
 				AA000055 /* VideoController.swift in Sources */,
 				AA000056 /* VideoControlBar.swift in Sources */,

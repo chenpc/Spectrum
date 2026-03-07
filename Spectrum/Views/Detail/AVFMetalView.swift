@@ -38,6 +38,8 @@ struct AVFVideoInfo {
     var isDolbyVision: Bool = false
     var dvProfile: Int = 0
     var dvLevel: Int = 0
+    /// Rotation from preferredTransform (0, 90, 180, 270)
+    var rotation: Int = 0
 
     /// Map analyzed flags to Spectrum's VideoHDRType.
     var hdrType: VideoHDRType? {
@@ -61,6 +63,13 @@ func analyzeVideo(asset: AVAsset) -> AVFVideoInfo {
         info.width = Int(size.width)
         info.height = Int(size.height)
         info.fps = Double((try? await track.load(.nominalFrameRate)) ?? 0)
+        // Detect rotation from preferredTransform
+        if let transform = try? await track.load(.preferredTransform) {
+            let angle = atan2(transform.b, transform.a)
+            let degrees = Int(round(angle * 180 / .pi))
+            // Normalize to 0, 90, 180, 270
+            info.rotation = ((degrees % 360) + 360) % 360
+        }
         let descriptions = (try? await track.load(.formatDescriptions)) ?? []
         for fd in descriptions {
             let fourCC = CMFormatDescriptionGetMediaSubType(fd)
@@ -195,6 +204,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
     // Decode mode + layer colorspace
     nonisolated(unsafe) private var decodeMode: UInt32 = 0
+    /// Video rotation from preferredTransform (0, 90, 180, 270)
+    nonisolated(unsafe) private var videoRotation: UInt32 = 0
 
     static let colorSpaces = _avfColorSpaces
     static let decodeModeNames: [String] = _avfDecodeModes
@@ -391,6 +402,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         let asset = AVURLAsset(url: url)
         videoInfo = analyzeVideo(asset: asset)
         videoDuration = videoInfo.duration
+        videoRotation = UInt32(videoInfo.rotation)
 
         // Auto-select pixel format from file's bit depth + range
         let outputPixelFormat: OSType
@@ -657,6 +669,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
                     var mode = decodeMode
                     enc1.setFragmentBytes(&mode, length: MemoryLayout<UInt32>.size, index: 0)
                 }
+                var rot = videoRotation
+                enc1.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 0)
                 enc1.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 enc1.endEncoding()
             }
@@ -695,6 +709,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 uniforms.lensCorr = core.lensCorrectionAmount
 
                 enc2.setFragmentBytes(&uniforms, length: MemoryLayout<WarpUniforms>.size, index: 0)
+                var rot2: UInt32 = 0
+                enc2.setVertexBytes(&rot2, length: MemoryLayout<UInt32>.size, index: 0)
                 enc2.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                 enc2.endEncoding()
             }
@@ -720,6 +736,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
                         encoder.setFragmentTexture(texCbCr, index: 1)
                         var mode = decodeMode
                         encoder.setFragmentBytes(&mode, length: MemoryLayout<UInt32>.size, index: 0)
+                        var rot = videoRotation
+                        encoder.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 0)
                         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                     }
                 } else {
@@ -730,6 +748,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
                         encoder.setViewport(viewport)
                         encoder.setRenderPipelineState(bgraPipeline)
                         encoder.setFragmentTexture(tex, index: 0)
+                        var rot = videoRotation
+                        encoder.setVertexBytes(&rot, length: MemoryLayout<UInt32>.size, index: 0)
                         encoder.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
                     }
                 }

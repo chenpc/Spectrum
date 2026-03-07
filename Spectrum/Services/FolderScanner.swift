@@ -206,6 +206,9 @@ actor FolderScanner {
             }
         }
 
+        // Live Photo pairing: match image + short .mov by base filename
+        pairLivePhotos(levelPrefix: (targetURL.path.hasSuffix("/") ? targetURL.path : targetURL.path + "/"))
+
         // Delta removal: when not doing a full clear, remove DB entries for files
         // that existed at this level in the previous scan but are no longer on disk.
         if !clearAll {
@@ -232,6 +235,60 @@ actor FolderScanner {
                 } catch {
                     Log.scanner.warning("Failed to save after delta removal: \(error.localizedDescription, privacy: .public)")
                 }
+            }
+        }
+    }
+
+    /// Pair Live Photos: for each image, if a short .mov with the same base name exists, link them.
+    private func pairLivePhotos(levelPrefix: String) {
+        let allDbPhotos: [Photo]
+        do {
+            allDbPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
+        } catch {
+            return
+        }
+
+        // Filter to direct children of this level
+        let levelPhotos = allDbPhotos.filter { photo in
+            guard photo.filePath.hasPrefix(levelPrefix) else { return false }
+            let relative = String(photo.filePath.dropFirst(levelPrefix.count))
+            return !relative.contains("/")
+        }
+
+        // Build lookup by lowercase base name (without extension)
+        var imagesByBase: [String: [Photo]] = [:]
+        var videosByBase: [String: [Photo]] = [:]
+
+        for photo in levelPhotos {
+            let url = URL(fileURLWithPath: photo.filePath)
+            let base = url.deletingPathExtension().lastPathComponent.lowercased()
+            if photo.isVideo {
+                videosByBase[base, default: []].append(photo)
+            } else {
+                imagesByBase[base, default: []].append(photo)
+            }
+        }
+
+        var changed = false
+        for (base, images) in imagesByBase {
+            guard let videos = videosByBase[base] else { continue }
+            // Find short companion .mov (< 5 seconds)
+            guard let companion = videos.first(where: { ($0.duration ?? 999) < 5 }) else { continue }
+            // Pair with the first image
+            let image = images[0]
+            if image.livePhotoMovPath != companion.filePath {
+                image.livePhotoMovPath = companion.filePath
+                changed = true
+            }
+            if !companion.isLivePhotoMov {
+                companion.isLivePhotoMov = true
+                changed = true
+            }
+        }
+
+        if changed {
+            do { try modelContext.save() } catch {
+                Log.scanner.warning("Failed to save Live Photo pairing: \(error.localizedDescription, privacy: .public)")
             }
         }
     }

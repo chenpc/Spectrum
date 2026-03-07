@@ -143,6 +143,8 @@ struct ContentView: View {
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
     @State private var escapeMonitor = EscapeKeyMonitor()
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
+    @AppStorage("lastFolderPath") private var lastFolderPath: String = ""
+    @AppStorage("lastSubfolderPath") private var lastSubfolderPath: String = ""
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -196,9 +198,20 @@ struct ContentView: View {
         }
         .preferredColorScheme(appearanceMode == "light" ? .light : appearanceMode == "dark" ? .dark : nil)
         .environment(\.thumbnailCacheState, thumbnailCacheState)
-        .onChange(of: selectedSidebarItem) { _, _ in
+        .onChange(of: selectedSidebarItem) { _, newItem in
             detailPhoto = nil
             selectedPhoto = nil
+            // Persist last browsed location
+            switch newItem {
+            case .folder(let f):
+                lastFolderPath = f.path
+                lastSubfolderPath = ""
+            case .subfolder(let f, let sub):
+                lastFolderPath = f.path
+                lastSubfolderPath = sub
+            case nil:
+                break
+            }
         }
         .onChange(of: importModel.sourceURL) { _, newURL in
             if newURL != nil { showImportPanel = true }
@@ -221,6 +234,16 @@ struct ContentView: View {
             // Start FSEvents monitoring for all folders
             for folder in allFolders {
                 FolderMonitor.shared.startMonitoring(path: folder.path)
+            }
+
+            // Restore last browsed location
+            if selectedSidebarItem == nil, !lastFolderPath.isEmpty,
+               let folder = allFolders.first(where: { $0.path == lastFolderPath }) {
+                if lastSubfolderPath.isEmpty {
+                    selectedSidebarItem = .folder(folder)
+                } else {
+                    selectedSidebarItem = .subfolder(folder, lastSubfolderPath)
+                }
             }
         }
         .onChange(of: allFolders.map(\.path)) { old, new in

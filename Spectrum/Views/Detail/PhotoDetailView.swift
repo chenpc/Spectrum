@@ -30,6 +30,7 @@ struct PhotoDetailView: View {
     @State private var videoStarted = false
     @State private var posterFrame: CGImage?
     @State private var playbackStarted = false
+    @State private var livePhotoPlaying = false
     // Gyro config (stored in XMP sidecar, not DB)
     @State private var gyroConfigJson: String?
     // Shared
@@ -103,6 +104,7 @@ struct PhotoDetailView: View {
         }
         .task(id: photo.filePath) {
             isCropMode = false
+            livePhotoPlaying = false
             if photo.isVideo {
                 await loadVideo()
             } else {
@@ -296,6 +298,16 @@ struct PhotoDetailView: View {
                         )
                     }
                     .scrollDisabled(isCropMode)
+                    .overlay {
+                        if livePhotoPlaying, let movPath = photo.livePhotoMovPath {
+                            LivePhotoPlayerView(
+                                url: URL(fileURLWithPath: movPath),
+                                bookmarkData: bookmarkData,
+                                isPlaying: livePhotoPlaying,
+                                onEnded: { livePhotoPlaying = false }
+                            )
+                        }
+                    }
                     .contextMenu {
                         Button("Show in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: photo.filePath)])
@@ -315,12 +327,24 @@ struct PhotoDetailView: View {
                     }
                 }
                 .overlay(alignment: .topLeading) {
-                    if isHDR && showDiagBadge && !isCropMode {
-                        Button { showEDR.toggle() } label: { edrBadge }
+                    VStack(alignment: .leading, spacing: 6) {
+                        if isHDR && showDiagBadge && !isCropMode {
+                            Button { showEDR.toggle() } label: { edrBadge }
+                                .buttonStyle(.plain)
+                                .help(showEDR ? "Switch to SDR" : "Switch to EDR")
+                        }
+                        if photo.livePhotoMovPath != nil && !isCropMode {
+                            Button { livePhotoPlaying.toggle() } label: {
+                                Image(systemName: livePhotoPlaying ? "livephoto.play" : "livephoto")
+                                    .font(.title2)
+                                    .foregroundStyle(livePhotoPlaying ? .yellow : .white)
+                                    .shadow(radius: 3)
+                            }
                             .buttonStyle(.plain)
-                            .help(showEDR ? "Switch to SDR" : "Switch to EDR")
-                            .padding(12)
+                            .help("Play Live Photo (Space)")
+                        }
                     }
+                    .padding(12)
                 }
                 .onAppear { containerSize = geometry.size }
                 .onChange(of: geometry.size) { _, newSize in containerSize = newSize }
@@ -707,9 +731,14 @@ struct PhotoDetailView: View {
     /// Install key monitor for image viewing (f = fullscreen).
     private func installImageKeyMonitor() {
         removeSpaceMonitor()
-        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
             let bare = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
             guard bare else { return event }
+            guard event.type == .keyDown, !event.isARepeat else { return event }
+            if event.charactersIgnoringModifiers == " " && photo.livePhotoMovPath != nil {
+                livePhotoPlaying.toggle()
+                return nil
+            }
             switch event.charactersIgnoringModifiers {
             case "f":
                 NSApp.keyWindow?.toggleFullScreen(nil)

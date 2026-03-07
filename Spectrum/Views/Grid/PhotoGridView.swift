@@ -240,6 +240,7 @@ struct PhotoGridView: View {
         guard let path = effectivePath else { return [] }
         let prefix = path.hasSuffix("/") ? path : path + "/"
         return allPhotos.filter { photo in
+            guard !photo.isLivePhotoMov else { return false }
             guard photo.filePath.hasPrefix(prefix) else { return false }
             let relative = String(photo.filePath.dropFirst(prefix.count))
             return !relative.contains("/")

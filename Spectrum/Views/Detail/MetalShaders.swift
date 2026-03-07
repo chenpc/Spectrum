@@ -11,11 +11,22 @@ struct VertexOut {
 };
 
 // Fullscreen triangle (3 vertices, no VBO needed)
-vertex VertexOut vertexPassthrough(uint vid [[vertex_id]]) {
+vertex VertexOut vertexPassthrough(uint vid [[vertex_id]],
+                                   constant uint &rotation [[buffer(0)]]) {
     VertexOut out;
     float2 uv = float2((vid << 1) & 2, vid & 2);
-    out.texCoord = uv;
     out.position = float4(uv * float2(2, -2) + float2(-1, 1), 0, 1);
+    // Apply video rotation to texture coordinates
+    // rotation: 0=none, 90=CW, 180=flip, 270=CCW
+    float2 centered = uv - 0.5;
+    if (rotation == 90u) {
+        centered = float2(centered.y, -centered.x);
+    } else if (rotation == 180u) {
+        centered = float2(-centered.x, -centered.y);
+    } else if (rotation == 270u) {
+        centered = float2(-centered.y, centered.x);
+    }
+    out.texCoord = centered + 0.5;
     return out;
 }
 

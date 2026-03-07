@@ -129,6 +129,15 @@ struct PhotoThumbnailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
                 }
+            } else if photo.livePhotoMovPath != nil {
+                Image(systemName: "livephoto")
+                    .font(.body)
+                    .foregroundStyle(.white)
+                    .shadow(color: .black.opacity(0.8), radius: 3)
+                    .padding(4)
+                    .background(.black.opacity(0.4), in: Circle())
+                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                    .padding(6)
             }
 
         }

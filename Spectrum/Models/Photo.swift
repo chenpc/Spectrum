@@ -61,6 +61,12 @@ final class Photo {
     var videoCodec: String?
     var audioCodec: String?
 
+    // Live Photo fields
+    /// Path to the companion .mov for a Live Photo (set on the image entry)
+    var livePhotoMovPath: String?
+    /// True if this entry is the companion .mov of a Live Photo (hidden from grid)
+    var isLivePhotoMov: Bool = false
+
     /// Ordered edit operations (JSON-encoded [EditOp]). nil = no edits.
     var editOpsJson: String?
 
