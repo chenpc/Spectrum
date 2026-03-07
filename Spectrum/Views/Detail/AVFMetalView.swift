@@ -467,9 +467,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
             enableAVFLayer()
         }
 
-        print("[AVF] Loaded: \(url.lastPathComponent)  \(videoInfo.width)x\(videoInfo.height)@\(String(format:"%.2f",videoInfo.fps))fps")
-        print("[AVF]   transfer=\(videoInfo.transferFunction)  isDV=\(videoInfo.isDolbyVision)  matrix=\(videoInfo.matrix)  \(videoInfo.bitDepth)bit")
-        print("[AVF]   decode=\(decodeColorspaceInfo)  avfLayer=\(avfLayerMode)")
+        let vi = videoInfo
+        Log.player.info("Loaded: \(url.lastPathComponent, privacy: .public)  \(vi.width)x\(vi.height)@\(String(format:"%.2f",vi.fps))fps  transfer=\(vi.transferFunction, privacy: .public)  isDV=\(vi.isDolbyVision)  matrix=\(vi.matrix, privacy: .public)  \(vi.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
     }
 
     private func enableAVFLayer() {

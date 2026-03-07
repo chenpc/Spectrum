@@ -6,4 +6,6 @@ enum Log {
     static let thumbnail = Logger(subsystem: "com.spectrum.app", category: "thumbnail")
     static let bookmark  = Logger(subsystem: "com.spectrum.app", category: "bookmark")
     static let video     = Logger(subsystem: "com.spectrum.app", category: "video")
+    static let gyro      = Logger(subsystem: "com.spectrum.app", category: "gyro")
+    static let player    = Logger(subsystem: "com.spectrum.app", category: "player")
 }

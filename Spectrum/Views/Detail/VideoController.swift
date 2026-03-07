@@ -138,7 +138,7 @@ final class VideoController: @unchecked Sendable {
                 }
             },
             onError: { [weak self] msg in
-                print("[gyro] ❌ \(msg)")
+                Log.gyro.warning("❌ \(msg, privacy: .public)")
                 guard let self, self.activeGyroCore === core else { return }  // stale guard
                 self.gyroLoadPending = false
                 self.gyroIsLoading = false
@@ -198,7 +198,7 @@ final class VideoController: @unchecked Sendable {
                 }
             },
             onError: { [weak self] msg in
-                print("[gyroflow] ❌ \(msg)")
+                Log.gyro.warning("gyroflow ❌ \(msg, privacy: .public)")
                 guard let self, self.activeGyroFlowCore === core else { return }
                 self.gyroLoadPending = false
                 self.gyroIsLoading = false
@@ -253,8 +253,7 @@ final class VideoController: @unchecked Sendable {
         let ct      = eof ? 0.0 : v.currentTime
         let playing = eof ? false : !v.isPaused
         if eof {
-            let realTime = v.currentTime
-            print("[AVF-poll] EOF detected  duration=\(d)s  realTime=\(realTime)s  paused=\(v.isPaused)")
+            Log.player.debug("EOF detected  duration=\(d)s  realTime=\(v.currentTime)s  paused=\(v.isPaused)")
         }
 
         // Diagnostics (only read when badge is enabled — zero overhead otherwise)

@@ -233,7 +233,7 @@ struct SidebarView: View {
                 await loadAllFolderChildren()
             }
         } catch {
-            print("Failed to create bookmark: \(error)")
+            Log.bookmark.warning("Failed to create bookmark: \(error.localizedDescription, privacy: .public)")
         }
     }
 

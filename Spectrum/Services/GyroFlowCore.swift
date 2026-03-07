@@ -144,7 +144,7 @@ final class GyroFlowCore: @unchecked Sendable {
             self.readParams(handle)
 
             guard self.frameCount > 0 else {
-                print("[gyroflow] load succeeded but frameCount=0 — no usable gyro data")
+                Log.gyro.warning("gyroflow load succeeded but frameCount=0 — no usable gyro data")
                 self.fnFree?(handle)
                 self.coreHandle = nil
                 DispatchQueue.main.async { onError("No gyro data (0 frames)") }

@@ -193,9 +193,9 @@ final class GyroCore: @unchecked Sendable {
             let enc = JSONEncoder()
             enc.outputFormatting = [.prettyPrinted, .sortedKeys]
             let pretty = String(data: try enc.encode(config), encoding: .utf8) ?? "{}"
-            print("[gyro] Loading \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)\n[gyro] config:\n\(pretty)")
+            Log.gyro.debug("Loading \(URL(fileURLWithPath: videoPath).lastPathComponent, privacy: .public)  lens=\(lensDesc, privacy: .public)\nconfig:\n\(pretty, privacy: .public)")
         } catch {
-            print("[gyro] Loading \(URL(fileURLWithPath: videoPath).lastPathComponent)  lens=\(lensDesc)  config=\(configJSON)")
+            Log.gyro.debug("Loading \(URL(fileURLWithPath: videoPath).lastPathComponent, privacy: .public)  lens=\(lensDesc, privacy: .public)  config=\(configJSON, privacy: .public)")
         }
         let handle: UnsafeMutableRawPointer?
         if let lp = lensPath {
@@ -230,7 +230,7 @@ final class GyroCore: @unchecked Sendable {
         }
         distortionModel = buf.withUnsafeBytes { $0.load(fromByteOffset: 88, as: Int32.self) }
         rLimit          = buf.withUnsafeBytes { $0.load(fromByteOffset: 92, as: Float32.self) }
-        print("[gyro] distortion_model=\(distortionModel) k=[\(distortionK[0]),\(distortionK[1]),\(distortionK[2]),\(distortionK[3])] r_limit=\(rLimit)")
+        Log.gyro.debug("distortion_model=\(self.distortionModel) k=[\(self.distortionK[0]),\(self.distortionK[1]),\(self.distortionK[2]),\(self.distortionK[3])] r_limit=\(self.rLimit)")
 
         // Store lens correction amount so the shader can match gyroflow-core's pipeline.
         lensCorrectionAmount = Float(config.lensCorrectionAmount)
@@ -243,7 +243,7 @@ final class GyroCore: @unchecked Sendable {
                 lensProfileName = str
             }
         }
-        print("[gyro] lens_profile: \(lensProfileName)")
+        Log.gyro.debug("lens_profile: \(self.lensProfileName, privacy: .public)")
 
         // Pre-allocate per-frame buffers to avoid allocation in render loop
         rawBuf  = [Float](repeating: 0, count: rowCount * 14 + 9)
@@ -251,7 +251,7 @@ final class GyroCore: @unchecked Sendable {
         cachedFrameIdx = -1
 
         guard frameCount > 0 else {
-            print("[gyro] gyrocore_load succeeded but frameCount=0 — no usable gyro data")
+            Log.gyro.warning("gyrocore_load succeeded but frameCount=0 — no usable gyro data")
             if let handle = coreHandle, let fn = fnFree { fn(handle) }
             coreHandle = nil
             DispatchQueue.main.async { onError("No gyro data (0 frames)") }
@@ -259,9 +259,7 @@ final class GyroCore: @unchecked Sendable {
         }
 
         readyLock.lock(); _isReady = true; readyLock.unlock()
-        print(String(format: "[gyro] Ready: %d frames x %d rows  f=[%.1f,%.1f]  c=[%.1f,%.1f]  %dx%d@%.3ffps",
-                     frameCount, rowCount, gyroFx, gyroFy, gyroCx, gyroCy,
-                     Int(gyroVideoW), Int(gyroVideoH), gyroFps))
+        Log.gyro.info("Ready: \(self.frameCount) frames x \(self.rowCount) rows  f=[\(self.gyroFx),\(self.gyroFy)]  c=[\(self.gyroCx),\(self.gyroCy)]  \(Int(self.gyroVideoW))x\(Int(self.gyroVideoH))@\(String(format:"%.3f",self.gyroFps))fps")
         DispatchQueue.main.async { onReady() }
     }
 
