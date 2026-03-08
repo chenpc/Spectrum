@@ -66,6 +66,7 @@
 		AA000076 /* XMPSidecarService.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000076 /* XMPSidecarService.swift */; };
 		AA000080 /* Localizable.xcstrings in Resources */ = {isa = PBXBuildFile; fileRef = AB000080 /* Localizable.xcstrings */; };
 		AA200001 /* ImportPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB200001 /* ImportPanelView.swift */; };
+		AA300001 /* SearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB300001 /* SearchResultsView.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -142,6 +143,7 @@
 		AB000076 /* XMPSidecarService.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPSidecarService.swift; sourceTree = "<group>"; };
 		AB000080 /* Localizable.xcstrings */ = {isa = PBXFileReference; lastKnownFileType = text.json.xcstrings; path = Localizable.xcstrings; sourceTree = "<group>"; };
 		AB200001 /* ImportPanelView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportPanelView.swift; sourceTree = "<group>"; };
+		AB300001 /* SearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultsView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -206,6 +208,7 @@
 			children = (
 				8070F3112F43487D0095B967 /* SettingsView.swift */,
 				AB000002 /* ContentView.swift */,
+				AB300001 /* SearchResultsView.swift */,
 				AE000010 /* Sidebar */,
 				AE000011 /* Grid */,
 				AE200001 /* Import */,
@@ -512,6 +515,7 @@
 				AA000028 /* CacheSidebarFooter.swift in Sources */,
 				AA000008 /* PhotoGridView.swift in Sources */,
 				AA200001 /* ImportPanelView.swift in Sources */,
+				AA300001 /* SearchResultsView.swift in Sources */,
 				AA000009 /* PhotoThumbnailView.swift in Sources */,
 				AA00000A /* TimelineSectionHeader.swift in Sources */,
 				AA00000B /* PhotoDetailView.swift in Sources */,

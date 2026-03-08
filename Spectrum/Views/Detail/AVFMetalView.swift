@@ -162,16 +162,18 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private var matTex: MTLTexture?
     nonisolated(unsafe) private var matTexH: Int = 0
 
-    // Gyro Stability Index — written on CVDisplayLink thread
+    // Gyro Stability Index — written on renderQueue
     nonisolated(unsafe) private var prevMidRow: (Float, Float, Float, Float, Float, Float, Float, Float, Float)?
     nonisolated(unsafe) private var siAngles: [Double] = []
-    // nonisolated(unsafe): written on CVDisplayLink thread, read from poll queue.
+    // nonisolated(unsafe): written on renderQueue, read from poll queue.
     // Double on arm64 is naturally aligned; single-instruction reads cannot tear.
     nonisolated(unsafe) private(set) var gyroSI: Double = 0
 
     /// When true, suppress rendering until gyroCore is ready.
     nonisolated(unsafe) var waitingForGyro: Bool = false
 
+    /// Deferred pause state: when setPause is called before player exists, saved here.
+    nonisolated(unsafe) private var pendingPause: Bool? = nil
     nonisolated(unsafe) private(set) var player: AVPlayer?
     nonisolated(unsafe) private var playerItem: AVPlayerItem?
     nonisolated(unsafe) private var videoOutput: AVPlayerItemVideoOutput?
@@ -390,6 +392,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         lastPTS = -1; frameCount = 0; isEOFReached = false
         frameIntervals.removeAll(); lastFrameTime = 0
         renderFPS = 0; renderCV = 0; renderStability = 1
+        pendingPause = nil
 
         let url = URL(fileURLWithPath: path)
         let asset = AVURLAsset(url: url)
@@ -464,6 +467,15 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 self.enableAVFLayer()
             }
 
+            // Apply deferred pause/play if setPause was called before player existed
+            if let pending = self.pendingPause {
+                self.pendingPause = nil
+                if !pending {
+                    self.isEOFReached = false
+                    newPlayer.play()
+                }
+            }
+
             Log.player.info("Loaded: \(url.lastPathComponent, privacy: .public)  \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps  transfer=\(info.transferFunction, privacy: .public)  isDV=\(info.isDolbyVision)  matrix=\(info.matrix, privacy: .public)  \(info.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
         }
     }
@@ -519,7 +531,11 @@ class AVFMetalView: NSView, @unchecked Sendable {
     }
 
     nonisolated func setPause(_ paused: Bool) {
-        guard let p = player else { return }
+        guard let p = player else {
+            pendingPause = paused
+            return
+        }
+        pendingPause = nil
         if paused { p.pause() }
         else {
             isEOFReached = false
@@ -552,6 +568,10 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
     // MARK: - CVDisplayLink
 
+    /// Render queue: runs renderFrame at user-interactive QoS instead of the CVDisplayLink's
+    /// real-time priority, avoiding interference with CoreAudio real-time threads (audio pops).
+    private let renderQueue = DispatchQueue(label: "spectrum.render", qos: .userInteractive)
+
     nonisolated func startDisplayLink() {
         guard displayLink == nil else { return }
         var dl: CVDisplayLink?
@@ -561,7 +581,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
         let selfPtr = Unmanaged.passUnretained(self).toOpaque()
         CVDisplayLinkSetOutputCallback(dl, { (_, _, _, _, _, userInfo) -> CVReturn in
             guard let userInfo else { return kCVReturnSuccess }
-            Unmanaged<AVFMetalView>.fromOpaque(userInfo).takeUnretainedValue().renderFrame()
+            let view = Unmanaged<AVFMetalView>.fromOpaque(userInfo).takeUnretainedValue()
+            view.renderQueue.async { view.renderFrame() }
             return kCVReturnSuccess
         }, selfPtr)
         CVDisplayLinkStart(dl)
@@ -618,7 +639,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
             }
         }
 
-        // Fetch gyro matrix for this exact PTS
+        // Fetch gyro matrix for this exact PTS (synchronous on renderQueue)
         var hasGyroWarp = false
         if let core = gyroCore, core.isReady {
             let vH = Int(core.gyroVideoH)

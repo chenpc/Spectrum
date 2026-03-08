@@ -44,6 +44,9 @@ final class StatusBarModel {
         if let label { self.label = label }
     }
 
+    private var doneTimer: Task<Void, Never>?
+    private var globalTimer: Task<Void, Never>?
+
     /// Mark current task as done
     func finish(_ message: String? = nil) {
         isActive = false
@@ -51,9 +54,34 @@ final class StatusBarModel {
         progressTotal = 0
         progressDone = 0
         doneMessage = message ?? doneMessage
+        doneTimer?.cancel()
+        if doneMessage != nil {
+            doneTimer = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { return }
+                doneMessage = nil
+            }
+        }
     }
 
-    func setGlobal(_ label: String?) { globalLabel = label }
+    func setGlobal(_ label: String?) {
+        globalTimer?.cancel()
+        globalLabel = label
+        if label == nil { return }
+        // If globalLabel looks like a "done" state (no spinner), auto-dismiss after 10s
+    }
+
+    func finishGlobal(_ message: String? = nil) {
+        globalTimer?.cancel()
+        globalLabel = message
+        if message != nil {
+            globalTimer = Task { @MainActor in
+                try? await Task.sleep(for: .seconds(10))
+                guard !Task.isCancelled else { return }
+                globalLabel = nil
+            }
+        }
+    }
 
     var isVisible: Bool { isActive || doneMessage != nil || globalLabel != nil }
 }

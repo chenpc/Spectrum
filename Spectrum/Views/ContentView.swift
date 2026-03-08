@@ -144,6 +144,7 @@ struct ContentView: View {
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
     @State private var escapeMonitor = EscapeKeyMonitor()
+    @State private var searchText = ""
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
     @AppStorage("lastFolderPath") private var lastFolderPath: String = ""
     @AppStorage("lastSubfolderPath") private var lastSubfolderPath: String = ""
@@ -250,7 +251,7 @@ struct ContentView: View {
                         }
                     }
                 }
-                await MainActor.run { StatusBarModel.shared.setGlobal("Folders indexed") }
+                await MainActor.run { StatusBarModel.shared.finishGlobal("Folders indexed") }
             }
 
             // Start FSEvents monitoring for all folders
@@ -283,7 +284,27 @@ struct ContentView: View {
                 SidebarView(selection: $selectedSidebarItem)
             } detail: {
                 Group {
-                    if let photo = detailPhoto {
+                    if !searchText.isEmpty {
+                        SearchResultsView(
+                            query: searchText,
+                            folders: allFolders,
+                            onSelectPhoto: { photo, folder in
+                                searchText = ""
+                                selectedSidebarItem = .subfolder(folder, URL(fileURLWithPath: photo.filePath).deletingLastPathComponent().path)
+                                returnToSelection = photo.filePath
+                                detailPhoto = photo
+                            },
+                            onSelectFolder: { folder, path in
+                                searchText = ""
+                                if path == folder.path {
+                                    selectedSidebarItem = .folder(folder)
+                                } else {
+                                    selectedSidebarItem = .subfolder(folder, path)
+                                }
+                            }
+                        )
+                        .navigationTitle("Search: \(searchText)")
+                    } else if let photo = detailPhoto {
                         photoDetail(photo, showInspector: $showInspector)
                             .toolbar {
                                 ToolbarItem(placement: .navigation) {
@@ -331,6 +352,7 @@ struct ContentView: View {
                     }
                 }
             }
+            .searchable(text: $searchText, placement: .toolbar, prompt: "Search photos & folders")
             .inspector(isPresented: $showInspector) {
                 if let photo = detailPhoto ?? selectedPhoto {
                     PhotoInfoPanel(photo: photo, isHDR: isPhotoHDR)

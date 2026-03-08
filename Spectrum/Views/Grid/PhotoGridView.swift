@@ -300,6 +300,7 @@ struct PhotoGridView: View {
         .padding(.horizontal, 12)
         .padding(.vertical, 4)
         .background(.bar)
+        .animation(.easeInOut(duration: 0.3), value: statusBar.isVisible)
     }
 
     @ViewBuilder
@@ -921,7 +922,11 @@ struct PhotoGridView: View {
         defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
         let url = URL(fileURLWithPath: info.path)
         do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            } catch {
+                try FileManager.default.removeItem(at: url)
+            }
             // Remove related Photo records
             let prefix = info.path.hasSuffix("/") ? info.path : info.path + "/"
             for photo in allPhotos where photo.filePath.hasPrefix(prefix) {
@@ -958,7 +963,12 @@ struct PhotoGridView: View {
             if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
         }
         do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            do {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            } catch {
+                // No trash available (e.g. network volume) — delete permanently
+                try FileManager.default.removeItem(at: url)
+            }
             modelContext.delete(photo)
             try? modelContext.save()
             selectedItemIds.remove(photo.filePath)
