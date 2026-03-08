@@ -7,6 +7,14 @@ import os
 actor FolderScanner {
     private let batchSize = 100
 
+    /// Safely fetch a ScannedFolder by PersistentIdentifier.
+    /// Unlike `modelContext.model(for:)`, this returns nil if the object has been deleted,
+    /// preventing SwiftData assertion failures on property access.
+    private func fetchFolder(_ id: PersistentIdentifier) -> ScannedFolder? {
+        guard let folders = try? modelContext.fetch(FetchDescriptor<ScannedFolder>()) else { return nil }
+        return folders.first { $0.persistentModelID == id }
+    }
+
     /// Derive a child URL from the bookmark-resolved rootURL to stay within its security scope.
     private func childURL(rootURL: URL, rootPath: String, childPath: String) -> URL {
         if childPath == rootPath || childPath.isEmpty {
@@ -38,8 +46,8 @@ actor FolderScanner {
     /// - `subPath`: optional subfolder path to scan instead of root
     /// - `clearAll`: if true, delete ALL photos for this folder first (used on app launch)
     func scanFolder(id: PersistentIdentifier, subPath: String? = nil, clearAll: Bool = false) async throws {
-        guard let folder = modelContext.model(for: id) as? ScannedFolder else { return }
-        guard let bookmarkData = folder.bookmarkData else { return }
+        guard let folder = fetchFolder(id),
+              let bookmarkData = folder.bookmarkData else { return }
 
         let rootURL: URL
         do {
@@ -288,7 +296,7 @@ actor FolderScanner {
     /// Recursively cache the entire folder tree under a scanned folder.
     /// Calls `onProgress` on each newly cached directory (name).
     func prefetchFolderTree(id: PersistentIdentifier, onProgress: @Sendable @escaping (String) -> Void = { _ in }) {
-        guard let folder = modelContext.model(for: id) as? ScannedFolder,
+        guard let folder = fetchFolder(id),
               let bookmarkData = folder.bookmarkData else { return }
         let rootURL: URL
         do {
@@ -319,9 +327,10 @@ actor FolderScanner {
 
         var entries: [FolderListEntry] = []
         for dirURL in dirs {
-            // Use cached entry if available AND it has a cover; re-evaluate nil covers
+            // Use cached entry if available AND it has a valid cover; re-evaluate nil or stale covers
             if let cached = cache.entry(forChildPath: dirURL.path, underParent: parentPath),
-               cached.coverPath != nil {
+               let cp = cached.coverPath,
+               fm.fileExists(atPath: cp) {
                 entries.append(cached)
             } else {
                 let coverURL = findCoverFile(in: dirURL)
@@ -374,8 +383,8 @@ actor FolderScanner {
     /// Uses FolderListCache to skip the inner contentsOfDirectory on cache hits.
     /// Always performs the outer directory listing to detect added/removed folders.
     func listSubfolders(id: PersistentIdentifier, path: String? = nil) -> [(name: String, path: String, coverPath: String?, coverDate: Date?)] {
-        guard let folder = modelContext.model(for: id) as? ScannedFolder else { return [] }
-        guard let bookmarkData = folder.bookmarkData else { return [] }
+        guard let folder = fetchFolder(id),
+              let bookmarkData = folder.bookmarkData else { return [] }
 
         let rootURL: URL
         do {
@@ -391,9 +400,15 @@ actor FolderScanner {
         let cache = FolderListCache.shared
 
         // Already scanned this session — return cache directly (FolderMonitor invalidates on changes).
-        if cache.isScannedThisSession(targetPath),
-           let cached = cache.entries(for: targetPath) {
-            return cached.map { (name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate) }
+        // Skip session cache if any entry has nil coverPath — re-evaluate those in case files were added.
+        let isSessionScanned = cache.isScannedThisSession(targetPath)
+        let cachedEntries = cache.entries(for: targetPath)
+        let allHaveCovers = cachedEntries?.allSatisfy({ cp in
+            guard let p = cp.coverPath else { return false }
+            return FileManager.default.fileExists(atPath: p)
+        }) ?? false
+        if let cachedEntries, isSessionScanned, allHaveCovers {
+            return cachedEntries.map { (name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate) }
         }
 
         return BookmarkService.withSecurityScope(rootURL) {
@@ -413,15 +428,17 @@ actor FolderScanner {
             let dirs = contents
                 .filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
 
+            let fm2 = fm
             let results = dirs.map { dirURL -> (name: String, path: String, coverPath: String?, coverDate: Date?) in
-                // Cache hit: skip inner contentsOfDirectory entirely (but re-evaluate nil covers)
+                // Cache hit: skip inner contentsOfDirectory entirely (but re-evaluate nil or stale covers)
                 if let cached = cache.entry(forChildPath: dirURL.path, underParent: targetPath),
-                   cached.coverPath != nil {
+                   let cp = cached.coverPath,
+                   fm2.fileExists(atPath: cp) {
                     return (name: cached.name, path: cached.path,
                             coverPath: cached.coverPath, coverDate: cached.coverDate)
                 }
 
-                // Cache miss: recursively find cover file
+                // Cache miss or nil cover: recursively find cover file
                 let coverURL = findCoverFile(in: dirURL)
                 let coverPath = coverURL?.path
 

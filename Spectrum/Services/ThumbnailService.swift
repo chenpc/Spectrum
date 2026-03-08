@@ -36,21 +36,14 @@ actor ThumbnailService {
 
     func thumbnail(for filePath: String, bookmarkData: Data? = nil) async -> NSImage? {
         let key = filePath as NSString
+        let fileName = URL(fileURLWithPath: filePath).lastPathComponent
 
         if let cached = memoryCache.object(forKey: key) {
             return cached
         }
 
-        let diskURL = diskCacheURL(for: filePath)
-        if FileManager.default.fileExists(atPath: diskURL.path),
-           let image = NSImage(contentsOf: diskURL) {
-            memoryCache.setObject(image, forKey: key)
-            return image
-        }
-
-        // Skip if the source file no longer exists — avoids IIOImageSource errors
-        guard FileManager.default.fileExists(atPath: filePath) else { return nil }
-
+        // Start security scope BEFORE disk cache lookup, because diskCacheURL uses
+        // mtime from resourceValues which needs scope access on network volumes.
         let url = URL(fileURLWithPath: filePath)
         var folderURL: URL?
         var didStart = false
@@ -60,9 +53,24 @@ actor ThumbnailService {
                 folderURL = resolved
                 didStart = resolved.startAccessingSecurityScopedResource()
             } catch {
-                Log.bookmark.warning("Failed to resolve bookmark for thumbnail \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Log.bookmark.warning("Failed to resolve bookmark for thumbnail \(fileName, privacy: .public): \(error.localizedDescription, privacy: .public)")
             }
         }
+
+        let diskURL = diskCacheURL(for: filePath)
+        if FileManager.default.fileExists(atPath: diskURL.path),
+           let image = NSImage(contentsOf: diskURL) {
+            if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() }
+            memoryCache.setObject(image, forKey: key)
+            return image
+        }
+
+        // Skip if the source file no longer exists — avoids IIOImageSource errors
+        guard FileManager.default.fileExists(atPath: filePath) else {
+            if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() }
+            return nil
+        }
+
         let image = await generateAndCacheThumbnail(from: url, to: diskURL)
         if didStart, let folderURL {
             folderURL.stopAccessingSecurityScopedResource()

@@ -57,6 +57,12 @@ final class FolderListCache: @unchecked Sendable {
         lock.withLock {
             memory[parentPath] = nil
             scannedThisSession.remove(parentPath)
+            // Also invalidate the grandparent so the cover thumbnail for this folder gets re-evaluated.
+            let parent = (parentPath as NSString).deletingLastPathComponent
+            if !parent.isEmpty, parent != parentPath {
+                memory[parent] = nil
+                scannedThisSession.remove(parent)
+            }
         }
         persistAsync()
     }

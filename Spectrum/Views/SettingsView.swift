@@ -57,6 +57,7 @@ private struct CacheSettingsTab: View {
                     Button("Clear") {
                         Task {
                             await ThumbnailService.shared.clearCache()
+                            FolderListCache.shared.clear()
                             ThumbnailCacheState.shared.invalidate()
                             thumbSize = await ThumbnailService.shared.diskCacheSize()
                         }
