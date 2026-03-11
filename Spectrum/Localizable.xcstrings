@@ -1642,9 +1642,6 @@
         }
       }
     },
-    "Gyro Method" : {
-
-    },
     "Gyro Offset (ms)" : {
       "localizations" : {
         "ja" : {
@@ -1666,9 +1663,6 @@
           }
         }
       }
-    },
-    "Gyroflow" : {
-
     },
     "HDR" : {
       "extractionState" : "manual"
@@ -2290,9 +2284,6 @@
           }
         }
       }
-    },
-    "Method" : {
-
     },
     "Model" : {
       "localizations" : {
@@ -3741,9 +3732,6 @@
           }
         }
       }
-    },
-    "Spectrum" : {
-
     },
     "Speed" : {
       "localizations" : {
