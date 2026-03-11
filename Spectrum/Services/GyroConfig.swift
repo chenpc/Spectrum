@@ -55,7 +55,7 @@ struct GyroConfig: Codable {
 
 // MARK: - GyroCoreProvider
 
-/// Common interface for gyro stabilization cores (GyroCore and GyroFlowCore).
+/// Common interface for gyro stabilization cores.
 /// Used by the GPU warp pipeline to render stabilized frames.
 protocol GyroCoreProvider: AnyObject {
     var isReady: Bool { get }

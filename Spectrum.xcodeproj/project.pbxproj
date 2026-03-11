@@ -40,7 +40,6 @@
 		8C5B17E8992D43E6B3A937EE /* LivePhotoPlayerView.swift in Sources */ = {isa = PBXBuildFile; fileRef = F8314D5B529E4E2B909FD903 /* LivePhotoPlayerView.swift */; };
 		AA000053 /* GyroCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000053 /* GyroCore.swift */; };
 		AA000079 /* GyroConfig.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000079 /* GyroConfig.swift */; };
-		AA000082 /* GyroFlowCore.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000082 /* GyroFlowCore.swift */; };
 		AA000054 /* HDRImageViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000054 /* HDRImageViews.swift */; };
 		AA000055 /* VideoController.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000055 /* VideoController.swift */; };
 		AA000056 /* VideoControlBar.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB000056 /* VideoControlBar.swift */; };
@@ -114,7 +113,6 @@
 		F8314D5B529E4E2B909FD903 /* LivePhotoPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoPlayerView.swift; sourceTree = "<group>"; };
 		AB000053 /* GyroCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroCore.swift; sourceTree = "<group>"; };
 		AB000079 /* GyroConfig.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfig.swift; sourceTree = "<group>"; };
-		AB000082 /* GyroFlowCore.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroFlowCore.swift; sourceTree = "<group>"; };
 		AB000054 /* HDRImageViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HDRImageViews.swift; sourceTree = "<group>"; };
 		AB000055 /* VideoController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoController.swift; sourceTree = "<group>"; };
 		AB000056 /* VideoControlBar.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoControlBar.swift; sourceTree = "<group>"; };
@@ -223,7 +221,6 @@
 				AB000070 /* Log.swift */,
 				AB000079 /* GyroConfig.swift */,
 				AB000053 /* GyroCore.swift */,
-				AB000082 /* GyroFlowCore.swift */,
 				AB000010 /* FolderScanner.swift */,
 				AB000011 /* EXIFService.swift */,
 				AB000012 /* ThumbnailService.swift */,
@@ -531,7 +528,6 @@
 				AA000017 /* VideoMetadataService.swift in Sources */,
 				AA000079 /* GyroConfig.swift in Sources */,
 				AA000053 /* GyroCore.swift in Sources */,
-				AA000082 /* GyroFlowCore.swift in Sources */,
 				AA000051 /* AVFMetalView.swift in Sources */,
 				AA000077 /* MetalShaders.swift in Sources */,
 				AA000078 /* VideoPlayerNSView.swift in Sources */,

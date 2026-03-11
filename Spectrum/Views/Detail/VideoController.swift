@@ -45,10 +45,6 @@ final class VideoController: @unchecked Sendable {
     private(set) var gyroIsLoading: Bool = false
     /// Retained during loading and playback; nil = stab off.
     private var activeGyroCore: GyroCore?
-    /// Alternative: GyroFlowCore for incremental "gyroflow" method.
-    private var activeGyroFlowCore: GyroFlowCore?
-    /// Convenience: whichever gyro core is currently active.
-    private var activeGyro: GyroCoreProvider? { activeGyroCore ?? activeGyroFlowCore }
     /// When true, the user pressed play while gyro was loading — defer actual unpause
     /// until gyro is ready. This prevents mpv from decoding (and dropping) frames
     /// while `waitingForGyro` suppresses draw().
@@ -163,55 +159,6 @@ final class VideoController: @unchecked Sendable {
         nsView?.loadGyroCore(nil)
         activeGyroCore?.stop()
         activeGyroCore = nil
-        activeGyroFlowCore?.stop()
-        activeGyroFlowCore = nil
-    }
-
-    /// Start gyroflow stabilization using the incremental gyroflow_* API.
-    /// Parameter changes only require recompute (~50ms) instead of full reload (~300ms).
-    func startGyroStabGyroflow(videoPath: String, fps: Double,
-                               config: GyroConfig = GyroConfig(),
-                               lensPath: String? = nil) {
-        stopGyroStab()
-        if let v = nsView { v.setWaitingForGyro(true) }
-        gyroLoadPending = true
-        gyroLastError = nil
-        gyroIsLoading = true
-        var cfg = config
-        if cfg.readoutMs <= 0 { cfg.readoutMs = GyroCore.readoutMs(for: fps) }
-        let core = GyroFlowCore()
-        activeGyroFlowCore = core
-        core.start(
-            videoPath: videoPath,
-            lensPath: lensPath,
-            config: cfg,
-            onReady: { [weak self] in
-                guard let self, self.activeGyroFlowCore === core else { return }
-                self.gyroLoadPending = false
-                self.gyroIsLoading = false
-                self.gyroStabEnabled = true
-                self.gyroAvailable = true
-                self.nsView?.loadGyroCore(core)
-                if self.deferredPlay {
-                    self.deferredPlay = false
-                    self.nsView?.setPause(false)
-                }
-            },
-            onError: { [weak self] msg in
-                Log.gyro.warning("gyroflow ❌ \(msg, privacy: .public)")
-                guard let self, self.activeGyroFlowCore === core else { return }
-                self.gyroLoadPending = false
-                self.gyroIsLoading = false
-                self.gyroLastError = msg
-                self.gyroAvailable = false
-                self.activeGyroFlowCore = nil
-                self.nsView?.setWaitingForGyro(false)
-                if self.deferredPlay {
-                    self.deferredPlay = false
-                    self.nsView?.setPause(false)
-                }
-            }
-        )
     }
 
     func startPolling(view: VideoPlayerNSView) {
@@ -222,7 +169,7 @@ final class VideoController: @unchecked Sendable {
             view.setWaitingForGyro(true)
         }
         // If gyro already finished loading before the view existed, pass it now.
-        if gyroStabEnabled, let core = activeGyro {
+        if gyroStabEnabled, let core = activeGyroCore {
             view.loadGyroCore(core)
         }
         // Sync playback + volume/mute state to new view
@@ -317,7 +264,7 @@ final class VideoController: @unchecked Sendable {
         isPlaying.toggle()
         // Defer actual unpause while gyro is loading — mpv stays paused so no frames
         // are decoded (and dropped) while waitingForGyro suppresses draw().
-        if isPlaying && activeGyro != nil && !gyroStabEnabled {
+        if isPlaying && activeGyroCore != nil && !gyroStabEnabled {
             deferredPlay = true
             return
         }

@@ -355,10 +355,26 @@ pub extern "C" fn gyrocore_load(
         }
 
         // ── Rolling shutter ──────────────────────────────────────────────────
-        // Prefer readout time embedded in video metadata; fall back to caller's value
+        // Use the readout time that gyroflow-core determined during load_video_file.
+        // For GoPro, core deliberately clears it to 0 because GoPro handles RS internally.
+        // Only fall back to caller's readout_ms for cameras where core has no opinion.
         let eff_readout = {
-            let md_readout = stab.gyro.read().file_metadata.read().frame_readout_time;
-            if let Some(r) = md_readout { if r > 0.0 { r } else { cfg.readout_ms } } else { cfg.readout_ms }
+            let params_readout = stab.params.read().frame_readout_time;
+            if params_readout > 0.0 {
+                params_readout // Use value from metadata or auto-detected lens profile
+            } else if cfg.readout_ms > 0.0 {
+                // Check if gyroflow-core deliberately cleared readout (e.g., GoPro handles RS internally)
+                let source = stab.gyro.read().file_metadata.read()
+                    .detected_source.clone().unwrap_or_default();
+                if source.starts_with("GoPro") {
+                    dlog!("[gyrocore] GoPro detected — skipping RS correction (handled internally)");
+                    0.0
+                } else {
+                    cfg.readout_ms
+                }
+            } else {
+                0.0
+            }
         };
         if eff_readout > 0.0 {
             stab.set_frame_readout_time(eff_readout);
