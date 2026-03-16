@@ -115,9 +115,8 @@ Spectrum/
 │   ├── XMPSidecarService.swift       # XMP 邊車檔案 (gyro 設定)
 │   ├── StatusBarModel.swift          # 全域狀態列
 │   ├── CGImageRotation.swift         # CGImage 旋轉工具
-│   ├── GyroConfig.swift              # 陀螺儀參數配置
-│   ├── GyroCore.swift                # gyrocore_* C API 封裝
-│   ├── GyroFlowCore.swift            # gyroflow_* C API 封裝
+│   ├── GyroConfig.swift              # 陀螺儀參數配置 + GyroCoreProvider 協定
+│   ├── GyroCore.swift                # gyrocore_* C API 封裝（one-shot API）
 │   └── Log.swift                     # os.Logger 統一日誌
 ├── Extensions/
 │   ├── Date+Formatting.swift         # 日期格式化
@@ -241,7 +240,6 @@ final class Photo {
 
     // 編輯操作
     var editOpsJson: String?       // [EditOp] 序列化 JSON
-    var cropRectJson: String?      // 舊版向後相容
 
     // 關係
     var folder: ScannedFolder?
@@ -1066,47 +1064,58 @@ if let pending = self.pendingPause {
 
 ## 18. Gyroflow 防手震整合
 
-Spectrum 整合 Gyroflow 的 C API，在 Metal GPU 上做即時影片穩定化。
+Spectrum 整合 Gyroflow 的 `gyrocore_*` one-shot C API，在 Metal GPU 上做即時影片穩定化。
 
-### 兩套 C API
+### C API（one-shot, ~300ms 載入）
 
-| API | 類別 | 特點 |
-|-----|------|------|
-| `gyrocore_*` | `GyroCore` | 一次計算所有幀（~300ms），適合初始載入 |
-| `gyroflow_*` | `GyroFlowCore` | 增量計算（~50ms 重算），適合參數調整 |
+```c
+void* gyrocore_load(video_path, lens_path?, config_json?);  // 載入+計算
+int   gyrocore_get_params(handle, buf96);                     // 讀取參數
+int   gyrocore_get_frame_at_ts(handle, ts_sec, float_buf);   // 時間戳查詢
+int   gyrocore_get_frame(handle, frame_idx, float_buf);      // 幀索引查詢
+void  gyrocore_get_lens_info(handle, buf, len);              // 鏡頭資訊
+void  gyrocore_free(handle);                                  // 釋放
+```
+
+載入影片 → 自動偵測 gyro → 設定參數 → `recompute_blocking()` → 凍結 `ComputeParams`。
 
 ### GyroCoreProvider 協定
 
 ```swift
-protocol GyroCoreProvider {
-    func computeMatrices() throws -> [simd_float4x4]
-    func recompute(smoothness: Double, fov: Double, ...) throws -> [simd_float4x4]
+protocol GyroCoreProvider: AnyObject {
+    var isReady: Bool { get }
+    func computeMatrixAtTime(timeSec: Double) -> (UnsafeBufferPointer<Float>, Bool)?
+    // + lens params, distortion info, etc.
 }
 ```
 
-`GyroCore` 和 `GyroFlowCore` 都實作這個協定。
+`GyroCore` 實作此協定。GPU pipeline 透過此介面取得穩定化矩陣。
+
+### GoPro Rolling Shutter 處理
+
+GoPro ISP 在硬體層面處理 rolling shutter。gyro-wrapper 偵測 `detected_source.starts_with("GoPro")`，自動跳過 RS 校正，避免邊緣變形抖動。
 
 ### Metal GPU Warp
 
 穩定化矩陣透過 Metal 紋理傳遞給 GPU：
 
 ```
-gyro matrices (simd_float4x4 陣列)
-  ↓ 編碼成 MTLTexture (width=4, RGBA32Float)
-  ↓ 傳入 Pass 2 warp shader
-  ↓ shader 對每個像素做 distortion + matrix warp
+gyroCore.computeMatrixAtTime(pts)
+  ↓ row_count × 14 + 9 floats → 展開為 videoH × 16 floats
+  ↓ 上傳 MTLTexture (width=4, RGBA32Float, height=videoH)
+  ↓ Pass 2 warp shader：distortion + mat3×3 transform + IBIS + OIS
   ↓ 穩定化後的畫面
 ```
 
 ### 支援的鏡頭畸變模型
 
-| distModel | 名稱 |
-|-----------|------|
-| 0 | OpenCV Standard (k1-k6, p1-p2) |
-| 1 | OpenCV Fisheye (k1-k4) |
-| 3 | GoPro Superview |
-| 4 | Poly3 |
-| 7 | Poly5 |
+| distModel | 名稱 | 相機 |
+|-----------|------|------|
+| 0 | None | Sony（機內失真補償開啟時） |
+| 1 | OpenCV Fisheye | GoPro |
+| 3 | Poly3 | 各種 |
+| 4 | Poly5 | 各種 |
+| 7 | Sony | Sony |
 
 ### XMP Sidecar
 
@@ -1438,15 +1447,23 @@ Log.bookmark.warning("Failed to resolve bookmark: \(error.localizedDescription, 
 
 ```
 Settings
-├── Thumbnail Cache Size: [Slider 100MB ~ 2GB | Unlimited]
-├── Current Usage: "245.3 MB"
-├── [Clear Cache] 按鈕
-└── Gyro Method: spectrum / gyroflow
+├── Tab: General
+│   ├── Theme: System / Light / Dark
+│   └── Show diagnostics badge
+├── Tab: Cache
+│   ├── Disk Usage + [Clear] 按鈕
+│   └── Size Limit Picker (100MB ~ 2GB | ∞)
+└── Tab: Gyro
+    ├── Enable Gyroflow stabilization
+    ├── dylib 狀態指示
+    ├── Reset to Defaults
+    ├── Horizon Lock (enable, amount, roll)
+    ├── Smoothing (global + per-axis pitch/yaw/roll)
+    ├── Sync & Lens (offset, lens profile chooser)
+    ├── IMU (integration method, orientation, gravity)
+    ├── Stabilization (FOV, lens correction, zooming, adaptive zoom, max zoom)
+    └── Video Speed
 ```
-
-### 快取大小控制
-
-拖拉到最右邊時自動切換為 "Unlimited"。
 
 ### 清除快取
 
@@ -1522,7 +1539,7 @@ Metal Pass 1: YCbCr → RGBA16Float (Fragment Shader)
   ↓
 中間紋理
   ↓
-[Gyro] → gyrocore/gyroflow C API → simd_float4x4 陣列
+[Gyro] → gyrocore C API → row_count×14+9 floats
   ↓ matTex (MTLTexture, RGBA32Float, width=4)
   ↓
 Metal Pass 2: Warp (distortion model + matrix transform)

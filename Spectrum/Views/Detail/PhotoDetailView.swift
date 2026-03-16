@@ -36,6 +36,8 @@ struct PhotoDetailView: View {
     // Shared
     @State private var spaceKeyMonitor: Any?
     @State private var cursorHidden = false
+    @State private var statusBadgeVisible = false
+    @State private var statusBadgeTask: Task<Void, Never>?
     @AppStorage("showDiagBadge") private var showDiagBadge: Bool = true
     @AppStorage("gyroStabEnabled") private var gyroStabEnabled: Bool = true
     @AppStorage("gyroSmooth") private var gyroSmooth: Double = 0.5
@@ -83,6 +85,9 @@ struct PhotoDetailView: View {
             if playing && !playbackStarted {
                 playbackStarted = true
             }
+        }
+        .onChange(of: videoController.gyroStabEnabled) { _, enabled in
+            if enabled { flashStatusBadge() }
         }
         .onChange(of: gyroConfigJson) { _, _ in
             writeXMPSidecar()
@@ -210,6 +215,9 @@ struct PhotoDetailView: View {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
+
+            statusBadge
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             if showDiagBadge {
                 diagBadge
@@ -536,6 +544,36 @@ struct PhotoDetailView: View {
         .padding(8)
     }
 
+    /// Transient status badge (top-left): shows HDR / GYRO state for 2 seconds.
+    @ViewBuilder
+    private var statusBadge: some View {
+        let hasHDR = showEDR && videoHDRType != nil && !videoController.isAVFLayerMode
+        let hasGyro = videoController.gyroStabEnabled
+        if statusBadgeVisible && (hasHDR || hasGyro) {
+            HStack(spacing: 4) {
+                if hasHDR { Text("HDR") }
+                if hasGyro { Text("GYRO") }
+            }
+            .font(.system(size: 11, weight: .medium, design: .monospaced))
+            .foregroundStyle(.white.opacity(0.75))
+            .padding(.horizontal, 8)
+            .padding(.vertical, 5)
+            .background(Color.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 5))
+            .padding(8)
+            .transition(.opacity)
+        }
+    }
+
+    private func flashStatusBadge() {
+        statusBadgeTask?.cancel()
+        withAnimation(.easeInOut(duration: 0.2)) { statusBadgeVisible = true }
+        statusBadgeTask = Task {
+            try? await Task.sleep(for: .seconds(2))
+            guard !Task.isCancelled else { return }
+            withAnimation(.easeInOut(duration: 0.3)) { statusBadgeVisible = false }
+        }
+    }
+
     private func togglePill(label: String, active: Bool, color: Color,
                             action: @escaping () -> Void) -> some View {
         Text(label)
@@ -671,6 +709,7 @@ struct PhotoDetailView: View {
             let detectedType = await ImagePreloadCache.detectVideoHDRType(path: path, bookmarkData: bookmark)
             videoHDRType = detectedType
             isHDR = detectedType != nil
+            if detectedType != nil { flashStatusBadge() }
 
             // 2. Generate poster frame (first video frame) for static display
             if let data = bookmark,
@@ -739,6 +778,8 @@ struct PhotoDetailView: View {
                                   config: gyroCfg, lensPath: lens)
             }
         }
+        let hdrToggle: () -> Void = { [self] in self.showEDR.toggle(); flashStatusBadge() }
+        let gyroToggleWithBadge: () -> Void = { [self] in gyroToggle(); flashStatusBadge() }
         let inspectorToggle: () -> Void = { [self] in self.showInspector.toggle() }
         spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
             let bare = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
@@ -750,8 +791,11 @@ struct PhotoDetailView: View {
             case "f":
                 NSApp.keyWindow?.toggleFullScreen(nil)
                 return nil
-            case "s":
-                gyroToggle()
+            case "h":
+                hdrToggle()
+                return nil
+            case "s", "g":
+                gyroToggleWithBadge()
                 return nil
             case "i":
                 inspectorToggle()

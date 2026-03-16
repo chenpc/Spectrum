@@ -1,0 +1,423 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spectrum Call Graph</title>
+<script src="https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.min.js"></script>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, sans-serif; background: #1a1a2e; color: #e0e0e0; padding: 20px; }
+  h1 { text-align: center; margin-bottom: 8px; font-size: 1.6em; color: #fff; }
+  .subtitle { text-align: center; color: #888; margin-bottom: 24px; font-size: 0.85em; }
+  .card { background: #16213e; border: 1px solid #0f3460; border-radius: 8px; margin-bottom: 12px; overflow: hidden; transition: box-shadow 0.2s; }
+  .card:hover { box-shadow: 0 0 12px rgba(83,168,255,0.15); }
+  .card-header { padding: 14px 18px; cursor: pointer; display: flex; align-items: center; gap: 10px; user-select: none; }
+  .card-header:hover { background: rgba(255,255,255,0.03); }
+  .arrow { font-size: 0.7em; transition: transform 0.2s; color: #53a8ff; width: 16px; }
+  .arrow.open { transform: rotate(90deg); }
+  .card-title { font-weight: 600; font-size: 1.05em; }
+  .card-desc { color: #888; font-size: 0.8em; margin-left: auto; }
+  .card-body { display: none; padding: 0 18px 18px; overflow-x: auto; }
+  .card-body.open { display: block; }
+  .mermaid-wrap { background: #0a0a1a; border-radius: 6px; padding: 16px; overflow: auto; position: relative; min-height: 100px; cursor: grab; }
+  .mermaid-wrap:active { cursor: grabbing; }
+  .mermaid-wrap svg { max-width: none !important; }
+  .zoom-bar { display: flex; gap: 6px; margin-bottom: 8px; }
+  .zoom-bar button { background: #0f3460; color: #e0e0e0; border: 1px solid #1a4080; border-radius: 4px; padding: 4px 12px; cursor: pointer; font-size: 0.8em; }
+  .zoom-bar button:hover { background: #1a4080; }
+  .zoom-bar span { color: #888; font-size: 0.8em; line-height: 28px; }
+  .nav { display: flex; gap: 8px; justify-content: center; margin-bottom: 20px; flex-wrap: wrap; }
+  .nav button { background: #0f3460; color: #ccc; border: 1px solid #1a4080; border-radius: 4px; padding: 6px 12px; cursor: pointer; font-size: 0.75em; }
+  .nav button:hover { background: #1a4080; color: #fff; }
+  .nav button.active { background: #53a8ff; color: #000; border-color: #53a8ff; }
+</style>
+</head>
+<body>
+
+<h1>Spectrum Call Graph</h1>
+<p class="subtitle">Click to expand each section. Use zoom controls or scroll to navigate large diagrams.</p>
+
+<div class="nav" id="nav"></div>
+<div id="cards"></div>
+
+<script>
+const graphs = [
+  {
+    id: "startup",
+    title: "1. App 啟動與資料夾掃描",
+    desc: "SpectrumApp → ContentView.task → FolderScanner → DB",
+    code: `flowchart TD
+    A["SpectrumApp @main"] --> B["WindowGroup → ContentView"]
+    A --> S["Settings → SettingsView"]
+    B --> CMD["Menu Commands<br/>(File/Nav/Edit/Delete/Playback)"]
+
+    B -->|".task {}"| BOOT["啟動流程"]
+    BOOT --> SCAN["1. Delta Scan 所有資料夾"]
+    BOOT --> PREFETCH["2. 背景 prefetch 資料夾樹"]
+    BOOT --> MONITOR["3. 啟動 FSEvents 監視"]
+    BOOT --> RESTORE["4. 恢復上次瀏覽位置"]
+
+    SCAN -->|"for each folder"| BS1["BookmarkService.resolveBookmark"]
+    BS1 --> FS1["FolderScanner.scanFolder<br/>(clearAll: false)"]
+    FS1 --> EXIF["EXIFService.readEXIF"]
+    FS1 --> VMD["VideoMetadataService.readMetadata"]
+    FS1 --> XMP["XMPSidecarService.read"]
+    FS1 --> BATCH["批次 insert Photo<br/>(100/batch → save → @Query 更新)"]
+
+    PREFETCH -->|"Task.detached"| PFT["FolderScanner.prefetchFolderTree"]
+    PFT --> FLC["FolderListCache.setEntries"]
+
+    MONITOR --> FM["FolderMonitor.startMonitoring"]
+    FM -->|"FSEvents"| INV["FolderListCache.invalidate<br/>→ 觸發重新掃描"]`
+  },
+  {
+    id: "sidebar",
+    title: "2. 側邊欄與資料夾管理",
+    desc: "SidebarView → addFolder / drag-drop / context menu",
+    code: `flowchart TD
+    SV["SidebarView"] -->|".task"| LOAD["loadAllFolderChildren()"]
+    LOAD --> CACHE["FolderListCache (快取)"]
+    LOAD --> LS["FolderScanner.listSubfolders"]
+
+    SV --> ADD["addFolder()"]
+    ADD --> PANEL["NSOpenPanel"]
+    PANEL --> AURL["addFolderURL(url)"]
+    AURL --> BK["BookmarkService.createBookmark"]
+    AURL --> INS["modelContext.insert(ScannedFolder)"]
+    INS --> RESCAN["FolderScanner.scanFolder<br/>(clearAll: true)"]
+
+    SV --> DROP["onDrop(.fileURL)"]
+    DROP --> AURL
+
+    SV --> CTX["右鍵選單"]
+    CTX --> CTX1["Rescan"]
+    CTX --> CTX2["Show in Finder"]
+    CTX --> CTX3["Remove"]
+
+    SV --> TREE["SubfolderSidebarRow<br/>(DisclosureGroup 遞迴)"]
+    TREE -->|"選擇"| SEL["selectedSidebarItem = .subfolder"]`
+  },
+  {
+    id: "grid",
+    title: "3. 照片網格與檔案操作",
+    desc: "PhotoGridView → scan / thumbnail / delete / paste / rename",
+    code: `flowchart TD
+    PGV["PhotoGridView"] -->|".task"| SCL["scanCurrentLevel()"]
+    SCL --> NVS["NetworkVolumeService 掛載檢查"]
+    SCL --> CACHE["FolderListCache (快取)"]
+    SCL --> LS["FolderScanner.listSubfolders"]
+    SCL --> DELTA["FolderScanner.scanFolder (delta)"]
+
+    PGV --> GRID["LazyVGrid"]
+    GRID --> SUB["SubfolderTileView → 點擊導航"]
+    GRID --> PTV["PhotoThumbnailView"]
+
+    PTV -->|".task"| THUMB["ThumbnailService.thumbnail"]
+    THUMB --> MEM["1. memoryCache (NSCache)"]
+    THUMB --> DISK["2. diskCache (SHA256.heic)"]
+    THUMB --> GEN["3. generate (CGImageSource / AVAsset)"]
+    GEN --> EVICT["evictIfNeeded (LRU)"]
+
+    PGV --> DEL["Delete ⌫"]
+    DEL --> TRASH["trashItem → fallback removeItem"]
+    DEL --> DBDEL["modelContext.delete"]
+
+    PGV --> PASTE["Paste ⌘V"]
+    PASTE -->|"同 scope"| MOVE["moveItem"]
+    PASTE -->|"跨 scope"| CPDEL["copyItem + removeItem"]
+
+    PGV --> RENAME["Rename"]
+    RENAME --> FMMOVE["FileManager.moveItem"]
+
+    PTV -->|"雙擊"| DETAIL["detailPhoto = photo"]`
+  },
+  {
+    id: "photo-detail",
+    title: "4. 照片詳情與 HDR 渲染",
+    desc: "PhotoDetailView → ImagePreloadCache → HLG / GainMap",
+    code: `flowchart TD
+    PDV["PhotoDetailView<br/>.task(id: filePath)"] --> ROUTE{"photo.isVideo?"}
+    ROUTE -->|"否"| IMG["loadFullImage()"]
+    ROUTE -->|"是"| VID["loadVideo() → 見圖5"]
+
+    IMG --> IPC["ImagePreloadCache.loadImageEntry"]
+    IPC --> SCOPE["BookmarkService 安全範圍"]
+    IPC --> DETECT["detectHDR(source)"]
+    DETECT --> GM["AuxiliaryData HDRGainMap<br/>→ .gainMap"]
+    DETECT --> HLG["CGColorSpaceUsesITUR_2100TF<br/>→ .hlg"]
+    IPC --> NSIMG["NSImage(contentsOf:)"]
+    IPC --> HLGCG["CGImageSourceCreateImageAtIndex<br/>→ hlgCGImage"]
+
+    IMG --> PRELOAD["preloadAdjacent<br/>(前後各1張, LRU 5項)"]
+
+    IMG --> DISPLAY{"hdrFormat?"}
+    DISPLAY -->|".hlg + showEDR"| HLGV["HLGImageView<br/>CALayer + itur_2100_HLG"]
+    DISPLAY -->|".gainMap / SDR"| HDRV["HDRImageView<br/>NSImageView .high/.standard"]
+
+    PDV --> BADGE["edrBadge 點擊"]
+    BADGE --> TOGGLE["showEDR.toggle()"]
+
+    PDV --> KEYIMG["Key Monitor"]
+    KEYIMG --> FKEY["F → fullscreen"]
+    KEYIMG --> SPACE["Space → Live Photo"]`
+  },
+  {
+    id: "video-gyro",
+    title: "5. 影片播放與 Gyro 穩定化",
+    desc: "startPlayback → HDR detect → GyroCore → renderFrame",
+    code: `flowchart TD
+    LV["loadVideo()"] --> XMPREAD["XMPSidecarService.read<br/>→ gyroConfigJson"]
+    LV --> START["startPlayback()"]
+
+    START --> HDRD["detectVideoHDRType"]
+    HDRD --> DV["DolbyVision"]
+    HDRD --> HLGV["HLG"]
+    HDRD --> PQV["HDR10"]
+
+    START --> POSTER["AVAssetImageGenerator<br/>→ posterFrame"]
+
+    START --> GYROSTART{"gyroStabEnabled<br/>&& dylibFound?"}
+    GYROSTART -->|"是"| GSTAB["videoController.startGyroStab"]
+
+    GSTAB --> CORE["GyroCore().start()"]
+    CORE -->|"ioQueue ~300ms"| DLOPEN["dlopen libgyrocore_c.dylib"]
+    DLOPEN --> GCLOAD["gyrocore_load(video, lens, configJSON)"]
+    GCLOAD --> STAB["StabilizationManager"]
+    STAB --> GOPRO{"GoPro?"}
+    GOPRO -->|"是"| SKIPRS["skip RS correction"]
+    GOPRO -->|"否"| SETRS["set_frame_readout_time"]
+    STAB --> RECOMP["recompute_blocking"]
+    RECOMP --> FREEZE["ComputeParams 凍結"]
+
+    CORE -->|"onReady"| READY["gyroStabEnabled = true"]
+    READY --> LOADGC["nsView.loadGyroCore(core)"]
+    LOADGC --> FLASH["flashStatusBadge()"]
+
+    START --> KEYMON["Key Monitor"]
+    KEYMON --> HKEY["H → HDR toggle + badge"]
+    KEYMON --> SGKEY["S/G → Gyro toggle + badge"]
+    KEYMON --> SPACE["Space → play/pause"]
+    KEYMON --> FKEY["F → fullscreen"]
+    KEYMON --> IKEY["I → inspector"]`
+  },
+  {
+    id: "metal",
+    title: "6. Metal 兩段式渲染管線",
+    desc: "CVDisplayLink → copyPixelBuffer → Pass1 → Pass2 → drawable",
+    code: `flowchart TD
+    CVD["CVDisplayLink<br/>(~60fps callback)"] -->|"renderQueue<br/>(.userInteractive)"| RF["renderFrame()"]
+
+    RF --> PB["output.copyPixelBuffer<br/>(forItemTime:itemTimeForDisplay:)"]
+    PB --> PTS["精確 PTS"]
+
+    PTS --> GYROQ{"gyroCore<br/>isReady?"}
+    GYROQ -->|"是"| GMAT["computeMatrixAtTime(pts)"]
+    GMAT --> FFI["gyrocore_get_frame_at_ts<br/>(C FFI)"]
+    FFI --> EXPAND["展開 rowCount×14<br/>→ videoH×16"]
+    EXPAND --> MATTEX["上傳 matTex<br/>(RGBA32F w=4 h=videoH)"]
+
+    MATTEX --> PASS1["Pass 1: YCbCr → RGBA16Float"]
+    PASS1 --> TEXY["texY (plane:0)"]
+    PASS1 --> TEXCBCR["texCbCr (plane:1)"]
+    PASS1 --> DECODE["Fragment Shader<br/>(14 decode modes)"]
+    DECODE --> OFFTEX["offscreen texture"]
+
+    OFFTEX --> PASS2["Pass 2: Warp Shader"]
+    PASS2 --> UNDIST["undistort_point<br/>(Newton-Raphson)"]
+    PASS2 --> READMAT["讀取 matTex<br/>→ mat3×3 per row"]
+    PASS2 --> DIST["distort_point<br/>(5 models)"]
+    PASS2 --> IBIS["IBIS: rotate + shift"]
+    PASS2 --> OIS["OIS: shift"]
+    PASS2 --> DRAW["CAMetalLayer drawable"]
+
+    GYROQ -->|"否"| SINGLE["單段渲染<br/>YCbCr → drawable"]
+
+    DRAW --> PRESENT["present + commit"]
+    PRESENT --> DIAG["renderFPS / renderCV<br/>/ Stability Index"]`
+  },
+  {
+    id: "hdr-cs",
+    title: "7. HDR Colorspace 管理",
+    desc: "CAMetalLayer colorspace switching + decode mode",
+    code: `flowchart LR
+    PREP["prepareForContent<br/>(hdrType)"] --> CSSET{"VideoHDRType"}
+    CSSET -->|".hlg"| CSHLG["layer.colorspace<br/>= itur_2100_HLG"]
+    CSSET -->|".hdr10"| CSPQ["layer.colorspace<br/>= itur_2100_PQ"]
+    CSSET -->|".dolbyVision"| CSDV["auto-detect<br/>HLG or PQ"]
+    CSSET -->|"nil"| CSSDR["layer.colorspace<br/>= sRGB"]
+
+    CSHLG --> EDR["wantsExtendedDynamic<br/>RangeContent = true"]
+    CSPQ --> EDR
+    CSDV --> EDR
+
+    TOGGLE["H 鍵 toggle"] --> SW["切換 colorspace<br/>+ decode mode"]`
+  },
+  {
+    id: "edit",
+    title: "8. 非破壞性編輯系統",
+    desc: "EditOp → CompositeEdit → XMP sidecar",
+    code: `flowchart TD
+    PDV["PhotoDetailView"] --> ROT["Rotate ↺"]
+    PDV --> FLIP["Flip ↔"]
+    PDV --> CROP["Crop ✂"]
+    PDV --> RESTORE["Restore ↩"]
+
+    ROT --> A1["editOps.append(.rotate(-90))"]
+    FLIP --> A2["editOps.append(.flipH)"]
+    CROP --> OVERLAY["CropOverlayView<br/>(拖曳控制點)"]
+    OVERLAY --> APPLY["applyCrop()"]
+    APPLY --> A3["editOps.append(.crop(CropRect))"]
+
+    A1 --> COMP["CompositeEdit.from(ops)"]
+    A2 --> COMP
+    A3 --> COMP
+    COMP --> FLATTEN["平面化<br/>rotation + flipH + crop<br/>(CropRect.rotated 座標轉換)"]
+    FLATTEN --> STATE[".rotationEffect<br/>+ activeCrop"]
+
+    A1 --> XMPW["writeXMPSidecar()"]
+    A2 --> XMPW
+    A3 --> XMPW
+    XMPW --> XS["XMPSidecarService.write"]
+    XS --> FILE["{name}.{ext}.xmp"]
+    XS --> ORI["EXIF orientation (D4 群)"]
+    XS --> CRS["Camera Raw crop"]
+    XS --> GYRO["spectrum:GyroConfig"]
+
+    RESTORE --> CLEAR["editOps = []"]
+    CLEAR --> XMPD["deleteSidecar"]`
+  },
+  {
+    id: "import",
+    title: "9. 匯入面板",
+    desc: "ImportPanelModel → scan → date groups → drag to grid",
+    code: `flowchart TD
+    E1["selectFolder()<br/>NSOpenPanel"] --> SURL["sourceURL = url"]
+    E2["子資料夾右鍵<br/>Add to Import"] --> OPEN["importModel.openFolder"]
+    OPEN --> SURL
+    SURL -->|"onChange"| SHOW["showImportPanel = true"]
+
+    SHOW --> IPV["ImportPanelView"]
+    IPV --> SCAN["scanFolder(url) async"]
+    SCAN -->|"Task.detached"| ENUM["FileManager 列舉"]
+    ENUM --> EXIF["EXIFService.readEXIF"]
+    EXIF --> ITEMS["items: [ImportItem]"]
+    ITEMS --> GROUP["dateGroups<br/>(按 EXIF 日期分組)"]
+
+    GROUP --> UI["日期分組 UI<br/>展開/縮合"]
+    UI --> DRAG["onDrag → NSItemProvider"]
+    DRAG --> DROP["PhotoGridView.handleDrop"]
+    DROP --> GDROP["performGroupDrop"]
+    GDROP --> GCOPY["copyItem (複製)"]
+    GDROP --> GMOVE["moveItem (剪下)"]
+    GDROP --> STATUS["StatusBarModel 進度"]
+    GMOVE --> REMOVE["importModel.removeItems"]`
+  }
+];
+
+const nav = document.getElementById('nav');
+const container = document.getElementById('cards');
+
+graphs.forEach((g, i) => {
+  // Nav button
+  const btn = document.createElement('button');
+  btn.textContent = g.title.split('.')[0] + '.' + g.title.split('.').slice(1).join('.').substring(0, 8);
+  btn.onclick = () => {
+    const el = document.getElementById('card-' + g.id);
+    el.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    // Auto-expand
+    const body = el.querySelector('.card-body');
+    const arrow = el.querySelector('.arrow');
+    if (!body.classList.contains('open')) {
+      body.classList.add('open');
+      arrow.classList.add('open');
+      renderIfNeeded(g.id);
+    }
+  };
+  nav.appendChild(btn);
+
+  // Card
+  const card = document.createElement('div');
+  card.className = 'card';
+  card.id = 'card-' + g.id;
+  card.innerHTML = `
+    <div class="card-header" onclick="toggle('${g.id}')">
+      <span class="arrow" id="arrow-${g.id}">&#9654;</span>
+      <span class="card-title">${g.title}</span>
+      <span class="card-desc">${g.desc}</span>
+    </div>
+    <div class="card-body" id="body-${g.id}">
+      <div class="zoom-bar">
+        <button onclick="zoom('${g.id}', 1.3)">+ Zoom In</button>
+        <button onclick="zoom('${g.id}', 0.77)">- Zoom Out</button>
+        <button onclick="zoom('${g.id}', 0)">Reset</button>
+        <span id="zoom-label-${g.id}">100%</span>
+      </div>
+      <div class="mermaid-wrap" id="wrap-${g.id}">
+        <div id="mermaid-${g.id}"></div>
+      </div>
+    </div>
+  `;
+  container.appendChild(card);
+});
+
+mermaid.initialize({
+  startOnLoad: false,
+  theme: 'dark',
+  flowchart: { useMaxWidth: false, htmlLabels: true, curve: 'basis' },
+  themeVariables: {
+    primaryColor: '#1a4080',
+    primaryTextColor: '#e0e0e0',
+    primaryBorderColor: '#53a8ff',
+    lineColor: '#53a8ff',
+    secondaryColor: '#0f3460',
+    tertiaryColor: '#16213e',
+    fontSize: '13px'
+  }
+});
+
+const rendered = {};
+const scales = {};
+
+function toggle(id) {
+  const body = document.getElementById('body-' + id);
+  const arrow = document.getElementById('arrow-' + id);
+  body.classList.toggle('open');
+  arrow.classList.toggle('open');
+  if (body.classList.contains('open')) renderIfNeeded(id);
+}
+
+async function renderIfNeeded(id) {
+  if (rendered[id]) return;
+  rendered[id] = true;
+  const g = graphs.find(x => x.id === id);
+  const el = document.getElementById('mermaid-' + id);
+  try {
+    const { svg } = await mermaid.render('svg-' + id, g.code);
+    el.innerHTML = svg;
+    scales[id] = 1;
+    // Pan support
+    const wrap = document.getElementById('wrap-' + id);
+    let isPanning = false, startX, startY, scrollL, scrollT;
+    wrap.onmousedown = e => { isPanning = true; startX = e.pageX; startY = e.pageY; scrollL = wrap.scrollLeft; scrollT = wrap.scrollTop; };
+    wrap.onmousemove = e => { if (!isPanning) return; wrap.scrollLeft = scrollL - (e.pageX - startX); wrap.scrollTop = scrollT - (e.pageY - startY); };
+    wrap.onmouseup = () => isPanning = false;
+    wrap.onmouseleave = () => isPanning = false;
+  } catch (err) {
+    el.innerHTML = '<p style="color:red">Render error: ' + err.message + '</p>';
+  }
+}
+
+function zoom(id, factor) {
+  if (!scales[id]) scales[id] = 1;
+  if (factor === 0) scales[id] = 1;
+  else scales[id] *= factor;
+  scales[id] = Math.max(0.3, Math.min(3, scales[id]));
+  const el = document.getElementById('mermaid-' + id);
+  el.style.transform = `scale(${scales[id]})`;
+  el.style.transformOrigin = 'top left';
+  document.getElementById('zoom-label-' + id).textContent = Math.round(scales[id] * 100) + '%';
+}
+</script>
+</body>
+</html>

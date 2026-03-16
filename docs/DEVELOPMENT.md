@@ -50,7 +50,8 @@ Spectrum/
 ├── Services/
 │   ├── ImagePreloadCache.swift  # HDR format detection + rendering
 │   ├── StatusBarModel.swift     # Unified async operation progress
-│   ├── GyroCore.swift           # gyroflow-core runtime loader
+│   ├── GyroCore.swift           # gyroflow-core runtime loader (one-shot API)
+│   ├── GyroConfig.swift         # Gyro config + GyroCoreProvider protocol
 │   ├── FolderScanner.swift      # Filesystem scanning (@ModelActor)
 │   ├── ThumbnailService.swift   # Three-tier thumbnail cache
 │   ├── XMPSidecarService.swift  # XMP sidecar read/write (edits + gyro config)

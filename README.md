@@ -40,7 +40,7 @@ Preview gyro-stabilized video without rendering — powered by [gyroflow-core](h
 - **Sony IBIS support** — Per-scanline in-body image stabilization data correction (tested with ZV-E1)
 - **Per-video config** — Each video can have custom gyro settings (smoothing, sync offset, horizon lock, etc.), stored in XMP sidecar
 - **Configurable parameters** — Smoothing (global or per-axis pitch/yaw/roll), gyro sync offset, lens profile, FOV scaling, horizon lock, adaptive zoom
-- **Dual engines** — Toggle between Spectrum (one-shot) and Gyroflow (incremental recompute) stabilization methods
+- **GoPro support** — Automatic detection skips rolling shutter correction for GoPro footage (handled internally by GoPro ISP)
 - **Toggle on/off** — Press `s` during playback to enable/disable stabilization in real time
 
 ### Browsing & Navigation

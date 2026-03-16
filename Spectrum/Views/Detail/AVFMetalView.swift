@@ -374,8 +374,12 @@ class AVFMetalView: NSView, @unchecked Sendable {
     // MARK: - Gyro
 
     nonisolated func loadGyroCore(_ core: GyroCoreProvider?) {
-        gyroCore = core
-        prevMidRow = nil; siAngles.removeAll(); gyroSI = 0
+        // Synchronize with renderQueue to prevent use-after-free:
+        // renderFrame() may be mid-flight using the old gyroCore when we nil it out.
+        renderQueue.sync {
+            self.gyroCore = core
+            self.prevMidRow = nil; self.siAngles.removeAll(); self.gyroSI = 0
+        }
         waitingForGyro = false
     }
 
