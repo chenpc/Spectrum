@@ -44,13 +44,6 @@ fi
 
 mkdir -p "$BUILD_DIR"
 
-# ── Download deps if needed ──────────────────────────────────────────────────
-
-if [ ! -f "$SCRIPT_DIR/Spectrum/Resources/lib/libmpv.dylib" ]; then
-    echo "==> Downloading pre-built dependencies..."
-    "$SCRIPT_DIR/download_libs.sh"
-fi
-
 # ── Build ────────────────────────────────────────────────────────────────────
 
 echo "==> Building Debug (incremental, $(sysctl -n hw.logicalcpu) cores)..."
