@@ -104,6 +104,13 @@ final class VideoController: @unchecked Sendable {
         // If nsView isn't attached yet (early start before SwiftUI creates the view),
         // gyroLoadPending tells startPolling() to set waitingForGyro when it connects.
         if let v = nsView {
+            // If already playing, pause player during gyro load so audio stays in sync.
+            // deferredPlay / pendingPause will resume once loadGyroCore() fires.
+            if isPlaying {
+                v.setPause(true)
+                deferredPlay = true
+                Log.gyro.info("[gyro] pausing player during gyro load (isPlaying=true)")
+            }
             v.setWaitingForGyro(true)
         }
         gyroLoadPending = true
@@ -126,11 +133,16 @@ final class VideoController: @unchecked Sendable {
                 self.gyroIsLoading = false
                 self.gyroStabEnabled = true
                 self.gyroAvailable = true
-                self.nsView?.loadGyroCore(core)  // clears waitingForGyro
-                // Actually unpause if user pressed play during gyro load
+                // loadGyroCore() clears waitingForGyro and resumes if pendingPause==false
+                // (handles initial-load deferred play via AVFMetalView's pendingPause).
+                self.nsView?.loadGyroCore(core)
+                // Resume if user toggled gyro ON while playing (deferredPlay),
+                // or pressed play during gyro load (togglePlayPause set deferredPlay).
+                // Calling play() on an already-playing AVPlayer is a harmless no-op.
                 if self.deferredPlay {
                     self.deferredPlay = false
                     self.nsView?.setPause(false)
+                    Log.gyro.info("[gyro] onReady → resuming via deferredPlay")
                 }
             },
             onError: { [weak self] msg in
@@ -142,10 +154,11 @@ final class VideoController: @unchecked Sendable {
                 self.gyroAvailable = false
                 self.activeGyroCore = nil
                 self.nsView?.setWaitingForGyro(false)  // Release suppression on failure too
-                // Still start playback if user pressed play during gyro load
+                // Resume player if it was paused waiting for gyro
                 if self.deferredPlay {
                     self.deferredPlay = false
                     self.nsView?.setPause(false)
+                    Log.gyro.info("[gyro] onError → resuming via deferredPlay")
                 }
             }
         )
