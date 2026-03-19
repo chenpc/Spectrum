@@ -186,6 +186,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private(set) var videoDuration: Double = 0
     nonisolated(unsafe) private(set) var isEOFReached: Bool = false
     nonisolated(unsafe) private var eofObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var readyObservation: NSKeyValueObservation?
 
     // Frame timing — written on CVDisplayLink thread, read from poll queue.
     nonisolated(unsafe) private(set) var renderFPS: Double = 0
@@ -471,12 +472,20 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 self.enableAVFLayer()
             }
 
-            // Apply deferred pause/play if setPause was called before player existed
-            if let pending = self.pendingPause {
-                self.pendingPause = nil
-                if !pending {
-                    self.isEOFReached = false
-                    newPlayer.play()
+            // Wait for item to be ready before playing, so the first video frame
+            // is available in AVPlayerItemVideoOutput before audio starts.
+            // This prevents the black-screen-with-audio symptom on first open.
+            let capturedPendingPause = self.pendingPause
+            self.pendingPause = nil
+            self.readyObservation = item.observe(\.status, options: [.initial, .new]) { [weak self, weak newPlayer] item, _ in
+                guard let self, let newPlayer, item.status == .readyToPlay else { return }
+                self.readyObservation = nil
+                let shouldPlay = capturedPendingPause.map { !$0 } ?? true
+                DispatchQueue.main.async {
+                    if shouldPlay {
+                        self.isEOFReached = false
+                        newPlayer.play()
+                    }
                 }
             }
 
@@ -518,6 +527,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
     private func cleanupPlayer() {
         player?.pause()
         disableAVFLayer()
+        readyObservation?.invalidate(); readyObservation = nil
         if let obs = eofObserver { NotificationCenter.default.removeObserver(obs); eofObserver = nil }
         player = nil
         playerItem = nil
@@ -865,6 +875,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
     deinit {
         if let dl = displayLink { CVDisplayLinkStop(dl); displayLink = nil }
         player?.pause()
+        readyObservation?.invalidate()
         if let obs = eofObserver { NotificationCenter.default.removeObserver(obs) }
     }
 }

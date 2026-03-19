@@ -103,6 +103,9 @@ struct PhotoInfoPanel: View {
             if let duration = photo.duration {
                 LabeledContent("Duration", value: formatDuration(duration))
             }
+            if photo.fileSize > 0, let duration = photo.duration, duration > 0 {
+                LabeledContent("Bitrate", value: formatBitrate(Double(photo.fileSize) * 8 / duration))
+            }
             if let codec = photo.videoCodec {
                 LabeledContent("Video Codec", value: codec)
             }
@@ -245,6 +248,14 @@ struct PhotoInfoPanel: View {
 
     private func formatFileSize(_ bytes: Int64) -> String {
         ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
+    }
+
+    private func formatBitrate(_ bitsPerSecond: Double) -> String {
+        if bitsPerSecond >= 1_000_000 {
+            return String(format: "%.1f Mbps", bitsPerSecond / 1_000_000)
+        } else {
+            return String(format: "%.0f Kbps", bitsPerSecond / 1_000)
+        }
     }
 
     private func formatExposureProgram(_ value: Int) -> String {
