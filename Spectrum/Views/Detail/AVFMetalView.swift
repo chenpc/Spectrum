@@ -187,6 +187,9 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private(set) var isEOFReached: Bool = false
     nonisolated(unsafe) private var eofObserver: NSObjectProtocol?
     nonisolated(unsafe) private var readyObservation: NSKeyValueObservation?
+    nonisolated(unsafe) private var timeControlObservation: NSKeyValueObservation?
+    // T=0 reference for startup timing logs
+    nonisolated(unsafe) private var loadStartTime: CFTimeInterval = 0
 
     // Frame timing — written on CVDisplayLink thread, read from poll queue.
     nonisolated(unsafe) private(set) var renderFPS: Double = 0
@@ -398,6 +401,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         frameIntervals.removeAll(); lastFrameTime = 0
         renderFPS = 0; renderCV = 0; renderStability = 1
         pendingPause = nil
+        loadStartTime = CACurrentMediaTime()
 
         let url = URL(fileURLWithPath: path)
         let asset = AVURLAsset(url: url)
@@ -454,6 +458,9 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
             let item = AVPlayerItem(asset: asset)
             item.add(output)
+            // Pre-buffer 2 seconds before allowing playback to start.
+            // Reduces stalling and gives the video output time to fill before audio starts.
+            item.preferredForwardBufferDuration = 2.0
             self.playerItem = item
 
             let newPlayer = AVPlayer(playerItem: item)
@@ -472,24 +479,57 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 self.enableAVFLayer()
             }
 
-            // Wait for item to be ready before playing, so the first video frame
-            // is available in AVPlayerItemVideoOutput before audio starts.
-            // This prevents the black-screen-with-audio symptom on first open.
+            let t0 = self.loadStartTime
+            let filename = url.lastPathComponent
+
+            Log.player.info("[startup] [\(filename, privacy: .public)] item created at +\(String(format:"%.3f", CACurrentMediaTime()-t0), privacy: .public)s  preferredForwardBuffer=2.0s")
+
+            // Wait for item.status == .readyToPlay before calling play().
+            // This ensures AVFoundation has initialized the decoders so the first
+            // video frame arrives in AVPlayerItemVideoOutput without a black-screen gap.
             let capturedPendingPause = self.pendingPause
             self.pendingPause = nil
             self.readyObservation = item.observe(\.status, options: [.initial, .new]) { [weak self, weak newPlayer] item, _ in
-                guard let self, let newPlayer, item.status == .readyToPlay else { return }
-                self.readyObservation = nil
-                let shouldPlay = capturedPendingPause.map { !$0 } ?? true
-                DispatchQueue.main.async {
-                    if shouldPlay {
-                        self.isEOFReached = false
-                        newPlayer.play()
+                guard let self, let newPlayer else { return }
+                let elapsed = String(format: "%.3f", CACurrentMediaTime() - t0)
+                switch item.status {
+                case .readyToPlay:
+                    Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → calling play()")
+                    self.readyObservation = nil
+                    let shouldPlay = capturedPendingPause.map { !$0 } ?? true
+                    DispatchQueue.main.async {
+                        if shouldPlay {
+                            self.isEOFReached = false
+                            newPlayer.play()
+                        } else {
+                            Log.player.info("[startup] [\(filename, privacy: .public)] play suppressed (pendingPause=true)")
+                        }
                     }
+                case .failed:
+                    Log.player.error("[startup] [\(filename, privacy: .public)] status=failed at +\(elapsed, privacy: .public)s: \(item.error?.localizedDescription ?? "unknown", privacy: .public)")
+                default:
+                    Log.player.info("[startup] [\(filename, privacy: .public)] status=unknown/loading at +\(elapsed, privacy: .public)s")
                 }
             }
 
-            Log.player.info("Loaded: \(url.lastPathComponent, privacy: .public)  \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps  transfer=\(info.transferFunction, privacy: .public)  isDV=\(info.isDolbyVision)  matrix=\(info.matrix, privacy: .public)  \(info.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
+            // Observe timeControlStatus to see when player actually starts vs waits.
+            self.timeControlObservation = newPlayer.observe(\.timeControlStatus, options: [.new]) { [weak self] player, _ in
+                guard self != nil else { return }
+                let elapsed = String(format: "%.3f", CACurrentMediaTime() - t0)
+                switch player.timeControlStatus {
+                case .paused:
+                    Log.player.info("[startup] [\(filename, privacy: .public)] timeControlStatus=paused at +\(elapsed, privacy: .public)s")
+                case .waitingToPlayAtSpecifiedRate:
+                    let reason = player.reasonForWaitingToPlay?.rawValue ?? "unknown"
+                    Log.player.info("[startup] [\(filename, privacy: .public)] timeControlStatus=waiting(\(reason, privacy: .public)) at +\(elapsed, privacy: .public)s")
+                case .playing:
+                    Log.player.info("[startup] [\(filename, privacy: .public)] timeControlStatus=playing at +\(elapsed, privacy: .public)s ← audio/video clock running")
+                @unknown default:
+                    break
+                }
+            }
+
+            Log.player.info("[startup] [\(filename, privacy: .public)] AVPlayer setup done at +\(String(format:"%.3f", CACurrentMediaTime()-t0), privacy: .public)s  \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps  \(info.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
         }
     }
 
@@ -528,6 +568,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         player?.pause()
         disableAVFLayer()
         readyObservation?.invalidate(); readyObservation = nil
+        timeControlObservation?.invalidate(); timeControlObservation = nil
         if let obs = eofObserver { NotificationCenter.default.removeObserver(obs); eofObserver = nil }
         player = nil
         playerItem = nil
@@ -635,6 +676,11 @@ class AVFMetalView: NSView, @unchecked Sendable {
         let planeCount = CVPixelBufferGetPlaneCount(pixelBuffer)
 
         frameCount += 1
+
+        if frameCount == 1 {
+            let elapsed = String(format: "%.3f", CACurrentMediaTime() - loadStartTime)
+            Log.player.info("[startup] first video frame rendered at +\(elapsed, privacy: .public)s  pts=\(String(format:"%.3f",pts), privacy: .public)s")
+        }
 
         // Auto-correct colorspace from first frame's pixel buffer attachments
         if frameCount == 1 {
@@ -876,6 +922,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         if let dl = displayLink { CVDisplayLinkStop(dl); displayLink = nil }
         player?.pause()
         readyObservation?.invalidate()
+        timeControlObservation?.invalidate()
         if let obs = eofObserver { NotificationCenter.default.removeObserver(obs) }
     }
 }
