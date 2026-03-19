@@ -385,6 +385,16 @@ class AVFMetalView: NSView, @unchecked Sendable {
             self.prevMidRow = nil; self.siAngles.removeAll(); self.gyroSI = 0
         }
         waitingForGyro = false
+        // If playback was deferred because gyro was loading, start now.
+        // pendingPause == false means "wants to play but was waiting for gyro".
+        DispatchQueue.main.async {
+            if self.pendingPause == false {
+                self.pendingPause = nil
+                self.isEOFReached = false
+                self.player?.play()
+                Log.player.info("[startup] gyro ready → starting deferred playback")
+            }
+        }
     }
 
     /// True when DV content is rendered via AVPlayerLayer instead of Metal pipeline.
@@ -494,15 +504,22 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 let elapsed = String(format: "%.3f", CACurrentMediaTime() - t0)
                 switch item.status {
                 case .readyToPlay:
-                    Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → calling play()")
                     self.readyObservation = nil
                     let shouldPlay = capturedPendingPause.map { !$0 } ?? true
                     DispatchQueue.main.async {
                         if shouldPlay {
-                            self.isEOFReached = false
-                            newPlayer.play()
+                            if self.waitingForGyro {
+                                // Gyro is still loading — defer play until loadGyroCore() fires.
+                                // Store intent in pendingPause so loadGyroCore() can pick it up.
+                                self.pendingPause = false
+                                Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → play deferred (gyro loading)")
+                            } else {
+                                self.isEOFReached = false
+                                newPlayer.play()
+                                Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → play()")
+                            }
                         } else {
-                            Log.player.info("[startup] [\(filename, privacy: .public)] play suppressed (pendingPause=true)")
+                            Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → play suppressed (pendingPause=true)")
                         }
                     }
                 case .failed:
