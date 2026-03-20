@@ -76,6 +76,7 @@
 | `Services/NetworkVolumeService.swift` | 靜態：網路卷偵測、自動掛載、輪詢等待 |
 | `Services/FolderClipboard.swift` | `@Observable` 單例：資料夾剪貼簿（複製/剪下/貼上） |
 | `Services/FolderListCache.swift` | 單例：子資料夾清單持久快取（JSON） |
+| `Services/Log.swift` | 統一日誌系統：os.Logger 分類 + 動態等級過濾（AppLogLevel） |
 
 ### ViewModel
 | 檔案 | 職責 |
@@ -87,7 +88,7 @@
 |------|------|
 | `Views/ContentView.swift` | 根 NavigationSplitView + Inspector；Escape 鍵監控；全螢幕管理；搜尋整合 |
 | `Views/SearchResultsView.swift` | 搜尋結果列表（照片檔名 + 資料夾名稱），點擊導航 |
-| `Views/SettingsView.swift` | TabView（Cache / Playback / Gyro）設定 |
+| `Views/SettingsView.swift` | TabView（General / Cache / Gyro）設定；General 含 Appearance、Playback、Developer 三個 section |
 
 ### 視圖 — 側邊欄
 | 檔案 | 職責 |
@@ -286,12 +287,12 @@ scanFolder(id:, subPath:, clearAll:)
   6. Delta 移除：DB 中有但磁碟上消失的同層 Photo
 
 listSubfolders(id:, path:) → [(name, path, coverPath?, coverDate?)]
-  0. isScannedThisSession 命中 → 直接返回快取（跳過所有 I/O）
+  0. 三條件同時滿足才 early-return：isSessionScanned && cachedEntries != nil && allHaveCovers（用 FileManager.fileExists 驗證每個 coverPath 實際存在）
   1. 解析書籤 → withSecurityScope
   2. 列舉子目錄
   3. 每個子目錄：
      - FolderListCache 命中且 coverPath 非 nil → 直接返回
-     - 否則：遞迴找封面（maxDepth: 3）→ mtime
+     - 否則：遞迴找封面（maxDepth: 5）→ mtime
   4. 更新 FolderListCache + 標記 scannedThisSession
 
 prefetchFolderTree(id:, onProgress:)
@@ -452,7 +453,7 @@ persistAsync()  // DispatchQueue.global → JSON 寫入磁碟
 
 **檔案位置**：`~/Library/Caches/Spectrum/FolderList.json`
 
-**Session-level 去重**：`listSubfolders` 開頭檢查 `isScannedThisSession`，命中則直接返回快取，跳過 filesystem I/O。FolderMonitor 偵測到變更時 `invalidate` 清除標記，下次呼叫會重新掃描。
+**Session-level 去重**：`listSubfolders` 開頭檢查三個條件：(1) `isScannedThisSession`、(2) 快取 entries 存在、(3) 所有 coverPath 均以 `FileManager.fileExists` 確認存在。三者同時滿足才 early-return。FolderMonitor 偵測到變更時 `invalidate` 清除標記，下次呼叫會重新掃描。若快取中的 coverPath 檔案已不存在（如子資料夾被刪除），也會強制重新掃描。
 
 ### 4.11 StatusBarModel（@Observable @MainActor 單例）
 
@@ -471,6 +472,28 @@ isVisible: Bool                         ← isActive || doneMessage != nil || gl
 ```
 
 **自動消失**：`finish` 和 `finishGlobal` 啟動 10 秒 `Task.sleep` 計時器，時間到自動設為 nil。新任務開始時取消前一計時器。
+
+### 4.12 Log（靜態 enum）
+
+統一日誌系統，基於 `os.Logger`，分 8 個 category：
+
+| Category | 用途 |
+|----------|------|
+| general | 一般 |
+| scanner | FolderScanner |
+| thumbnail | ThumbnailService |
+| bookmark | Security-scoped bookmarks |
+| video | 影片元資料 |
+| gyro | Gyroflow 穩定 |
+| player | AVFMetalView 播放 |
+| network | 網路磁碟 |
+
+**等級過濾**：`AppLogLevel` enum（`debug=0`, `info=1`, `error=2`），`CaseIterable` + `Identifiable`。
+
+- `Log.buildDefaultLevel`：Debug build → `.debug`，Release → `.info`
+- UserDefaults key `appLogLevel`（Int，預設依 build 類型）
+- `Log.debug(_:_:)` / `Log.info(_:_:)` 使用 `@autoclosure` 延遲求值 + 動態等級過濾
+- 在 Settings → General → Developer section 可即時切換
 
 ---
 
@@ -563,7 +586,7 @@ SpectrumApp (@main)
 │
 └── Settings
     └── SettingsView
-        ├── Tab: GeneralSettingsTab (Appearance + Playback)
+        ├── Tab: GeneralSettingsTab (Appearance + Playback + Developer)
         ├── Tab: CacheSettingsTab
         └── Tab: GyroSettingsTab
 ```
@@ -949,6 +972,8 @@ ScannedFolder(path, bookmarkData, remountURL)
 |--------|----------------|--------|
 | Theme (System/Light/Dark) | `appearanceMode` | "system" |
 | Show diagnostics badge | `showDiagBadge` | true |
+| Buffer Duration (Playback section) | `preferredBufferDuration` | 5.0（選項：1s/2s/5s/10s/Unlimited(0.0)） |
+| Log Level (Developer section) | `appLogLevel` | Int，依 build 類型（Debug=0, Release=1） |
 
 ### GyroSettingsTab
 

@@ -203,7 +203,11 @@ final class GyroCore: @unchecked Sendable {
         } else {
             handle = videoPath.withCString { vp in configJSON.withCString { cj in fn(vp, nil, cj) } }
         }
-        guard let handle else { DispatchQueue.main.async { onError("gyrocore_load failed (no gyro data?)") }; return }
+        guard let handle else {
+            Log.gyro.warning("[gyro] gyrocore_load returned nil for \(URL(fileURLWithPath: videoPath).lastPathComponent, privacy: .public) — no embedded gyro data or unsupported format")
+            DispatchQueue.main.async { onError("gyrocore_load failed (no gyro data?)") }
+            return
+        }
         coreHandle = handle
 
         // Read 96-byte params blob
@@ -288,7 +292,10 @@ final class GyroCore: @unchecked Sendable {
             fn(handle, UInt32(frameIdx), $0.baseAddress!)
         }
         lastFetchMs = (CACurrentMediaTime() - t0) * 1000
-        guard result == Int32(expectedLen) else { return nil }
+        guard result == Int32(expectedLen) else {
+            Log.gyro.error("[gyro] computeMatrix frameIdx=\(frameIdx): expected \(expectedLen) floats but got \(result) — ABI mismatch?")
+            return nil
+        }
 
         // Extract per-frame lens params (appended after matrices)
         let pfBase = rowCount * 14
@@ -366,7 +373,10 @@ final class GyroCore: @unchecked Sendable {
             return nil
         }
         lastFetchMs = (CACurrentMediaTime() - t0) * 1000
-        guard result == Int32(expectedLen) else { return nil }
+        guard result == Int32(expectedLen) else {
+            Log.gyro.error("[gyro] computeMatrixAtTime ts=\(String(format:"%.3f",timeSec))s: expected \(expectedLen) floats but got \(result) — ABI mismatch?")
+            return nil
+        }
 
         // Extract per-frame lens params (appended after matrices)
         let pfBase = rowCount * 14
@@ -410,6 +420,7 @@ final class GyroCore: @unchecked Sendable {
     // MARK: - Stop
 
     func stop() {
+        Log.debug(Log.gyro, "[gyro] stop() — releasing dylib handle")
         readyLock.lock(); _isReady = false; readyLock.unlock()
         ioQueue.sync { }   // Wait for loadCore to finish
         coreLock.lock()

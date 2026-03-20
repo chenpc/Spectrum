@@ -39,6 +39,7 @@ actor ThumbnailService {
         let fileName = URL(fileURLWithPath: filePath).lastPathComponent
 
         if let cached = memoryCache.object(forKey: key) {
+            Log.debug(Log.thumbnail, "[thumb] memory hit: \(fileName)")
             return cached
         }
 
@@ -60,6 +61,7 @@ actor ThumbnailService {
         let diskURL = diskCacheURL(for: filePath)
         if FileManager.default.fileExists(atPath: diskURL.path),
            let image = NSImage(contentsOf: diskURL) {
+            Log.debug(Log.thumbnail, "[thumb] disk hit: \(fileName)")
             if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() }
             memoryCache.setObject(image, forKey: key)
             return image
@@ -67,9 +69,11 @@ actor ThumbnailService {
 
         // Skip if the source file no longer exists — avoids IIOImageSource errors
         guard FileManager.default.fileExists(atPath: filePath) else {
+            Log.debug(Log.thumbnail, "[thumb] source file missing: \(fileName)")
             if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() }
             return nil
         }
+        Log.debug(Log.thumbnail, "[thumb] cache miss → generating: \(fileName)")
 
         let image = await generateAndCacheThumbnail(from: url, to: diskURL)
         if didStart, let folderURL {
@@ -150,6 +154,7 @@ actor ThumbnailService {
             }
 
             guard totalSize > limit else { return }
+            Log.debug(Log.thumbnail, "[thumb] eviction triggered: \(totalSize / 1024 / 1024)MB > limit \(limit / 1024 / 1024)MB, \(entries.count) entries")
 
             // Sort oldest-accessed first
             entries.sort { $0.accessDate < $1.accessDate }
@@ -216,7 +221,9 @@ actor ThumbnailService {
             }
 
             CGImageDestinationAddImage(destination, opaqueImage, nil)
-            CGImageDestinationFinalize(destination)
+            if !CGImageDestinationFinalize(destination) {
+                Log.thumbnail.error("[thumb] CGImageDestinationFinalize failed for \(url.lastPathComponent, privacy: .public)")
+            }
 
             return NSImage(contentsOf: diskURL)
                 ?? NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))

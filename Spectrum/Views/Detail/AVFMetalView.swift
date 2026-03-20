@@ -392,7 +392,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 self.pendingPause = nil
                 self.isEOFReached = false
                 self.player?.play()
-                Log.player.info("[startup] gyro ready → starting deferred playback")
+                Log.debug(Log.player, "[startup] gyro ready → starting deferred playback")
             }
         }
     }
@@ -422,6 +422,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
             self.videoInfo = info
             self.videoDuration = info.duration
             self.videoRotation = UInt32(info.rotation)
+            Log.debug(Log.player, "[startup] analyzed \(url.lastPathComponent): \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps codec=\(info.codec) bitDepth=\(info.bitDepth) fullRange=\(info.fullRange) tf=\(info.transferFunction) hlg=\(info.isHLG) dv=\(info.isDolbyVision)")
 
             // Auto-select pixel format from file's bit depth + range
             let outputPixelFormat: OSType
@@ -468,9 +469,10 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
             let item = AVPlayerItem(asset: asset)
             item.add(output)
-            // Pre-buffer 2 seconds before allowing playback to start.
+            // Pre-buffer before allowing playback to start (configurable in Settings → General).
             // Reduces stalling and gives the video output time to fill before audio starts.
-            item.preferredForwardBufferDuration = 2.0
+            let bufferDuration = UserDefaults.standard.object(forKey: "preferredBufferDuration") as? Double ?? 5.0
+            item.preferredForwardBufferDuration = bufferDuration
             self.playerItem = item
 
             let newPlayer = AVPlayer(playerItem: item)
@@ -492,7 +494,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
             let t0 = self.loadStartTime
             let filename = url.lastPathComponent
 
-            Log.player.info("[startup] [\(filename, privacy: .public)] item created at +\(String(format:"%.3f", CACurrentMediaTime()-t0), privacy: .public)s  preferredForwardBuffer=2.0s")
+            Log.debug(Log.player, "[startup] [\(filename)] item created at +\(String(format:"%.3f", CACurrentMediaTime()-t0))s  preferredForwardBuffer=\(String(format:"%.1f", bufferDuration))s")
 
             // Wait for item.status == .readyToPlay before calling play().
             // This ensures AVFoundation has initialized the decoders so the first
@@ -512,20 +514,20 @@ class AVFMetalView: NSView, @unchecked Sendable {
                                 // Gyro is still loading — defer play until loadGyroCore() fires.
                                 // Store intent in pendingPause so loadGyroCore() can pick it up.
                                 self.pendingPause = false
-                                Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → play deferred (gyro loading)")
+                                Log.debug(Log.player, "[startup] [\(filename)] status=readyToPlay at +\(elapsed)s → play deferred (gyro loading)")
                             } else {
                                 self.isEOFReached = false
                                 newPlayer.play()
-                                Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → play()")
+                                Log.debug(Log.player, "[startup] [\(filename)] status=readyToPlay at +\(elapsed)s → play()")
                             }
                         } else {
-                            Log.player.info("[startup] [\(filename, privacy: .public)] status=readyToPlay at +\(elapsed, privacy: .public)s → play suppressed (pendingPause=true)")
+                            Log.debug(Log.player, "[startup] [\(filename)] status=readyToPlay at +\(elapsed)s → play suppressed (pendingPause=true)")
                         }
                     }
                 case .failed:
                     Log.player.error("[startup] [\(filename, privacy: .public)] status=failed at +\(elapsed, privacy: .public)s: \(item.error?.localizedDescription ?? "unknown", privacy: .public)")
                 default:
-                    Log.player.info("[startup] [\(filename, privacy: .public)] status=unknown/loading at +\(elapsed, privacy: .public)s")
+                    Log.debug(Log.player, "[startup] [\(filename)] status=unknown/loading at +\(elapsed)s")
                 }
             }
 
@@ -535,18 +537,18 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 let elapsed = String(format: "%.3f", CACurrentMediaTime() - t0)
                 switch player.timeControlStatus {
                 case .paused:
-                    Log.player.info("[startup] [\(filename, privacy: .public)] timeControlStatus=paused at +\(elapsed, privacy: .public)s")
+                    Log.debug(Log.player, "[startup] [\(filename)] timeControlStatus=paused at +\(elapsed)s")
                 case .waitingToPlayAtSpecifiedRate:
                     let reason = player.reasonForWaitingToPlay?.rawValue ?? "unknown"
-                    Log.player.info("[startup] [\(filename, privacy: .public)] timeControlStatus=waiting(\(reason, privacy: .public)) at +\(elapsed, privacy: .public)s")
+                    Log.debug(Log.player, "[startup] [\(filename)] timeControlStatus=waiting(\(reason)) at +\(elapsed)s")
                 case .playing:
-                    Log.player.info("[startup] [\(filename, privacy: .public)] timeControlStatus=playing at +\(elapsed, privacy: .public)s ← audio/video clock running")
+                    Log.debug(Log.player, "[startup] [\(filename)] timeControlStatus=playing at +\(elapsed)s ← audio/video clock running")
                 @unknown default:
                     break
                 }
             }
 
-            Log.player.info("[startup] [\(filename, privacy: .public)] AVPlayer setup done at +\(String(format:"%.3f", CACurrentMediaTime()-t0), privacy: .public)s  \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps  \(info.bitDepth)bit  decode=\(self.decodeColorspaceInfo, privacy: .public)  avfLayer=\(self.avfLayerMode, privacy: .public)")
+            Log.debug(Log.player, "[startup] [\(filename)] AVPlayer setup done at +\(String(format:"%.3f", CACurrentMediaTime()-t0))s  \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps  \(info.bitDepth)bit  decode=\(self.decodeColorspaceInfo)  avfLayer=\(self.avfLayerMode)")
         }
     }
 
@@ -696,7 +698,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
         if frameCount == 1 {
             let elapsed = String(format: "%.3f", CACurrentMediaTime() - loadStartTime)
-            Log.player.info("[startup] first video frame rendered at +\(elapsed, privacy: .public)s  pts=\(String(format:"%.3f",pts), privacy: .public)s")
+            Log.debug(Log.player, "[startup] first video frame rendered at +\(elapsed)s  pts=\(String(format:"%.3f",pts))s")
         }
 
         // Auto-correct colorspace from first frame's pixel buffer attachments
@@ -704,10 +706,12 @@ class AVFMetalView: NSView, @unchecked Sendable {
             if let attachments = CVBufferCopyAttachments(pixelBuffer, .shouldPropagate) as? [String: Any] {
                 if !videoInfo.isDolbyVision, let tf = attachments["CVImageBufferTransferFunction"] as? String {
                     if tf.contains("HLG") && !layerColorspaceInfo.contains("HLG") {
+                        Log.debug(Log.player, "[startup] auto-correcting colorspace: buffer tf=\(tf) → HLG (was \(layerColorspaceInfo))")
                         metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
                         metalLayer.wantsExtendedDynamicRangeContent = true
                         decodeMode = 0
                     } else if (tf.contains("2084") || tf.contains("PQ")) && !layerColorspaceInfo.contains("PQ") {
+                        Log.debug(Log.player, "[startup] auto-correcting colorspace: buffer tf=\(tf) → PQ (was \(layerColorspaceInfo))")
                         metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_PQ)
                         metalLayer.wantsExtendedDynamicRangeContent = true
                         decodeMode = 0
@@ -738,8 +742,14 @@ class AVFMetalView: NSView, @unchecked Sendable {
             }
         }
 
-        guard let drawable = metalLayer.nextDrawable() else { return }
-        guard let cmdBuf = commandQueue.makeCommandBuffer() else { return }
+        guard let drawable = metalLayer.nextDrawable() else {
+            Log.debug(Log.player, "[render] nextDrawable() returned nil — GPU resource pressure?")
+            return
+        }
+        guard let cmdBuf = commandQueue.makeCommandBuffer() else {
+            Log.player.error("[render] makeCommandBuffer() failed")
+            return
+        }
 
         if hasGyroWarp {
             // === Two-pass rendering ===

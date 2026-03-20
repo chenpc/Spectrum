@@ -99,6 +99,7 @@ final class VideoController: @unchecked Sendable {
     func startGyroStab(videoPath: String, fps: Double,
                        config: GyroConfig = GyroConfig(),
                        lensPath: String? = nil) {
+        Log.debug(Log.gyro, "[gyro] startGyroStab path=\(URL(fileURLWithPath: videoPath).lastPathComponent) fps=\(String(format:"%.2f",fps)) lens=\(lensPath.map { URL(fileURLWithPath: $0).lastPathComponent } ?? "none")")
         stopGyroStab()
         // Suppress rendering until gyro is ready — prevents unstabilized first-frame flash.
         // If nsView isn't attached yet (early start before SwiftUI creates the view),
@@ -109,7 +110,7 @@ final class VideoController: @unchecked Sendable {
             if isPlaying {
                 v.setPause(true)
                 deferredPlay = true
-                Log.gyro.info("[gyro] pausing player during gyro load (isPlaying=true)")
+                Log.debug(Log.gyro, "[gyro] pausing player during gyro load (isPlaying=true)")
             }
             v.setWaitingForGyro(true)
         }
@@ -142,7 +143,7 @@ final class VideoController: @unchecked Sendable {
                 if self.deferredPlay {
                     self.deferredPlay = false
                     self.nsView?.setPause(false)
-                    Log.gyro.info("[gyro] onReady → resuming via deferredPlay")
+                    Log.debug(Log.gyro, "[gyro] onReady → resuming via deferredPlay")
                 }
             },
             onError: { [weak self] msg in
@@ -158,7 +159,7 @@ final class VideoController: @unchecked Sendable {
                 if self.deferredPlay {
                     self.deferredPlay = false
                     self.nsView?.setPause(false)
-                    Log.gyro.info("[gyro] onError → resuming via deferredPlay")
+                    Log.debug(Log.gyro, "[gyro] onError → resuming via deferredPlay")
                 }
             }
         )
@@ -275,6 +276,7 @@ final class VideoController: @unchecked Sendable {
     func togglePlayPause() {
         didRewindOnEOF = false
         isPlaying.toggle()
+        Log.debug(Log.player, "[player] togglePlayPause → isPlaying=\(isPlaying) gyroStabEnabled=\(gyroStabEnabled) gyroLoading=\(gyroIsLoading)")
         // Defer actual unpause while gyro is loading — mpv stays paused so no frames
         // are decoded (and dropped) while waitingForGyro suppresses draw().
         if isPlaying && activeGyroCore != nil && !gyroStabEnabled {
@@ -288,6 +290,7 @@ final class VideoController: @unchecked Sendable {
     func seek(to seconds: Double) {
         didRewindOnEOF = false
         currentTime = seconds
+        Log.debug(Log.player, "[player] seek to \(String(format:"%.3f",seconds))s")
         nsView?.seek(to: seconds)
     }
 

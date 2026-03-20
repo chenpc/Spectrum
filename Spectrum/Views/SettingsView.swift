@@ -11,7 +11,7 @@ struct SettingsView: View {
                 .tabItem { Label("Gyro", systemImage: "gyroscope") }
             // TODO: [Backlog] Face/Object Detection — Vision framework VNDetectFaceRectanglesRequest
         }
-        .frame(width: 460, height: 520)
+        .frame(width: 460, height: 600)
     }
 }
 
@@ -20,6 +20,8 @@ struct SettingsView: View {
 private struct GeneralSettingsTab: View {
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
     @AppStorage("showDiagBadge") private var showDiagBadge: Bool = true
+    @AppStorage("preferredBufferDuration") private var preferredBufferDuration: Double = 5.0
+    @AppStorage("appLogLevel") private var appLogLevel: Int = Log.buildDefaultLevel.rawValue
 
     var body: some View {
         Form {
@@ -34,6 +36,28 @@ private struct GeneralSettingsTab: View {
 
             Section("Playback") {
                 Toggle("Show diagnostics badge", isOn: $showDiagBadge)
+
+                Picker("Buffer Duration", selection: $preferredBufferDuration) {
+                    Text(verbatim: "1s").tag(1.0)
+                    Text(verbatim: "2s").tag(2.0)
+                    Text(verbatim: "5s").tag(5.0)
+                    Text(verbatim: "10s").tag(10.0)
+                    Text("Unlimited").tag(0.0)
+                }
+                Text("Pre-buffer duration before playback starts. Longer values reduce stalling on slow storage.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+
+            Section("Developer") {
+                Picker("Log Level", selection: $appLogLevel) {
+                    ForEach(AppLogLevel.allCases) { level in
+                        Text(level.label).tag(level.rawValue)
+                    }
+                }
+                Text("Debug build default: Debug. Release build default: Error (silent).")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)

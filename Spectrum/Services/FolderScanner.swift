@@ -48,6 +48,8 @@ actor FolderScanner {
     func scanFolder(id: PersistentIdentifier, subPath: String? = nil, clearAll: Bool = false) async throws {
         guard let folder = fetchFolder(id),
               let bookmarkData = folder.bookmarkData else { return }
+        let scanTarget = subPath ?? folder.path
+        Log.scanner.info("[scanner] start scan \(scanTarget, privacy: .public) clearAll=\(clearAll)")
 
         let rootURL: URL
         do {
@@ -110,6 +112,7 @@ actor FolderScanner {
         let mediaURLs = contents.filter { url in
             url.isMediaFile && !existingPaths.contains(url.path)
         }
+        Log.debug(Log.scanner, "[scanner] \(targetURL.lastPathComponent): \(contents.count) entries, \(allDiskMediaPaths.count) media on disk, \(existingPaths.count) already in DB, \(mediaURLs.count) new to insert")
 
         try Task.checkCancellation()
 
@@ -144,6 +147,9 @@ actor FolderScanner {
                 photo.longitude = videoMeta.longitude
             } else {
                 let exif = EXIFService.readEXIF(from: fileURL)
+                if exif.dateTaken == nil {
+                    Log.debug(Log.scanner, "[scanner] no EXIF date for \(fileURL.lastPathComponent) — falling back to mtime")
+                }
 
                 photo = Photo(
                     filePath: filePath,
@@ -228,6 +234,8 @@ actor FolderScanner {
 
         guard !Task.isCancelled else { return }
 
+        Log.scanner.info("[scanner] done \(targetURL.lastPathComponent, privacy: .public): inserted \(mediaURLs.count) files")
+
         // Re-fetch level photos after inserts for live photo pairing + delta removal
         let updatedLevelPhotos = directChildPhotos(levelPrefix: levelPrefix)
 
@@ -286,6 +294,11 @@ actor FolderScanner {
             }
         }
 
+        let pairedCount = imagesByBase.values.filter { images in
+            guard let base = images.first.map({ URL(fileURLWithPath: $0.filePath).deletingPathExtension().lastPathComponent.lowercased() }) else { return false }
+            return videosByBase[base]?.first(where: { ($0.duration ?? 999) < 5 }) != nil
+        }.count
+        Log.debug(Log.scanner, "[scanner] live photo pairing: \(pairedCount) pairs found out of \(imagesByBase.count) images")
         if changed {
             do { try modelContext.save() } catch {
                 Log.scanner.warning("Failed to save Live Photo pairing: \(error.localizedDescription, privacy: .public)")
@@ -355,14 +368,20 @@ actor FolderScanner {
     }
 
     /// Recursively find the first media file under a directory (depth-first).
-    private func findCoverFile(in url: URL, maxDepth: Int = 3) -> URL? {
-        guard maxDepth > 0 else { return nil }
+    private func findCoverFile(in url: URL, maxDepth: Int = 5) -> URL? {
+        guard maxDepth > 0 else {
+            Log.debug(Log.scanner, "[cover] maxDepth reached at \(url.lastPathComponent) — no cover found within depth limit")
+            return nil
+        }
         let fm = FileManager.default
         guard let contents = try? fm.contentsOfDirectory(
             at: url,
             includingPropertiesForKeys: [.isDirectoryKey, .isRegularFileKey],
             options: [.skipsHiddenFiles, .skipsPackageDescendants]
-        ) else { return nil }
+        ) else {
+            Log.debug(Log.scanner, "[cover] contentsOfDirectory failed at \(url.path) — permission or mount issue?")
+            return nil
+        }
 
         // Check direct media files first
         let imageFiles = contents.filter { $0.isImageFile }
@@ -371,11 +390,13 @@ actor FolderScanner {
 
         // Recurse into subdirectories
         let dirs = contents.filter { (try? $0.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true }
+        Log.debug(Log.scanner, "[cover] \(url.lastPathComponent): 0 media, \(dirs.count) subdirs → recursing (depth=\(maxDepth-1))")
         for dir in dirs {
             if let found = findCoverFile(in: dir, maxDepth: maxDepth - 1) {
                 return found
             }
         }
+        Log.debug(Log.scanner, "[cover] no media found anywhere under \(url.lastPathComponent)")
         return nil
     }
 
@@ -407,7 +428,9 @@ actor FolderScanner {
             guard let p = cp.coverPath else { return false }
             return FileManager.default.fileExists(atPath: p)
         }) ?? false
+        Log.debug(Log.scanner, "[listSubfolders] enter: \(targetURL.lastPathComponent) isSessionScanned=\(isSessionScanned) cachedCount=\(cachedEntries?.count ?? -1) allHaveCovers=\(allHaveCovers)")
         if let cachedEntries, isSessionScanned, allHaveCovers {
+            Log.debug(Log.scanner, "[listSubfolders] early-return (session cache hit): \(targetURL.lastPathComponent)")
             return cachedEntries.map { (name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate) }
         }
 
@@ -441,6 +464,7 @@ actor FolderScanner {
                 // Cache miss or nil cover: recursively find cover file
                 let coverURL = findCoverFile(in: dirURL)
                 let coverPath = coverURL?.path
+                Log.debug(Log.scanner, "[listSubfolders] \(dirURL.lastPathComponent): coverPath=\(coverPath ?? "nil")")
 
                 let coverDate = coverPath.flatMap {
                     try? URL(fileURLWithPath: $0)

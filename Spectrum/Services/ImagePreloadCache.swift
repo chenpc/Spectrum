@@ -144,6 +144,7 @@ enum ImagePreloadCache {
         let entry = await Task.detached {
             // Skip if the source file no longer exists — avoids IIOImageSource errors
             guard FileManager.default.fileExists(atPath: path) else {
+                Log.debug(Log.video, "[preload] file missing: \(URL(fileURLWithPath: path).lastPathComponent)")
                 return CachedImageEntry(image: nil, hlgCGImage: nil, hdrFormat: nil)
             }
 
@@ -168,6 +169,7 @@ enum ImagePreloadCache {
             }
 
             let hdrFormat = detectHDR(source: source)
+            Log.debug(Log.video, "[preload] \(url.lastPathComponent) hdr=\(hdrFormat.map(\.badgeLabel) ?? "none") raw=\(url.isCameraRawFile)")
 
             let img: NSImage?
             var hlgCGImage: CGImage?
@@ -211,15 +213,18 @@ enum ImagePreloadCache {
     }
 
     private static func loadCameraRaw(source: CGImageSource, path: String) -> NSImage? {
+        let name = URL(fileURLWithPath: path).lastPathComponent
         let subCount = CGImageSourceGetCount(source)
         if subCount > 1 {
             for i in 1..<subCount {
                 if let cgImg = CGImageSourceCreateImageAtIndex(source, i, nil),
                    cgImg.width > 1000 {
+                    Log.debug(Log.video, "[preload] RAW \(name): using sub-image[\(i)] \(cgImg.width)x\(cgImg.height)")
                     return NSImage(cgImage: cgImg, size: NSSize(width: cgImg.width, height: cgImg.height))
                 }
             }
         }
+        Log.debug(Log.video, "[preload] RAW \(name): no large sub-image found (subCount=\(subCount)) — falling back to thumbnail")
 
         let opts: [CFString: Any] = [
             kCGImageSourceThumbnailMaxPixelSize: 4096,

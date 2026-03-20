@@ -387,10 +387,15 @@ struct PhotoGridView: View {
                     ForEach(subfolders) { info in
                         SubfolderTileView(
                             name: info.name,
+                            path: info.path,
                             coverPath: info.coverPath,
                             coverDate: info.coverDate,
                             bookmarkData: folder?.bookmarkData,
-                            isSelected: selectedItemIds.contains(info.path)
+                            isSelected: selectedItemIds.contains(info.path),
+                            onCoverFailed: {
+                                FolderListCache.shared.invalidate(parentPath: info.path)
+                                folderChangeToken += 1
+                            }
                         )
                         .id(info.path)
                         .onTapGesture {
@@ -1009,10 +1014,12 @@ struct PhotoGridView: View {
 
 private struct SubfolderTileView: View {
     let name: String
+    let path: String
     let coverPath: String?
     let coverDate: Date?
     let bookmarkData: Data?
     var isSelected: Bool = false
+    var onCoverFailed: (() -> Void)?
     @State private var coverImage: NSImage?
 
     private static let dateFormatter: DateFormatter = {
@@ -1064,13 +1071,19 @@ private struct SubfolderTileView: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
         )
-        .task {
+        .task(id: coverPath) {
+            Log.debug(Log.scanner, "[tileTask] \(name): coverPath=\(coverPath ?? "nil") hasBookmark=\(bookmarkData != nil)")
             guard let coverPath else { return }
             if let cached = ThumbnailService.shared.cachedThumbnail(for: coverPath) {
                 coverImage = cached
                 return
             }
-            coverImage = await ThumbnailService.shared.thumbnail(for: coverPath, bookmarkData: bookmarkData)
+            let result = await ThumbnailService.shared.thumbnail(for: coverPath, bookmarkData: bookmarkData)
+            if result == nil {
+                Log.debug(Log.scanner, "[tileTask] \(name): thumbnail nil — invalidating cover cache")
+                onCoverFailed?()
+            }
+            coverImage = result
         }
     }
 }
