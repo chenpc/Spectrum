@@ -4,12 +4,10 @@ import SwiftData
 struct SearchResultsView: View {
     let query: String
     let folders: [ScannedFolder]
-    var onSelectPhoto: (Photo, ScannedFolder) -> Void
+    var onSelectPhoto: (PhotoItem, ScannedFolder) -> Void
     var onSelectFolder: (ScannedFolder, String) -> Void
 
-    @Environment(\.modelContext) private var modelContext
-
-    @State private var matchedPhotos: [Photo] = []
+    @State private var matchedPhotos: [PhotoItem] = []
     @State private var matchedFolders: [(folder: ScannedFolder, path: String, name: String)] = []
 
     var body: some View {
@@ -28,15 +26,15 @@ struct SearchResultsView: View {
             }
             if !matchedPhotos.isEmpty {
                 Section("Photos (\(matchedPhotos.count))") {
-                    ForEach(matchedPhotos) { photo in
-                        if let folder = photo.resolveFolder(from: folders) {
-                            Button {
-                                onSelectPhoto(photo, folder)
-                            } label: {
-                                photoRow(photo)
+                    ForEach(matchedPhotos) { item in
+                        Button {
+                            if let folder = folders.first(where: { item.filePath.hasPrefix($0.path) }) {
+                                onSelectPhoto(item, folder)
                             }
-                            .buttonStyle(.plain)
+                        } label: {
+                            photoRow(item)
                         }
+                        .buttonStyle(.plain)
                     }
                 }
             }
@@ -49,14 +47,14 @@ struct SearchResultsView: View {
         }
     }
 
-    private func photoRow(_ photo: Photo) -> some View {
+    private func photoRow(_ item: PhotoItem) -> some View {
         HStack(spacing: 8) {
-            AsyncThumbnail(photo: photo, size: 32)
+            AsyncThumbnail(item: item, size: 32)
             VStack(alignment: .leading, spacing: 2) {
-                Text(photo.fileName)
+                Text(item.fileName)
                     .font(.body)
                     .lineLimit(1)
-                Text(photo.filePath)
+                Text(item.filePath)
                     .font(.caption)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)
@@ -72,48 +70,80 @@ struct SearchResultsView: View {
             matchedFolders = []
             return
         }
-
         let lower = trimmed.lowercased()
 
-        // Search folders from cache
-        let cache = FolderListCache.shared
-        var folderResults: [(folder: ScannedFolder, path: String, name: String)] = []
-        for folder in folders {
-            searchFolderTree(cache: cache, folder: folder, parentPath: folder.path, query: lower, results: &folderResults)
+        // Extract Sendable data from SwiftData models before entering detached task
+        let folderInfos: [(path: String, bookmarkData: Data?)] = folders.map {
+            (path: $0.path, bookmarkData: $0.bookmarkData)
         }
-        matchedFolders = folderResults
 
-        // Search photos from DB
-        do {
-            let allPhotos = try modelContext.fetch(FetchDescriptor<Photo>())
-            matchedPhotos = allPhotos
-                .filter { $0.fileName.lowercased().contains(lower) }
-                .prefix(200)
-                .sorted { $0.dateTaken > $1.dateTaken }
-        } catch {
-            matchedPhotos = []
+        let (photos, folderResults) = await Task.detached(priority: .userInitiated) { @Sendable () -> ([PhotoItem], [(path: String, name: String)]) in
+            var photos: [PhotoItem] = []
+            var folderMatches: [(path: String, name: String)] = []
+            var seenFolderPaths = Set<String>()
+
+            for folderInfo in folderInfos {
+                guard let bm = folderInfo.bookmarkData,
+                      let rootURL = try? BookmarkService.resolveBookmark(bm) else { continue }
+                let started = rootURL.startAccessingSecurityScopedResource()
+                defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
+
+                walkDirectory(url: URL(fileURLWithPath: folderInfo.path),
+                              lower: lower,
+                              photos: &photos,
+                              folderMatches: &folderMatches,
+                              seenFolderPaths: &seenFolderPaths)
+            }
+            photos = Array(photos.prefix(200)).sorted { $0.dateTaken > $1.dateTaken }
+            return (photos, folderMatches)
+        }.value
+
+        matchedPhotos = photos
+        // Re-associate folder paths with ScannedFolder objects
+        matchedFolders = folderResults.compactMap { match -> (folder: ScannedFolder, path: String, name: String)? in
+            guard let folder = folders.first(where: { match.path.hasPrefix($0.path) }) else { return nil }
+            return (folder: folder, path: match.path, name: match.name)
         }
     }
+}
 
-    private func searchFolderTree(
-        cache: FolderListCache,
-        folder: ScannedFolder,
-        parentPath: String,
-        query: String,
-        results: inout [(folder: ScannedFolder, path: String, name: String)]
-    ) {
-        guard let entries = cache.entries(for: parentPath) else { return }
-        for entry in entries {
-            if entry.name.lowercased().contains(query) {
-                results.append((folder: folder, path: entry.path, name: entry.name))
+private func walkDirectory(url: URL, lower: String,
+                            photos: inout [PhotoItem],
+                            folderMatches: inout [(path: String, name: String)],
+                            seenFolderPaths: inout Set<String>) {
+    guard let contents = try? FileManager.default.contentsOfDirectory(
+        at: url, includingPropertiesForKeys: [.isDirectoryKey, .contentModificationDateKey],
+        options: [.skipsHiddenFiles]
+    ) else { return }
+
+    for item in contents {
+        let isDir = (try? item.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        if isDir {
+            let name = item.lastPathComponent
+            if name.lowercased().contains(lower), seenFolderPaths.insert(item.path).inserted {
+                folderMatches.append((path: item.path, name: name))
             }
-            searchFolderTree(cache: cache, folder: folder, parentPath: entry.path, query: query, results: &results)
+            walkDirectory(url: item, lower: lower,
+                          photos: &photos, folderMatches: &folderMatches,
+                          seenFolderPaths: &seenFolderPaths)
+        } else if item.isMediaFile, item.lastPathComponent.lowercased().contains(lower) {
+            let attrs = try? FileManager.default.attributesOfItem(atPath: item.path)
+            let mtime = (attrs?[.modificationDate] as? Date) ?? Date.distantPast
+            let fileSize = (attrs?[.size] as? Int64) ?? 0
+            let photoItem = PhotoItem(
+                filePath: item.path,
+                fileName: item.lastPathComponent,
+                dateTaken: mtime,
+                fileSize: fileSize,
+                isVideo: item.isVideoFile
+            )
+            photos.append(photoItem)
         }
     }
 }
 
 private struct AsyncThumbnail: View {
-    let photo: Photo
+    let item: PhotoItem
     let size: CGFloat
     @State private var image: NSImage?
 
@@ -132,13 +162,7 @@ private struct AsyncThumbnail: View {
             }
         }
         .task {
-            image = await ThumbnailService.shared.thumbnail(for: photo.filePath)
+            image = ThumbnailService.shared.cachedThumbnail(for: item.filePath)
         }
-    }
-}
-
-private extension Photo {
-    func resolveFolder(from folders: [ScannedFolder]) -> ScannedFolder? {
-        folder ?? folders.first { filePath.hasPrefix($0.path) }
     }
 }

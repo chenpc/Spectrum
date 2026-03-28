@@ -491,12 +491,144 @@ protocol GyroCoreProvider: AnyObject {
     func stop()
 }
 
+// MARK: - GyroCoreCache
+
+/// Disk cache for gyroflow-core precomputed per-frame gyro data.
+/// Stores all frame rawBuf arrays so second play skips ~300ms gyrocore_load().
+/// Cache location: ~/Pictures/Spectrum Library/GyroCache/
+enum GyroCoreCache {
+
+    // Binary header (128 bytes, little-endian)
+    struct Header {
+        var magic:    UInt32 = 0x47595243  // "GYRC"
+        var version:  UInt32 = 1
+        var videoMtime: Double = 0         // seconds since 1970, for staleness check
+        var frameCount: UInt32 = 0
+        var rowCount:   UInt32 = 0
+        var videoW:     Float  = 0
+        var videoH:     Float  = 0
+        var fps:        Double = 0
+        var distortionK0:  Float = 0; var distortionK1:  Float = 0
+        var distortionK2:  Float = 0; var distortionK3:  Float = 0
+        var distortionK4:  Float = 0; var distortionK5:  Float = 0
+        var distortionK6:  Float = 0; var distortionK7:  Float = 0
+        var distortionK8:  Float = 0; var distortionK9:  Float = 0
+        var distortionK10: Float = 0; var distortionK11: Float = 0
+        var distortionModel: Int32 = 0
+        var rLimit:    Float  = 0
+        var lensCorrectionAmount: Float = 1.0
+        var _pad0: UInt32 = 0
+        var _pad1: UInt32 = 0
+        // Total: 4+4+8+4+4+4+4+8+48+4+4+4+4+4+4+4 = 128 bytes
+    }
+
+    static let cacheDir: URL = {
+        let dir = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Pictures/Spectrum Library/GyroCache")
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        return dir
+    }()
+
+    static func cacheURL(for videoPath: String) -> URL {
+        // Use DJB2 hash of path as filename (no CryptoKit dependency)
+        var hash: UInt64 = 5381
+        for c in videoPath.utf8 { hash = hash &* 33 &+ UInt64(c) }
+        return cacheDir.appendingPathComponent(String(format: "%016llx.gyrocache", hash))
+    }
+
+    static func videoMtime(at path: String) -> Double {
+        let attrs = try? FileManager.default.attributesOfItem(atPath: path)
+        return (attrs?[.modificationDate] as? Date)?.timeIntervalSince1970 ?? 0
+    }
+
+    /// Save params + all frame rawBufs to disk.
+    static func save(videoPath: String,
+                     frameCount: Int, rowCount: Int,
+                     videoW: Float, videoH: Float, fps: Double,
+                     distortionK: [Float], distortionModel: Int32, rLimit: Float,
+                     lensCorrectionAmount: Float,
+                     frameRawBufs: [[Float]]) {
+        let url = cacheURL(for: videoPath)
+        let mtime = videoMtime(at: videoPath)
+        var header = Header()
+        header.videoMtime = mtime
+        header.frameCount = UInt32(frameCount)
+        header.rowCount   = UInt32(rowCount)
+        header.videoW     = videoW
+        header.videoH     = videoH
+        header.fps        = fps
+        if distortionK.count >= 12 {
+            header.distortionK0  = distortionK[0];  header.distortionK1  = distortionK[1]
+            header.distortionK2  = distortionK[2];  header.distortionK3  = distortionK[3]
+            header.distortionK4  = distortionK[4];  header.distortionK5  = distortionK[5]
+            header.distortionK6  = distortionK[6];  header.distortionK7  = distortionK[7]
+            header.distortionK8  = distortionK[8];  header.distortionK9  = distortionK[9]
+            header.distortionK10 = distortionK[10]; header.distortionK11 = distortionK[11]
+        }
+        header.distortionModel      = distortionModel
+        header.rLimit               = rLimit
+        header.lensCorrectionAmount = lensCorrectionAmount
+
+        var data = Data(count: MemoryLayout<Header>.size)
+        data.withUnsafeMutableBytes { ptr in
+            ptr.storeBytes(of: header, as: Header.self)
+        }
+        for rawBuf in frameRawBufs {
+            rawBuf.withUnsafeBufferPointer { data.append(Data(buffer: $0)) }
+        }
+        do {
+            try data.write(to: url, options: .atomic)
+            let kb = data.count / 1024
+            print(String(format: "[gyrocache] Saved %d frames (%dKB) → %@", frameCount, kb, url.lastPathComponent))
+        } catch {
+            print("[gyrocache] Save failed: \(error)")
+        }
+    }
+
+    /// Load cache if valid. Returns (header, allFrameRawBufs) or nil on miss/stale.
+    static func load(videoPath: String) -> (Header, [[Float]])? {
+        let url = cacheURL(for: videoPath)
+        guard let data = try? Data(contentsOf: url) else { return nil }
+        let headerSize = MemoryLayout<Header>.size
+        guard data.count >= headerSize else { return nil }
+
+        let header = data.withUnsafeBytes { $0.load(as: Header.self) }
+        guard header.magic == 0x47595243, header.version == 1 else {
+            print("[gyrocache] Invalid magic/version"); return nil
+        }
+        let currentMtime = videoMtime(at: videoPath)
+        guard abs(header.videoMtime - currentMtime) < 1 else {
+            print("[gyrocache] Cache stale (mtime changed)"); return nil
+        }
+
+        let fc = Int(header.frameCount)
+        let rc = Int(header.rowCount)
+        let frameSize = rc * 14 + 9
+        let expectedBytes = headerSize + fc * frameSize * MemoryLayout<Float>.size
+        guard data.count >= expectedBytes else {
+            print("[gyrocache] Cache truncated"); return nil
+        }
+
+        var frames: [[Float]] = []
+        frames.reserveCapacity(fc)
+        for i in 0..<fc {
+            let offset = headerSize + i * frameSize * 4
+            let floats: [Float] = data[offset..<(offset + frameSize * 4)].withUnsafeBytes {
+                Array($0.bindMemory(to: Float.self))
+            }
+            frames.append(floats)
+        }
+        return (header, frames)
+    }
+}
+
 class GyroCore: GyroCoreProvider {
-    private typealias FnLoad       = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
-    private typealias FnGetParams  = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
-    private typealias FnGetFrame   = @convention(c) (UnsafeMutableRawPointer, UInt32, UnsafeMutablePointer<Float>) -> Int32
-    private typealias FnGetFrameTs = @convention(c) (UnsafeMutableRawPointer, Double, UnsafeMutablePointer<Float>) -> Int32
-    private typealias FnFree       = @convention(c) (UnsafeMutableRawPointer) -> Void
+    private typealias FnLoad           = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
+    private typealias FnGetParams      = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
+    private typealias FnGetFrame       = @convention(c) (UnsafeMutableRawPointer, UInt32, UnsafeMutablePointer<Float>) -> Int32
+    private typealias FnGetFrameTs     = @convention(c) (UnsafeMutableRawPointer, Double, UnsafeMutablePointer<Float>) -> Int32
+    private typealias FnFree           = @convention(c) (UnsafeMutableRawPointer) -> Void
+    private typealias FnLoadProgress   = @convention(c) () -> Double
 
     private(set) var frameCount: Int = 0
     private(set) var rowCount: Int = 1
@@ -528,9 +660,15 @@ class GyroCore: GyroCoreProvider {
     private var fnGetFrame: FnGetFrame?
     private var fnGetFrameTs: FnGetFrameTs?
     private var fnFree: FnFree?
+    private var fnLoadProgress: FnLoadProgress?
+
+    /// Gyro data parse progress: 0.0–1.0 while loading, -1.0 when idle/done.
+    var loadProgress: Double { fnLoadProgress?() ?? -1.0 }
     private var rawBuf: [Float] = []
     private var matsBuf: [Float] = []
     private var cachedFrameIdx: Int = -1
+    /// Non-nil when loaded from disk cache; used in computeMatrixAtTime instead of FFI call.
+    private var preloadedFrames: [[Float]]? = nil
 
     static var dylibPath: String {
         URL(fileURLWithPath: CommandLine.arguments[0])
@@ -566,6 +704,9 @@ class GyroCore: GyroCoreProvider {
         if let s5 = dlsym(lib, "gyrocore_get_frame_at_ts") {
             fnGetFrameTs = unsafeBitCast(s5, to: FnGetFrameTs.self)
         }
+        if let sProg = dlsym(lib, "gyrocore_load_progress") {
+            fnLoadProgress = unsafeBitCast(sProg, to: FnLoadProgress.self)
+        }
         ioQueue.async { [weak self] in
             self?.loadCore(videoPath: videoPath, lensPath: lensPath, config: config,
                            onReady: onReady, onError: onError)
@@ -574,9 +715,38 @@ class GyroCore: GyroCoreProvider {
 
     private func loadCore(videoPath: String, lensPath: String?, config: GyroConfig,
                           onReady: @escaping () -> Void, onError: @escaping (String) -> Void) {
+        // ── Cache check ──────────────────────────────────────────────────────
+        let tCache = CACurrentMediaTime()
+        if let (header, frames) = GyroCoreCache.load(videoPath: videoPath) {
+            frameCount   = Int(header.frameCount)
+            rowCount     = Int(header.rowCount)
+            gyroVideoW   = header.videoW
+            gyroVideoH   = header.videoH
+            gyroFps      = header.fps
+            distortionK  = [header.distortionK0, header.distortionK1, header.distortionK2,
+                             header.distortionK3, header.distortionK4, header.distortionK5,
+                             header.distortionK6, header.distortionK7, header.distortionK8,
+                             header.distortionK9, header.distortionK10, header.distortionK11]
+            distortionModel      = header.distortionModel
+            rLimit               = header.rLimit
+            lensCorrectionAmount = header.lensCorrectionAmount
+            preloadedFrames      = frames
+            rawBuf  = [Float](repeating: 0, count: rowCount * 14 + 9)
+            matsBuf = [Float](repeating: 0, count: Int(gyroVideoH) * 16)
+            cachedFrameIdx = -1
+            readyLock.lock(); _isReady = true; readyLock.unlock()
+            print(String(format: "[gyrocache] ✓ Cache hit: %d frames in %.1fms",
+                         frameCount, (CACurrentMediaTime() - tCache) * 1000))
+            DispatchQueue.main.async { onReady() }
+            return
+        }
+        print("[gyrocache] Cache miss — running gyrocore_load()")
+
+        // ── Normal gyrocore_load ─────────────────────────────────────────────
         guard let fn = fnLoad else { onError("No load fn"); return }
         let configJSON = (try? String(data: JSONEncoder().encode(config), encoding: .utf8)) ?? "{}"
         print("[gyro] Loading \(URL(fileURLWithPath: videoPath).lastPathComponent)  config=\(configJSON)")
+        let tLoad = CACurrentMediaTime()
         let handle: UnsafeMutableRawPointer?
         if let lp = lensPath {
             handle = videoPath.withCString { vp in lp.withCString { lpp in configJSON.withCString { cj in fn(vp, lpp, cj) } } }
@@ -585,6 +755,7 @@ class GyroCore: GyroCoreProvider {
         }
         guard let handle else { onError("gyrocore_load failed"); return }
         coreHandle = handle
+        print(String(format: "[gyrocache] gyrocore_load() took %.0fms", (CACurrentMediaTime() - tLoad) * 1000))
 
         var buf = Data(count: 96)
         let rc = buf.withUnsafeMutableBytes { ptr in fnGetParams?(handle, ptr.baseAddress!) ?? -1 }
@@ -608,12 +779,47 @@ class GyroCore: GyroCoreProvider {
         print(String(format: "[gyro] Ready: %d frames x %d rows  %dx%d@%.3ffps  distModel=%d",
                      frameCount, rowCount, Int(gyroVideoW), Int(gyroVideoH), gyroFps, distortionModel))
         DispatchQueue.main.async { onReady() }
+
+        // ── Save to cache in background ──────────────────────────────────────
+        // Capture everything by value — do NOT use [weak self] so this block
+        // always runs to completion even after GyroCore is stopped/deallocated.
+        let fc = frameCount, rw = rowCount
+        let frameSize = rw * 14 + 9
+        guard let localFnGetFrame = fnGetFrame else { return }
+        let savedDistortionK = distortionK
+        let savedModel = distortionModel, savedRLimit = rLimit
+        let savedW = gyroVideoW, savedH = gyroVideoH, savedFps = gyroFps
+        let savedLCA = lensCorrectionAmount
+        let capturedHandle = handle   // raw pointer — valid until fnFree is called in stop()
+        ioQueue.async {
+            // stop() calls ioQueue.sync { } before fnFree, so capturedHandle is still valid here.
+            let tSave = CACurrentMediaTime()
+            var allFrames: [[Float]] = []
+            allFrames.reserveCapacity(fc)
+            var frameBuf = [Float](repeating: 0, count: frameSize)
+            for i in 0..<fc {
+                let result = frameBuf.withUnsafeMutableBufferPointer {
+                    localFnGetFrame(capturedHandle, UInt32(i), $0.baseAddress!)
+                }
+                if result == Int32(frameSize) { allFrames.append(frameBuf) }
+            }
+            print(String(format: "[gyrocache] Pre-computed %d frames in %.0fms, saving...",
+                         fc, (CACurrentMediaTime() - tSave) * 1000))
+            GyroCoreCache.save(
+                videoPath: videoPath,
+                frameCount: fc, rowCount: rw,
+                videoW: savedW, videoH: savedH, fps: savedFps,
+                distortionK: savedDistortionK,
+                distortionModel: savedModel, rLimit: savedRLimit,
+                lensCorrectionAmount: savedLCA,
+                frameRawBufs: allFrames
+            )
+        }
     }
 
     func computeMatrixAtTime(timeSec: Double) -> (UnsafeBufferPointer<Float>, Bool)? {
         guard isReady else { return nil }
         coreLock.lock(); defer { coreLock.unlock() }
-        guard let handle = coreHandle else { return nil }
         let fi = max(0, min(Int((timeSec * gyroFps).rounded()), frameCount - 1))
         if fi == cachedFrameIdx {
             lastFetchMs = 0
@@ -621,14 +827,22 @@ class GyroCore: GyroCoreProvider {
         }
         let expectedLen = rowCount * 14 + 9
         let t0 = CACurrentMediaTime()
-        let result: Int32
-        if let fnTs = fnGetFrameTs {
-            result = rawBuf.withUnsafeMutableBufferPointer { fnTs(handle, timeSec, $0.baseAddress!) }
-        } else if let fn = fnGetFrame {
-            result = rawBuf.withUnsafeMutableBufferPointer { fn(handle, UInt32(fi), $0.baseAddress!) }
-        } else { return nil }
-        lastFetchMs = (CACurrentMediaTime() - t0) * 1000
-        guard result == Int32(expectedLen) else { return nil }
+        // Use preloaded cache if available, otherwise call FFI
+        if let frames = preloadedFrames {
+            guard fi < frames.count, frames[fi].count >= expectedLen else { return nil }
+            rawBuf = frames[fi]
+            lastFetchMs = (CACurrentMediaTime() - t0) * 1000
+        } else {
+            guard let handle = coreHandle else { return nil }
+            let result: Int32
+            if let fnTs = fnGetFrameTs {
+                result = rawBuf.withUnsafeMutableBufferPointer { fnTs(handle, timeSec, $0.baseAddress!) }
+            } else if let fn = fnGetFrame {
+                result = rawBuf.withUnsafeMutableBufferPointer { fn(handle, UInt32(fi), $0.baseAddress!) }
+            } else { return nil }
+            lastFetchMs = (CACurrentMediaTime() - t0) * 1000
+            guard result == Int32(expectedLen) else { return nil }
+        }
 
         let pfBase = rowCount * 14
         frameFx = rawBuf[pfBase]; frameFy = rawBuf[pfBase + 1]
@@ -652,6 +866,7 @@ class GyroCore: GyroCoreProvider {
         cachedFrameIdx = fi
         return matsBuf.withUnsafeBufferPointer { ($0, true) }
     }
+
 
     func stop() {
         readyLock.lock(); _isReady = false; readyLock.unlock()
@@ -926,7 +1141,8 @@ class MetalVideoView: NSView {
     private var offscreenH: Int = 0
 
     // Gyro stabilization
-    private var gyroCore: GyroCore?
+    private(set) var gyroCore: GyroCore?
+    private var gyroCoreLoadedPath: String? = nil  // path for which gyroCore is already loaded
     private(set) var gyroEnabled = false
     private(set) var gyroReady = false
     private(set) var gyroLastError: String?
@@ -1183,9 +1399,10 @@ class MetalVideoView: NSView {
             forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
         ) { [weak self] _ in self?.player?.seek(to: .zero); self?.player?.play() }
 
-        newPlayer.play(); isPlaying = true
+        // Don't play yet — wait for gyro data to load first
+        isPlaying = false
         startDisplayLink()
-        startGyro()  // Auto-start gyro stabilization
+        startGyro()  // Auto-start gyro; onReady will call play()
 
         // DV P8.4: auto-enable AVPlayerLayer (Apple applies RPU internally)
         if videoInfo.isDolbyVision {
@@ -1204,34 +1421,71 @@ class MetalVideoView: NSView {
     // MARK: - Gyro
 
     func toggleGyro() {
-        if gyroEnabled { stopGyro() }
-        else { startGyro() }
+        if gyroEnabled {
+            // Just disable rendering — keep GyroCore loaded for instant re-enable
+            gyroEnabled = false
+        } else {
+            startGyro()  // reuses existing core if same video
+        }
     }
 
     private func startGyro() {
         guard let path = currentVideoPath else { return }
+
+        // Reuse existing loaded GyroCore if it's already ready for the same video
+        if let existing = gyroCore, existing.isReady, gyroCoreLoadedPath == path {
+            gyroEnabled = true; gyroReady = true; gyroLastError = nil
+            print("[gyro] Reusing cached GyroCore for \(URL(fileURLWithPath: path).lastPathComponent)")
+            player?.play(); isPlaying = true
+            return
+        }
+
         stopGyro()
         gyroEnabled = true; gyroReady = false; gyroLastError = nil
         print("[gyro] Starting for \(URL(fileURLWithPath: path).lastPathComponent)")
 
         var config = GyroConfig()
         config.readoutMs = GyroCore.readoutMs(for: videoInfo.fps)
-        // Lens database: gyroflow resources directory containing camera_presets/profiles.cbor.gz
         config.lensDbDir = "/Applications/Gyroflow.app/Contents/Resources"
 
         let core = GyroCore()
         gyroCore = core
+
+        // Poll progress to console every 100ms while loading
+        let progressQueue = DispatchQueue(label: "gyro.progress.poll", qos: .utility)
+        progressQueue.async { [weak core] in
+            var lastPct = -1
+            while true {
+                let p = core?.loadProgress ?? -1
+                if p < 0 { break }  // done or not available
+                let pct = Int(p * 100)
+                if pct != lastPct {
+                    let bar = String(repeating: "█", count: pct / 5) + String(repeating: "░", count: 20 - pct / 5)
+                    print("\r[gyro] loading |\(bar)| \(pct)%", terminator: "")
+                    lastPct = pct
+                }
+                Thread.sleep(forTimeInterval: 0.1)
+            }
+            if lastPct >= 0 { print("") }  // newline after progress bar
+        }
+
         core.start(videoPath: path, config: config,
             onReady: { [weak self] in
                 guard let self, self.gyroCore === core else { return }
                 self.gyroReady = true
+                self.gyroCoreLoadedPath = path
                 print("[gyro] Ready! \(core.frameCount) frames, distModel=\(core.distortionModel)")
+                self.player?.play()
+                self.isPlaying = true
             },
             onError: { [weak self] msg in
                 guard let self, self.gyroCore === core else { return }
                 self.gyroLastError = msg
                 self.gyroEnabled = false
-                print("[gyro] Error: \(msg)")
+                print("[gyro] Error: \(msg) — starting playback without gyro")
+                // Start playback even if gyro failed
+                self.player?.play()
+                self.isPlaying = true
             }
         )
     }
@@ -1239,6 +1493,7 @@ class MetalVideoView: NSView {
     private func stopGyro() {
         gyroCore?.stop()
         gyroCore = nil
+        gyroCoreLoadedPath = nil
         gyroEnabled = false; gyroReady = false
         gyroLastError = nil; gyroFetchMs = 0
     }
@@ -1821,7 +2076,14 @@ class AppDelegate: NSObject, NSApplicationDelegate {
             } else if let err = playerView.gyroLastError {
                 lines.append("[G] Gyro: ERR \(err)")
             } else {
-                lines.append("[G] Gyro: loading...")
+                let prog = playerView.gyroCore?.loadProgress ?? -1
+                if prog >= 0 {
+                    let pct = Int(prog * 100)
+                    let bar = String(repeating: "█", count: pct / 10) + String(repeating: "░", count: 10 - pct / 10)
+                    lines.append("[G] Gyro: \(bar) \(pct)%")
+                } else {
+                    lines.append("[G] Gyro: loading...")
+                }
             }
         } else {
             lines.append("[G] Gyro: OFF")

@@ -10,12 +10,14 @@ import QuartzCore  // CACurrentMediaTime
 final class GyroCore: @unchecked Sendable {
 
     // ── C function pointer types ──────────────────────────────────────────────
-    private typealias FnLoad      = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
-    private typealias FnGetParams = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
-    private typealias FnGetFrame  = @convention(c) (UnsafeMutableRawPointer, UInt32, UnsafeMutablePointer<Float>) -> Int32
-    private typealias FnGetFrameTs = @convention(c) (UnsafeMutableRawPointer, Double, UnsafeMutablePointer<Float>) -> Int32
-    private typealias FnGetLens   = @convention(c) (UnsafeMutableRawPointer, UnsafeMutablePointer<UInt8>, Int32) -> Int32
-    private typealias FnFree      = @convention(c) (UnsafeMutableRawPointer) -> Void
+    private typealias FnLoad           = @convention(c) (UnsafePointer<CChar>, UnsafePointer<CChar>?, UnsafePointer<CChar>?) -> UnsafeMutableRawPointer?
+    private typealias FnCancelLoad     = @convention(c) () -> Void
+    private typealias FnLoadProgress   = @convention(c) () -> Double
+    private typealias FnGetParams      = @convention(c) (UnsafeMutableRawPointer, UnsafeMutableRawPointer) -> Int32
+    private typealias FnGetFrame    = @convention(c) (UnsafeMutableRawPointer, UInt32, UnsafeMutablePointer<Float>) -> Int32
+    private typealias FnGetFrameTs  = @convention(c) (UnsafeMutableRawPointer, Double, UnsafeMutablePointer<Float>) -> Int32
+    private typealias FnGetLens     = @convention(c) (UnsafeMutableRawPointer, UnsafeMutablePointer<UInt8>, Int32) -> Int32
+    private typealias FnFree        = @convention(c) (UnsafeMutableRawPointer) -> Void
 
     // ── Public metadata (set after loadCore completes, read-only thereafter) ──
     private(set) var frameCount:  Int    = 0
@@ -50,15 +52,18 @@ final class GyroCore: @unchecked Sendable {
                                           qos: .userInteractive)
     private var libHandle:   UnsafeMutableRawPointer?
     private var coreHandle:  UnsafeMutableRawPointer?
-    private var fnLoad:      FnLoad?
-    private var fnGetParams: FnGetParams?
+    private var fnLoad:          FnLoad?
+    private var fnCancelLoad:    FnCancelLoad?
+    private var fnLoadProgress:  FnLoadProgress?
+    private var fnGetParams:     FnGetParams?
     private var fnGetFrame:    FnGetFrame?
-    private var fnGetFrameTs: FnGetFrameTs?
-    private var fnGetLens:    FnGetLens?
-    private var fnFree:       FnFree?
+    private var fnGetFrameTs:  FnGetFrameTs?
+    private var fnGetLens:     FnGetLens?
+    private var fnFree:        FnFree?
 
     /// Duration of the most recent gyrocore_get_frame FFI call (ms)
     private(set) var lastFetchMs: Double = 0
+
 
     // ── Pre-allocated buffers (size fixed after loadCore) ──────────────────
     private var rawBuf:  [Float] = []   // rowCount × 14 + 8 (per-frame params appended)
@@ -155,6 +160,13 @@ final class GyroCore: @unchecked Sendable {
         fnGetParams = unsafeBitCast(s2, to: FnGetParams.self)
         fnGetFrame  = unsafeBitCast(s3, to: FnGetFrame.self)
         fnFree      = unsafeBitCast(s4, to: FnFree.self)
+        // Optional: cancellation + progress support (added in newer dylib builds)
+        if let sCancel = dlsym(lib, "gyrocore_cancel_load") {
+            fnCancelLoad = unsafeBitCast(sCancel, to: FnCancelLoad.self)
+        }
+        if let sProg = dlsym(lib, "gyrocore_load_progress") {
+            fnLoadProgress = unsafeBitCast(sProg, to: FnLoadProgress.self)
+        }
         // Optional: timestamp-based frame query (eliminates frame-index quantization error)
         if let s5ts = dlsym(lib, "gyrocore_get_frame_at_ts") {
             fnGetFrameTs = unsafeBitCast(s5ts, to: FnGetFrameTs.self)
@@ -169,6 +181,9 @@ final class GyroCore: @unchecked Sendable {
                            onReady: onReady, onError: onError)
         }
     }
+
+    /// Current gyro-data parse progress: 0.0–1.0 while loading, -1.0 when idle/done.
+    var loadProgress: Double { fnLoadProgress?() ?? -1.0 }
 
     // MARK: - Private
 
@@ -420,15 +435,21 @@ final class GyroCore: @unchecked Sendable {
     // MARK: - Stop
 
     func stop() {
-        Log.debug(Log.gyro, "[gyro] stop() — releasing dylib handle")
+        Log.debug(Log.gyro, "[gyro] stop() — cancelling & scheduling cleanup")
         readyLock.lock(); _isReady = false; readyLock.unlock()
-        ioQueue.sync { }   // Wait for loadCore to finish
-        coreLock.lock()
-        if let handle = coreHandle, let fn = fnFree { fn(handle) }
-        coreHandle = nil
-        coreLock.unlock()
-        if let lib = libHandle { dlclose(lib) }
-        libHandle = nil
+        // Signal the in-progress gyrocore_load() to abort as soon as possible.
+        fnCancelLoad?()
+        // Dispatch cleanup onto ioQueue so it runs AFTER loadCore finishes naturally.
+        // Using [self] keeps GyroCore alive until the block finishes — no blocking on caller.
+        ioQueue.async { [self] in
+            coreLock.lock()
+            if let handle = coreHandle, let fn = fnFree { fn(handle) }
+            coreHandle = nil
+            coreLock.unlock()
+            if let lib = libHandle { dlclose(lib) }
+            libHandle = nil
+            Log.debug(Log.gyro, "[gyro] cleanup done")
+        }
     }
 }
 

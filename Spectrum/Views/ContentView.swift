@@ -132,8 +132,8 @@ private final class EscapeKeyMonitor {
 
 struct ContentView: View {
     @State private var selectedSidebarItem: SidebarItem?
-    @State private var selectedPhoto: Photo?
-    @State private var detailPhoto: Photo?
+    @State private var selectedPhoto: PhotoItem?
+    @State private var detailPhoto: PhotoItem?
     @State private var showInspector = false
     @State private var showImportPanel = false
     private let importModel = ImportPanelModel.shared
@@ -151,17 +151,17 @@ struct ContentView: View {
     /// Path to pre-select when grid appears (after leaving detail or navigating to parent).
     @State private var returnToSelection: String?
     @Query(sort: \ScannedFolder.sortOrder) private var allFolders: [ScannedFolder]
-    @Environment(\.modelContext) private var modelContext
 
     private var detailNavigation: PhotoNavigationAction {
-        PhotoNavigationAction(
+        let current = detailPhoto
+        return PhotoNavigationAction(
             navigateLeft: {
-                if let nav = viewModel.navigatePhoto(from: detailPhoto, direction: -1) {
+                if let nav = viewModel.navigatePhoto(from: current, direction: -1) {
                     detailPhoto = nav
                 }
             },
             navigateRight: {
-                if let nav = viewModel.navigatePhoto(from: detailPhoto, direction: 1) {
+                if let nav = viewModel.navigatePhoto(from: current, direction: 1) {
                     detailPhoto = nav
                 }
             },
@@ -224,36 +224,6 @@ struct ContentView: View {
             if newURL != nil { showImportPanel = true }
         }
         .task {
-            // On app launch: delta scan — keep cached data for instant display,
-            // add new files and remove deleted files in the background.
-            let scanner = FolderScanner(modelContainer: modelContext.container)
-            for folder in allFolders {
-                // Skip folders whose bookmark cannot be resolved or directory no longer exists
-                guard let bookmarkData = folder.bookmarkData,
-                      let url = try? BookmarkService.resolveBookmark(bookmarkData) else { continue }
-                let accessible = BookmarkService.withSecurityScope(url) {
-                    FileManager.default.fileExists(atPath: url.path)
-                }
-                guard accessible else { continue }
-                try? await scanner.scanFolder(id: folder.persistentModelID, clearAll: false)
-            }
-
-            // Prefetch folder tree structure in background
-            let folderIDs = allFolders.map(\.persistentModelID)
-            let container = modelContext.container
-            Task.detached(priority: .utility) {
-                await MainActor.run { StatusBarModel.shared.setGlobal("Indexing folders…") }
-                let bgScanner = FolderScanner(modelContainer: container)
-                for id in folderIDs {
-                    await bgScanner.prefetchFolderTree(id: id) { name in
-                        Task { @MainActor in
-                            StatusBarModel.shared.setGlobal("Indexing \(name)…")
-                        }
-                    }
-                }
-                await MainActor.run { StatusBarModel.shared.finishGlobal("Folders indexed") }
-            }
-
             // Start FSEvents monitoring for all folders
             for folder in allFolders {
                 FolderMonitor.shared.startMonitoring(path: folder.path)
@@ -288,11 +258,11 @@ struct ContentView: View {
                         SearchResultsView(
                             query: searchText,
                             folders: allFolders,
-                            onSelectPhoto: { photo, folder in
+                            onSelectPhoto: { item, folder in
                                 searchText = ""
-                                selectedSidebarItem = .subfolder(folder, URL(fileURLWithPath: photo.filePath).deletingLastPathComponent().path)
-                                returnToSelection = photo.filePath
-                                detailPhoto = photo
+                                selectedSidebarItem = .subfolder(folder, URL(fileURLWithPath: item.filePath).deletingLastPathComponent().path)
+                                returnToSelection = item.filePath
+                                detailPhoto = item
                             },
                             onSelectFolder: { folder, path in
                                 searchText = ""
@@ -304,8 +274,8 @@ struct ContentView: View {
                             }
                         )
                         .navigationTitle("Search: \(searchText)")
-                    } else if let photo = detailPhoto {
-                        photoDetail(photo, showInspector: $showInspector)
+                    } else if detailPhoto != nil {
+                        photoDetail(showInspector: $showInspector)
                             .toolbar {
                                 ToolbarItem(placement: .navigation) {
                                     Button {
@@ -355,7 +325,7 @@ struct ContentView: View {
             .searchable(text: $searchText, placement: .toolbar, prompt: "Search photos & folders")
             .inspector(isPresented: $showInspector) {
                 if let photo = detailPhoto ?? selectedPhoto {
-                    PhotoInfoPanel(photo: photo, isHDR: isPhotoHDR)
+                    PhotoInfoPanel(item: photo, isHDR: isPhotoHDR)
                         .inspectorColumnWidth(min: 250, ideal: 300, max: 400)
                 }
             }
@@ -366,6 +336,9 @@ struct ContentView: View {
                     showImportPanel = false
                 }
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            TaskProgressBar()
         }
     }
 
@@ -416,9 +389,14 @@ struct ContentView: View {
         return ([rootName] + components).joined(separator: " › ")
     }
 
-    private func photoDetail(_ photo: Photo, showInspector: Binding<Bool>) -> some View {
-        PhotoDetailView(photo: photo, showInspector: showInspector, isHDR: $isPhotoHDR, viewModel: viewModel)
-            .focusedSceneValue(\.photoNavigation, detailNavigation)
+    private func photoDetail(showInspector: Binding<Bool>) -> some View {
+        PhotoDetailView(
+            photo: Binding(get: { detailPhoto! }, set: { detailPhoto = $0 }),
+            showInspector: showInspector,
+            isHDR: $isPhotoHDR,
+            viewModel: viewModel
+        )
+        .focusedSceneValue(\.photoNavigation, detailNavigation)
     }
 
     @ViewBuilder
@@ -435,6 +413,7 @@ struct ContentView: View {
                 },
                 folder: folder
             )
+            .id(folder.path)   // 路徑改變時重建 view，讓 @Query predicate 更新
             .navigationTitle(URL(fileURLWithPath: folder.path).lastPathComponent)
         case .subfolder(let folder, let subPath):
             PhotoGridView(
@@ -448,6 +427,7 @@ struct ContentView: View {
                 folder: folder,
                 folderPath: subPath
             )
+            .id(subPath)   // 路徑改變時重建 view，讓 @Query predicate 更新
             .navigationTitle(breadcrumb(root: folder.path, current: subPath))
         case nil:
             ContentUnavailableView(
@@ -455,6 +435,37 @@ struct ContentView: View {
                 systemImage: "folder",
                 description: Text("Choose a folder from the sidebar to browse photos.")
             )
+        }
+    }
+}
+
+/// 全視窗底部進度條：僅顯示 Remove / Reset 等 StatusBarModel 任務。
+/// 縮圖掃描進度已移至 sidebar 底部。
+private struct TaskProgressBar: View {
+    @State private var statusModel = StatusBarModel.shared
+
+    var body: some View {
+        if statusModel.isVisible {
+            VStack(spacing: 0) {
+                Divider()
+                HStack(spacing: 8) {
+                    if let task = statusModel.activeTasks.first {
+                        if task.isDeterminate {
+                            ProgressView(value: Double(task.done), total: Double(max(1, task.total)))
+                                .progressViewStyle(.linear).frame(maxWidth: .infinity)
+                        } else {
+                            ProgressView().controlSize(.small).frame(width: 20)
+                        }
+                        Text(task.label).font(.caption2).foregroundStyle(.secondary)
+                    } else if let msg = statusModel.doneMessage {
+                        Text(msg).font(.caption2).foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+            }
+            .background(.bar)
         }
     }
 }

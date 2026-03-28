@@ -4,71 +4,92 @@ import Foundation
 final class StatusBarModel {
     static let shared = StatusBarModel()
 
-    private(set) var isActive = false
-    private(set) var label = ""
-    private(set) var progressTotal = 0
-    private(set) var progressDone = 0
-    /// true = determinate (has total), false = indeterminate (spinner)
-    private(set) var isDeterminate = false
-    /// Shows "done" message after task completes, until next task starts
-    private(set) var doneMessage: String?
+    struct ActiveTask: Identifiable {
+        let id: UUID
+        var label: String
+        var done: Int
+        var total: Int
+        var isDeterminate: Bool { total > 0 }
 
-    /// Global background task (e.g. folder tree prefetch) — independent of per-grid scan.
+        init(label: String, total: Int = 0) {
+            id = UUID()
+            self.label = label
+            self.done = 0
+            self.total = total
+        }
+    }
+
+    private(set) var activeTasks: [ActiveTask] = []
+    private(set) var doneMessage: String?
     private(set) var globalLabel: String?
 
-    private init() {}
+    var isActive: Bool { !activeTasks.isEmpty }
+    var isVisible: Bool { isActive || doneMessage != nil || globalLabel != nil }
 
-    /// Start an indeterminate task (e.g. scanning)
-    func begin(_ label: String) {
-        doneMessage = nil
-        self.label = label
-        progressTotal = 0
-        progressDone = 0
-        isDeterminate = false
-        isActive = true
-    }
-
-    /// Start a determinate task with known total
-    func begin(_ label: String, total: Int) {
-        doneMessage = nil
-        self.label = label
-        progressTotal = total
-        progressDone = 0
-        isDeterminate = total > 0
-        isActive = true
-    }
-
-    /// Update progress during a determinate task
-    func update(done: Int, label: String? = nil) {
-        progressDone = done
-        if let label { self.label = label }
-    }
-
+    private var currentTaskId: UUID?
     private var doneTimer: Task<Void, Never>?
     private var globalTimer: Task<Void, Never>?
 
-    /// Mark current task as done
-    func finish(_ message: String? = nil) {
-        isActive = false
-        label = ""
-        progressTotal = 0
-        progressDone = 0
-        doneMessage = message ?? doneMessage
-        doneTimer?.cancel()
-        if doneMessage != nil {
-            doneTimer = Task { @MainActor in
-                try? await Task.sleep(for: .seconds(10))
-                guard !Task.isCancelled else { return }
-                doneMessage = nil
-            }
-        }
+    private init() {}
+
+    // MARK: - Single-task backward-compatible API (non-concurrent callers)
+
+    func begin(_ label: String) {
+        doneMessage = nil
+        let task = ActiveTask(label: label)
+        currentTaskId = task.id
+        activeTasks.append(task)
     }
+
+    func begin(_ label: String, total: Int) {
+        doneMessage = nil
+        let task = ActiveTask(label: label, total: total)
+        currentTaskId = task.id
+        activeTasks.append(task)
+    }
+
+    func update(done: Int, label: String? = nil) {
+        guard let id = currentTaskId,
+              let idx = activeTasks.firstIndex(where: { $0.id == id }) else { return }
+        activeTasks[idx].done = done
+        if let label { activeTasks[idx].label = label }
+    }
+
+    func finish(_ message: String? = nil) {
+        if let id = currentTaskId {
+            activeTasks.removeAll { $0.id == id }
+            currentTaskId = nil
+        }
+        showDone(message)
+    }
+
+    // MARK: - Multi-task API (concurrent imports)
+
+    /// Start a new task and return its ID. Caller must call finishTask(_:) when done.
+    func beginTask(_ label: String, total: Int = 0) -> UUID {
+        doneMessage = nil
+        let task = ActiveTask(label: label, total: total)
+        activeTasks.append(task)
+        return task.id
+    }
+
+    func updateTask(_ id: UUID, done: Int, total: Int? = nil, label: String? = nil) {
+        guard let idx = activeTasks.firstIndex(where: { $0.id == id }) else { return }
+        activeTasks[idx].done = done
+        if let total { activeTasks[idx].total = total }
+        if let label { activeTasks[idx].label = label }
+    }
+
+    func finishTask(_ id: UUID, message: String? = nil) {
+        activeTasks.removeAll { $0.id == id }
+        showDone(message)
+    }
+
+    // MARK: - Global background label
 
     func setGlobal(_ label: String?) {
         globalTimer?.cancel()
         globalLabel = label
-        if label == nil { return }
-        // If globalLabel looks like a "done" state (no spinner), auto-dismiss after 10s
     }
 
     func finishGlobal(_ message: String? = nil) {
@@ -83,5 +104,16 @@ final class StatusBarModel {
         }
     }
 
-    var isVisible: Bool { isActive || doneMessage != nil || globalLabel != nil }
+    // MARK: - Private
+
+    private func showDone(_ message: String?) {
+        guard let message else { return }
+        doneMessage = message
+        doneTimer?.cancel()
+        doneTimer = Task { @MainActor in
+            try? await Task.sleep(for: .seconds(10))
+            guard !Task.isCancelled else { return }
+            doneMessage = nil
+        }
+    }
 }

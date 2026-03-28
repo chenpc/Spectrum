@@ -204,7 +204,13 @@ enum ImagePreloadCache {
             return .gainMap
         }
         // 3. HLG: color space uses ITU-R 2100 transfer function
-        if let cg = CGImageSourceCreateImageAtIndex(source, 0, nil),
+        // 用 8×8 縮圖取代完整解析度圖像（colorspace 會被保留，記憶體從 ~200MB 降為幾百 bytes）
+        let tinyOpts: [CFString: Any] = [
+            kCGImageSourceThumbnailMaxPixelSize: 8,
+            kCGImageSourceCreateThumbnailFromImageAlways: true,
+            kCGImageSourceCreateThumbnailWithTransform: false
+        ]
+        if let cg = CGImageSourceCreateThumbnailAtIndex(source, 0, tinyOpts as CFDictionary),
            let cs = cg.colorSpace,
            CGColorSpaceUsesITUR_2100TF(cs) {
             return .hlg

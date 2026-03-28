@@ -5,7 +5,7 @@ import AVFoundation
 // MARK: - PhotoDetailView
 
 struct PhotoDetailView: View {
-    let photo: Photo
+    @Binding var photo: PhotoItem
     @Binding var showInspector: Bool
     @Binding var isHDR: Bool
     var viewModel: LibraryViewModel?
@@ -28,7 +28,8 @@ struct PhotoDetailView: View {
     @State private var barOffset: CGSize = .zero
     @State private var barDragStart: CGSize = .zero
     @State private var videoStarted = false
-    @State private var posterFrame: CGImage?
+    @State private var previewThumbnail: NSImage?
+    @State private var previewDuration: Double?
     @State private var playbackStarted = false
     @State private var livePhotoPlaying = false
     // Gyro config (stored in XMP sidecar, not DB)
@@ -63,7 +64,7 @@ struct PhotoDetailView: View {
     @AppStorage("gyroSmoothnessRoll") private var gyroSmoothnessRoll: Double = 0
 
     private var bookmarkData: Data? {
-        photo.resolveBookmarkData(from: folders)
+        photo.resolveBookmarkData(from: Array(folders))
     }
 
     var body: some View {
@@ -75,7 +76,7 @@ struct PhotoDetailView: View {
             }
         }
         .background(.black)
-        .focusedSceneValue(\.videoPlayPause, videoController.togglePlayPause)
+        .focusedSceneValue(\.videoPlayPause, startPlayback)
         .focusedSceneValue(\.gyroConfigBinding, $gyroConfigJson)
         .focusedSceneValue(\.videoController, videoController)
         .onChange(of: showDiagBadge) { _, enabled in
@@ -206,18 +207,32 @@ struct PhotoDetailView: View {
                 VideoPlayerView(path: photo.filePath, bookmarkData: bookmarkData,
                               controller: videoController,
                               showEDR: showEDR)
-            } else if let posterFrame {
-                Image(decorative: posterFrame, scale: 1)
-                    .resizable()
-                    .aspectRatio(contentMode: .fit)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if let previewThumbnail {
+                ZStack(alignment: .bottomTrailing) {
+                    Image(nsImage: previewThumbnail)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    if let duration = previewDuration ?? photo.duration {
+                        Text(formatDuration(duration))
+                            .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                            .foregroundStyle(.white)
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 4)
+                            .background(.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 4))
+                            .padding(12)
+                    }
+                }
             } else {
                 ProgressView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             }
 
-            statusBadge
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            VStack(alignment: .leading, spacing: 4) {
+                statusBadge
+                videoLoadingBadge
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
 
             if showDiagBadge {
                 diagBadge
@@ -225,7 +240,7 @@ struct PhotoDetailView: View {
             }
 
             if controlsVisible {
-                VideoControlBar(controller: videoController)
+                VideoControlBar(controller: videoController, onPlay: startPlayback)
                     .frame(maxWidth: 480)
                     .offset(barOffset)
                     .gesture(
@@ -544,6 +559,48 @@ struct PhotoDetailView: View {
         .padding(8)
     }
 
+    /// Persistent loading badge (top-left): shows active loading stages while player starts.
+    @ViewBuilder
+    private var videoLoadingBadge: some View {
+        let analyzing = videoController.videoIsAnalyzing
+        let buffering  = videoController.videoIsBuffering
+        let gyroLoad   = videoController.gyroIsLoading
+        if playbackStarted && (analyzing || buffering || gyroLoad) {
+            VStack(alignment: .leading, spacing: 5) {
+                if analyzing {
+                    loadingRow(label: "Decode")
+                }
+                if buffering {
+                    loadingRow(label: "Buffer")
+                }
+                if gyroLoad {
+                    let pct = videoController.gyroLoadProgress
+                    let label = pct >= 0 ? "Loading Gyro \(Int(pct * 100))%" : "Loading Gyro"
+                    loadingRow(label: label, prominent: true)
+                }
+            }
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(Color.black.opacity(0.6), in: RoundedRectangle(cornerRadius: 6))
+            .padding(.leading, 8)
+            .transition(.opacity)
+        }
+    }
+
+    @ViewBuilder
+    private func loadingRow(label: String, prominent: Bool = false) -> some View {
+        HStack(spacing: 6) {
+            ProgressView()
+                .controlSize(prominent ? .small : .mini)
+                .tint(prominent ? .yellow : .white)
+            Text(label)
+                .font(.system(size: prominent ? 12 : 11,
+                              weight: prominent ? .semibold : .medium,
+                              design: .monospaced))
+                .foregroundStyle(prominent ? Color.yellow : .white.opacity(0.85))
+        }
+    }
+
     /// Transient status badge (top-left): shows HDR / GYRO state for 2 seconds.
     @ViewBuilder
     private var statusBadge: some View {
@@ -660,7 +717,7 @@ struct PhotoDetailView: View {
 
     // MARK: - Loading
 
-    /// Load video: reset state and immediately start the player.
+    /// Load video: reset state and show thumbnail preview. Heavy work deferred until play is pressed.
     private func loadVideo() async {
         // Reset all player state from previous video
         showCursor()
@@ -669,8 +726,10 @@ struct PhotoDetailView: View {
         hdrFormat = nil
         videoHDRType = nil
         videoStarted = false
-        posterFrame = nil
+        previewThumbnail = nil
+        previewDuration = nil
         playbackStarted = false
+        gyroConfigJson = nil
         videoController.reset()
         hideTask?.cancel()
         controlsVisible = true
@@ -678,11 +737,47 @@ struct PhotoDetailView: View {
         barDragStart = .zero
         removeSpaceMonitor()
 
-        // Read gyro config from XMP sidecar
-        gyroConfigJson = readGyroConfigFromXMP()
+        // Show cached thumbnail as static preview (no AVFoundation, no gyro)
+        let path = photo.filePath
+        let bookmark = bookmarkData
+        let filename = URL(fileURLWithPath: path).lastPathComponent
+        previewDuration = photo.duration
+        Log.debug(Log.video, "[duration] \(filename) — photo.duration=\(photo.duration.map { String(format: "%.1f", $0) } ?? "nil") bookmark=\(bookmark != nil ? "yes" : "nil")")
+        if let cached = ThumbnailService.shared.cachedThumbnail(for: path) {
+            previewThumbnail = cached
+        } else {
+            previewThumbnail = await ThumbnailService.shared.thumbnail(for: path, bookmarkData: bookmarkData)
+        }
 
-        // Start playback immediately (no thumbnail preview phase)
-        startPlayback()
+        // Fetch duration if not yet in DB — use security scope from folder bookmark
+        if photo.isVideo && photo.duration == nil {
+            Log.debug(Log.video, "[duration] \(filename) — fetching via AVAsset (bookmark=\(bookmark != nil ? "yes" : "nil"))")
+            let fileURL = URL(fileURLWithPath: path)
+            let seconds: Double?
+            if let bm = bookmark, let folderURL = try? BookmarkService.resolveBookmark(bm) {
+                let started = folderURL.startAccessingSecurityScopedResource()
+                Log.debug(Log.video, "[duration] \(filename) — scope started=\(started) folderURL=\(folderURL.lastPathComponent)")
+                let t = try? await AVURLAsset(url: fileURL).load(.duration)
+                if started { folderURL.stopAccessingSecurityScopedResource() }
+                seconds = (t?.seconds).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                Log.debug(Log.video, "[duration] \(filename) — AVAsset result=\(seconds.map { String(format: "%.1f", $0) } ?? "nil") raw=\(t?.seconds ?? -1)")
+            } else {
+                Log.debug(Log.video, "[duration] \(filename) — no bookmark, trying without scope")
+                let t = try? await AVURLAsset(url: fileURL).load(.duration)
+                seconds = (t?.seconds).flatMap { $0.isFinite && $0 > 0 ? $0 : nil }
+                Log.debug(Log.video, "[duration] \(filename) — no-scope result=\(seconds.map { String(format: "%.1f", $0) } ?? "nil")")
+            }
+            if let s = seconds {
+                Log.debug(Log.video, "[duration] \(filename) — \(String(format: "%.1f", s))s")
+                previewDuration = s
+                photo.duration = s
+            } else {
+                Log.debug(Log.video, "[duration] \(filename) — fetch failed, duration remains nil")
+            }
+        }
+
+        // Key monitor before play: Space starts playback; full monitor installed in startPlayback()
+        installActiveKeyMonitor()
     }
 
     /// Read gyroConfig JSON from XMP sidecar (security-scoped).
@@ -696,50 +791,39 @@ struct PhotoDetailView: View {
         }
     }
 
-    /// Load the player (paused on first frame; user presses Space to play).
+    /// Called when user first presses play. Subsequent calls toggle play/pause.
     private func startPlayback() {
-        guard !videoStarted else { return }
+        guard !videoStarted else { videoController.togglePlayPause(); return }
         videoStarted = true
+        playbackStarted = true
 
+        // Read gyro config from XMP sidecar (fast: small file, bookmark already resolved)
+        gyroConfigJson = readGyroConfigFromXMP()
+
+        // Start gyro loading (non-blocking background task)
+        if gyroStabEnabled && GyroCore.dylibFound {
+            let cfg = buildGyroConfig()
+            let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
+            videoController.startGyroStab(videoPath: photo.filePath, fps: 30,
+                                          config: cfg, lensPath: lens)
+        }
+
+        videoController.diagnosticsEnabled = showDiagBadge
+
+        // Signal play — gyro's waitingForGyro will defer actual frame output if still loading
+        videoController.togglePlayPause()
+
+        // Detect HDR in parallel with player creation (both are async)
         Task {
-            let path = photo.filePath
-            let bookmark = bookmarkData
-
-            // 1. Lightweight HDR type detection (~50ms)
-            let detectedType = await ImagePreloadCache.detectVideoHDRType(path: path, bookmarkData: bookmark)
+            let detectedType = await ImagePreloadCache.detectVideoHDRType(
+                path: photo.filePath, bookmarkData: bookmarkData)
             videoHDRType = detectedType
             isHDR = detectedType != nil
             if detectedType != nil { flashStatusBadge() }
-
-            // 2. Generate poster frame (first video frame) for static display
-            if let data = bookmark,
-               let folderURL = try? BookmarkService.resolveBookmark(data) {
-                let gotAccess = folderURL.startAccessingSecurityScopedResource()
-                defer { if gotAccess { folderURL.stopAccessingSecurityScopedResource() } }
-                let asset = AVURLAsset(url: URL(fileURLWithPath: path))
-                let gen = AVAssetImageGenerator(asset: asset)
-                gen.appliesPreferredTrackTransform = true
-                gen.requestedTimeToleranceBefore = .zero
-                gen.requestedTimeToleranceAfter = CMTime(seconds: 1, preferredTimescale: 600)
-                if let (cgImage, _) = try? await gen.image(at: .zero) {
-                    posterFrame = cgImage
-                }
-            }
-
-            // 3. Configure video controller
-            videoController.diagnosticsEnabled = showDiagBadge
-
-            // 4. Start gyro loading immediately (in parallel)
-            if gyroStabEnabled && GyroCore.dylibFound {
-                let cfg = buildGyroConfig()
-                let lens: String? = gyroLensPath.isEmpty ? nil : gyroLensPath
-                videoController.startGyroStab(videoPath: path, fps: 30,
-                                              config: cfg, lensPath: lens)
-            }
-
-            // Install key monitor with full playback controls
-            installActiveKeyMonitor()
         }
+
+        // Upgrade key monitor to full playback controls
+        installActiveKeyMonitor()
     }
 
     /// Install key monitor for image viewing (f = fullscreen).
@@ -781,12 +865,12 @@ struct PhotoDetailView: View {
         let hdrToggle: () -> Void = { [self] in self.showEDR.toggle(); flashStatusBadge() }
         let gyroToggleWithBadge: () -> Void = { [self] in gyroToggle(); flashStatusBadge() }
         let inspectorToggle: () -> Void = { [self] in self.showInspector.toggle() }
-        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { event in
+        spaceKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [self] event in
             let bare = event.modifierFlags.intersection(.deviceIndependentFlagsMask).isEmpty
             guard bare else { return event }
             switch event.charactersIgnoringModifiers {
             case " ":
-                mpv.togglePlayPause()
+                startPlayback()  // handles first-play and subsequent toggle
                 return nil
             case "f":
                 NSApp.keyWindow?.toggleFullScreen(nil)
@@ -873,13 +957,13 @@ struct PhotoDetailView: View {
 
     private func prefetchAdjacentImages() {
         let flatPhotos = viewModel?.flatPhotos ?? []
-        guard let idx = flatPhotos.firstIndex(where: { $0.persistentModelID == photo.persistentModelID }) else { return }
+        guard let idx = flatPhotos.firstIndex(where: { $0.filePath == photo.filePath }) else { return }
         for offset in [-1, 1] {
             let ni = idx + offset
             guard flatPhotos.indices.contains(ni) else { continue }
             let adj = flatPhotos[ni]
             guard !adj.isVideo else { continue }
-            let bm = adj.resolveBookmarkData(from: folders)
+            let bm = adj.resolveBookmarkData(from: Array(folders))
             ImagePreloadCache.prefetch(path: adj.filePath, bookmarkData: bm)
         }
     }

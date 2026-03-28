@@ -180,6 +180,11 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private var displayLink: CVDisplayLink?
     nonisolated(unsafe) private var timeObserver: Any?
 
+    /// True while analyzeVideo() is running (between load() and player creation).
+    nonisolated(unsafe) private(set) var isAnalyzing: Bool = false
+    /// True while AVPlayer is created but not yet readyToPlay.
+    nonisolated(unsafe) private(set) var isBuffering: Bool = false
+
     nonisolated(unsafe) private(set) var videoInfo = AVFVideoInfo()
     nonisolated(unsafe) private(set) var currentTime: Double = 0
     nonisolated(unsafe) private(set) var lastPTS: Double = -1
@@ -410,15 +415,18 @@ class AVFMetalView: NSView, @unchecked Sendable {
         lastPTS = -1; frameCount = 0; isEOFReached = false
         frameIntervals.removeAll(); lastFrameTime = 0
         renderFPS = 0; renderCV = 0; renderStability = 1
+        isAnalyzing = false; isBuffering = false
         pendingPause = nil
         loadStartTime = CACurrentMediaTime()
 
         let url = URL(fileURLWithPath: path)
         let asset = AVURLAsset(url: url)
+        isAnalyzing = true
 
         Task { @MainActor [weak self] in
             guard let self else { return }
             let info = await analyzeVideo(asset: asset)
+            self.isAnalyzing = false
             self.videoInfo = info
             self.videoDuration = info.duration
             self.videoRotation = UInt32(info.rotation)
@@ -478,6 +486,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
             let newPlayer = AVPlayer(playerItem: item)
             newPlayer.isMuted = self.isMuted
             self.player = newPlayer
+            self.isBuffering = true
 
             // EOF detection
             self.eofObserver = NotificationCenter.default.addObserver(
@@ -507,6 +516,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 switch item.status {
                 case .readyToPlay:
                     self.readyObservation = nil
+                    self.isBuffering = false
                     let shouldPlay = capturedPendingPause.map { !$0 } ?? true
                     DispatchQueue.main.async {
                         if shouldPlay {

@@ -1,5 +1,6 @@
 import Foundation
 import os
+import MachO
 
 // MARK: - App Log Level
 
@@ -52,6 +53,7 @@ enum Log {
         guard level.rawValue <= AppLogLevel.debug.rawValue else { return }
         let msg = message()
         logger.debug("\(msg, privacy: .public)")
+        if AppLaunchArgs.shared.logToStdout { print("[D] \(msg)") }
     }
 
     /// Log at info level — message closure is not evaluated when level > info.
@@ -59,5 +61,18 @@ enum Log {
         guard level.rawValue <= AppLogLevel.info.rawValue else { return }
         let msg = message()
         logger.info("\(msg, privacy: .public)")
+        if AppLaunchArgs.shared.logToStdout { print("[I] \(msg)") }
+    }
+
+    /// Returns the process's physical memory footprint in megabytes.
+    static func memMB() -> Int {
+        var info = task_vm_info_data_t()
+        var count = mach_msg_type_number_t(MemoryLayout<task_vm_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let kern = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                task_info(mach_task_self_, task_flavor_t(TASK_VM_INFO), $0, &count)
+            }
+        }
+        return kern == KERN_SUCCESS ? Int(info.phys_footprint / 1_048_576) : 0
     }
 }

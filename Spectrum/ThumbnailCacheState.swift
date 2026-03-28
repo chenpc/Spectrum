@@ -21,3 +21,4 @@ extension EnvironmentValues {
         set { self[ThumbnailCacheStateKey.self] = newValue }
     }
 }
+

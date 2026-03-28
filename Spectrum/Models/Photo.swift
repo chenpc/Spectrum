@@ -90,6 +90,9 @@ final class Photo {
         CompositeEdit.from(editOps)
     }
 
+    /// 縮圖已生成並存於 disk cache。Grid view 根據此 flag 決定是否嘗試載入縮圖。
+    var hasThumbnail: Bool = false
+
     // Relationships
     var folder: ScannedFolder?
 

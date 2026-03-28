@@ -10,6 +10,8 @@ enum BookmarkService {
         )
     }
 
+    /// Resolves a security-scoped bookmark URL. Stale bookmarks are resolved but not refreshed —
+    /// use `resolveBookmarkRefreshing` when the caller can persist the updated bookmark data.
     static func resolveBookmark(_ data: Data) throws -> URL {
         var isStale = false
         let url = try URL(
@@ -19,15 +21,30 @@ enum BookmarkService {
             bookmarkDataIsStale: &isStale
         )
         if isStale {
-            // Bookmark needs refreshing — but don't fail if we can't create a new one yet.
-            // The resolved URL is still valid for this session.
-            do {
-                _ = try createBookmark(for: url)
-            } catch {
-                Log.bookmark.warning("Failed to refresh stale bookmark for \(url.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            }
+            Log.bookmark.info("Stale bookmark resolved for \(url.path, privacy: .public) — caller should refresh")
         }
         return url
+    }
+
+    /// Like `resolveBookmark`, but also returns refreshed bookmark data when the stored data is stale.
+    /// The caller is responsible for persisting `refreshedData` back to storage.
+    static func resolveBookmarkRefreshing(_ data: Data) throws -> (url: URL, refreshedData: Data?) {
+        var isStale = false
+        let url = try URL(
+            resolvingBookmarkData: data,
+            options: .withSecurityScope,
+            relativeTo: nil,
+            bookmarkDataIsStale: &isStale
+        )
+        var refreshedData: Data?
+        if isStale {
+            if let fresh = try? createBookmark(for: url) {
+                refreshedData = fresh
+            } else {
+                Log.bookmark.warning("Failed to refresh stale bookmark for \(url.path, privacy: .public)")
+            }
+        }
+        return (url, refreshedData)
     }
 
     /// Returns the network remount URL (e.g. smb://server/share) for a URL on a network volume, or nil.

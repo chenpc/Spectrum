@@ -4,6 +4,9 @@ import SwiftUI
 
 struct VideoControlBar: View {
     let controller: VideoController
+    /// If provided, called instead of controller.togglePlayPause() — used to defer player
+    /// creation until first play press.
+    var onPlay: (() -> Void)? = nil
     @State private var isScrubbing = false
     @State private var scrubPosition: Double = 0   // normalised 0…1
 
@@ -11,7 +14,7 @@ struct VideoControlBar: View {
         HStack(spacing: 8) {
             // Play / Pause — matches AVPlayerView button weight & size
             Button {
-                controller.togglePlayPause()
+                if let onPlay { onPlay() } else { controller.togglePlayPause() }
             } label: {
                 Image(systemName: controller.isPlaying ? "pause.fill" : "play.fill")
                     .font(.system(size: 13, weight: .semibold))

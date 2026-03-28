@@ -38,14 +38,55 @@ macro_rules! dlog {
 
 use gyroflow_core::{StabilizationManager, timestamp_at_frame};
 use gyroflow_core::stabilization::{ComputeParams, FrameTransform};
+use gyroflow_core::stabilization_params::ReadoutDirection;
 use std::ffi::CStr;
 use std::io::Write as _;
 use std::os::raw::{c_char, c_int};
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::SeqCst};
 use serde::{Deserialize};
 use serde_json::Value as JVal;
 
 static CWD_MUTEX: Mutex<()> = Mutex::new(());
+
+/// Cancel flag for the ongoing gyrocore_load() call.
+/// acquire_cancel_flag() resets it to false and returns a clone before each load.
+/// gyrocore_cancel_load() sets it to true to abort the slow telemetry parse.
+static LOAD_CANCEL_FLAG: OnceLock<Mutex<Arc<AtomicBool>>> = OnceLock::new();
+
+/// Create a fresh cancel flag, store it globally, and return a clone.
+/// Called at the start of each gyrocore_load().
+fn acquire_cancel_flag() -> Arc<AtomicBool> {
+    let flag = Arc::new(AtomicBool::new(false));
+    let storage = LOAD_CANCEL_FLAG.get_or_init(|| Mutex::new(Arc::new(AtomicBool::new(false))));
+    *storage.lock().unwrap_or_else(|e| e.into_inner()) = flag.clone();
+    flag
+}
+
+/// Signal the current gyrocore_load() call to abort as soon as possible.
+/// Safe to call from any thread at any time; returns immediately.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyrocore_cancel_load() {
+    if let Some(storage) = LOAD_CANCEL_FLAG.get() {
+        storage.lock().unwrap_or_else(|e| e.into_inner()).store(true, SeqCst);
+    }
+}
+
+/// Load progress for the ongoing gyrocore_load() call.
+/// 0.0 = not started / starting, 0.0–1.0 = parsing telemetry, -1.0 = done.
+static LOAD_PROGRESS: AtomicU64 = AtomicU64::new(0);
+
+fn set_load_progress(v: f64) {
+    LOAD_PROGRESS.store(v.to_bits(), SeqCst);
+}
+
+/// Returns the progress of the current gyrocore_load() call (0.0–1.0).
+/// Returns -1.0 when no load is in progress (finished or not started).
+/// Safe to call from any thread at any time.
+#[unsafe(no_mangle)]
+pub extern "C" fn gyrocore_load_progress() -> f64 {
+    f64::from_bits(LOAD_PROGRESS.load(SeqCst))
+}
 
 /// JSON-configurable parameters for gyrocore_load.
 /// All fields are optional — omit or pass null config_json to use defaults.
@@ -119,6 +160,7 @@ struct State {
     r_limit:        f32,       // radial distortion limit
     lens_info:      String,    // "brand model lens" from auto-detect or loaded profile
     compute_params: ComputeParams,
+    stab:           StabilizationManager,  // kept for export_project
 }
 
 // ─── Load ─────────────────────────────────────────────────────────────────────
@@ -162,6 +204,10 @@ pub extern "C" fn gyrocore_load(
         dlog!("[gyrocore] Loading: {}", canonical.display());
         let stab = StabilizationManager::default();
 
+        // Reset cancel flag and progress for this load operation
+        let cancel_flag = acquire_cancel_flag();
+        set_load_progress(0.0);
+
         // Load lens profiles from external directory (e.g. Gyroflow.app/Contents/Resources)
         if let Some(ref dir) = cfg.lens_db_dir {
             let _lock = CWD_MUTEX.lock().unwrap_or_else(|e| e.into_inner());
@@ -172,8 +218,63 @@ pub extern "C" fn gyrocore_load(
             dlog!("[gyrocore] Loaded lens profiles from {dir}");
         }
 
-        stab.load_video_file(&mut file, file_size, &url, None, false)
-            .map_err(|e| format!("load_video_file: {e:?}"))?;
+        // ── Replicate load_video_file with cancellable load_gyro_data ─────────
+        // Step 1: Read container metadata (fast)
+        let metadata = gyroflow_core::util::get_video_metadata(&mut file, file_size, &url)
+            .map_err(|e| format!("get_video_metadata: {e:?}"))?;
+        if metadata.width == 0 || metadata.height == 0 || metadata.duration_s <= 0.0 || metadata.fps <= 0.0 {
+            return Err(format!("Invalid video metadata: {}×{} {:.3}fps", metadata.width, metadata.height, metadata.fps).into());
+        }
+        let meta_video_size = (metadata.width as usize, metadata.height as usize);
+        let meta_frame_count = (metadata.duration_s * metadata.fps).ceil() as usize;
+
+        // Step 2: Initialize timing / dimensions (fast)
+        stab.init_from_video_data(metadata.duration_s * 1000.0, metadata.fps, meta_frame_count, meta_video_size);
+
+        // Step 3: Parse gyro / telemetry — the slow step.  Cancellable via cancel_flag.
+        let load_result = stab.load_gyro_data(
+            &mut file, file_size, &url,
+            /*is_main_video=*/true,
+            &gyroflow_core::gyro_source::FileLoadOptions::default(),
+            |p| set_load_progress(p),
+            cancel_flag.clone(),
+        );
+        if cancel_flag.load(SeqCst) {
+            set_load_progress(-1.0);
+            return Err("gyrocore_load cancelled".into());
+        }
+        load_result.map_err(|e| { set_load_progress(-1.0); format!("load_gyro_data: {e:?}") })?;
+
+        // Step 4: Auto-load lens profile from DB (fast — replicates load_video_file logic)
+        {
+            let has_builtin = stab.lens.read().fisheye_params.camera_matrix.len() == 3;
+            if !has_builtin {
+                let id_str = stab.camera_id.read().as_ref()
+                    .map(|v| v.get_identifier_for_autoload())
+                    .unwrap_or_default();
+                if !id_str.is_empty() {
+                    let db_loaded = stab.lens_profile_db.read().loaded;
+                    if !db_loaded {
+                        stab.lens_profile_db.write().load_all();
+                    }
+                    if stab.lens_profile_db.read().contains_id(&id_str) {
+                        if stab.load_lens_profile(&id_str).is_ok() {
+                            let (fr, frd) = {
+                                let lens = stab.lens.read();
+                                (lens.frame_readout_time, lens.frame_readout_direction)
+                            };
+                            if let Some(fr) = fr {
+                                let mut params = stab.params.write();
+                                params.frame_readout_time = fr.abs();
+                                params.frame_readout_direction = frd.unwrap_or(
+                                    if fr < 0.0 { ReadoutDirection::BottomToTop } else { ReadoutDirection::TopToBottom }
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         let (vid_w, vid_h, fps, frame_count) = {
             let p = stab.params.read();
@@ -549,10 +650,12 @@ pub extern "C" fn gyrocore_load(
             r_limit: kp.r_limit,
             lens_info,
             compute_params,
+            stab,
         });
         dlog!("[gyrocore] f=[{:.2},{:.2}] c=[{:.2},{:.2}] rows={}",
                   state.fx, state.fy, state.cx, state.cy, state.row_count);
 
+        set_load_progress(-1.0);
         Ok(Box::into_raw(state))
     });
     match res {
@@ -762,6 +865,38 @@ pub unsafe extern "C" fn gyrocore_get_lens_info(
 pub unsafe extern "C" fn gyrocore_free(handle: *mut State) {
     if !handle.is_null() {
         drop(Box::from_raw(handle));
+    }
+}
+
+// ─── Export project (.gyroflow with processed data) ───────────────────────────
+
+/// Export the stabilization state as a .gyroflow project file (WithProcessedData).
+/// Includes integrated_quaternions, smoothed_quaternions, adaptive_zoom_fovs.
+/// Returns 0 on success, -1 on failure.
+/// path: UTF-8 file path where the .gyroflow JSON will be written.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn gyrocore_export_project(
+    handle: *const State,
+    path:   *const c_char,
+) -> c_int {
+    if handle.is_null() || path.is_null() { return -1; }
+    let s = &*handle;
+    let path_str = match unsafe { CStr::from_ptr(path) }.to_str() {
+        Ok(p) => p,
+        Err(_) => return -1,
+    };
+    let result: Result<(), Box<dyn std::error::Error>> = (|| {
+        let json = s.stab.export_gyroflow_data(
+            gyroflow_core::GyroflowProjectType::WithProcessedData,
+            "",
+            None,
+        )?;
+        std::fs::write(path_str, json.as_bytes())?;
+        Ok(())
+    })();
+    match result {
+        Ok(()) => 0,
+        Err(e) => { eprintln!("[gyrocore_export] error: {e}"); -1 }
     }
 }
 

@@ -77,7 +77,6 @@ final class ImportPanelModel {
         guard panel.runModal() == .OK, let url = panel.url else { return }
 
         sourceURL = url
-        _ = url.startAccessingSecurityScopedResource()
         Task { await scanFolder(url: url) }
     }
 
@@ -85,22 +84,20 @@ final class ImportPanelModel {
         isScanning = true
         items = []
 
-        let folderName = url.lastPathComponent
-        StatusBarModel.shared.begin("Scanning import: \(folderName)…")
-
+        // Acquire scope only for the duration of enumeration, then release to allow umount
+        let scopeStarted = url.startAccessingSecurityScopedResource()
         let found = await Task.detached {
             ImportPanelModel.enumerateMedia(in: url)
         }.value
+        if scopeStarted { url.stopAccessingSecurityScopedResource() }
+
         items = found
         isScanning = false
-        StatusBarModel.shared.finish("Scanned \(found.count) files from \(folderName)")
     }
 
     /// Open a folder directly (without NSOpenPanel), e.g. from grid view context menu.
     func openFolder(url: URL) {
-        if let old = sourceURL { old.stopAccessingSecurityScopedResource() }
         sourceURL = url
-        _ = url.startAccessingSecurityScopedResource()
         Task { await scanFolder(url: url) }
     }
 
@@ -141,9 +138,6 @@ final class ImportPanelModel {
     }
 
     func close() {
-        if let url = sourceURL {
-            url.stopAccessingSecurityScopedResource()
-        }
         sourceURL = nil
         items = []
     }

@@ -1,7 +1,7 @@
 import SwiftUI
 
 struct PhotoInfoPanel: View {
-    @Bindable var photo: Photo
+    let item: PhotoItem
     var isHDR: Bool = false
     @FocusedValue(\.gyroConfigBinding) var gyroConfigBinding
     @FocusedValue(\.videoController) var videoController
@@ -13,7 +13,7 @@ struct PhotoInfoPanel: View {
     }
 
     var body: some View {
-        if photo.isVideo {
+        if item.isVideo {
             VStack(spacing: 0) {
                 Picker("", selection: $selectedTab) {
                     Text("Info").tag(InspectorTab.info)
@@ -46,7 +46,7 @@ struct PhotoInfoPanel: View {
     private var infoForm: some View {
         Form {
             fileSection
-            if photo.isVideo {
+            if item.isVideo {
                 videoSection
             } else {
                 cameraSection
@@ -64,12 +64,12 @@ struct PhotoInfoPanel: View {
     @ViewBuilder
     private var fileSection: some View {
         Section("File") {
-            LabeledContent("Name", value: photo.fileName)
-            LabeledContent("Path", value: photo.filePath)
-            LabeledContent("Size", value: formatFileSize(photo.fileSize))
-            LabeledContent("Dimensions", value: "\(photo.pixelWidth) x \(photo.pixelHeight)")
-            LabeledContent("Date Taken", value: photo.dateTaken.shortDate)
-            if let tz = photo.offsetTimeOriginal {
+            LabeledContent("Name", value: item.fileName)
+            LabeledContent("Path", value: item.filePath)
+            LabeledContent("Size", value: formatFileSize(item.fileSize))
+            LabeledContent("Dimensions", value: "\(item.pixelWidth) x \(item.pixelHeight)")
+            LabeledContent("Date Taken", value: item.dateTaken.shortDate)
+            if let tz = item.offsetTimeOriginal {
                 LabeledContent("Timezone", value: tz)
             }
             if isHDR {
@@ -79,19 +79,19 @@ struct PhotoInfoPanel: View {
                         .fontWeight(.semibold)
                 }
             }
-            if let depth = photo.colorDepth {
+            if let depth = item.colorDepth {
                 LabeledContent("Color Depth", value: "\(depth)-bit")
             }
-            if let profile = photo.profileName {
+            if let profile = item.profileName {
                 LabeledContent("Color Profile", value: profile)
             }
-            if let headroom = photo.headroom {
+            if let headroom = item.headroom {
                 LabeledContent("Headroom", value: String(format: "%.2f", headroom))
             }
-            if let orient = photo.orientation {
+            if let orient = item.orientation {
                 LabeledContent("Orientation", value: "\(orient)")
             }
-            if let dw = photo.dpiWidth, let dh = photo.dpiHeight {
+            if let dw = item.dpiWidth, let dh = item.dpiHeight {
                 LabeledContent("DPI", value: "\(Int(dw)) x \(Int(dh))")
             }
         }
@@ -100,16 +100,16 @@ struct PhotoInfoPanel: View {
     @ViewBuilder
     private var videoSection: some View {
         Section("Video") {
-            if let duration = photo.duration {
+            if let duration = item.duration {
                 LabeledContent("Duration", value: formatDuration(duration))
             }
-            if photo.fileSize > 0, let duration = photo.duration, duration > 0 {
-                LabeledContent("Bitrate", value: formatBitrate(Double(photo.fileSize) * 8 / duration))
+            if item.fileSize > 0, let duration = item.duration, duration > 0 {
+                LabeledContent("Bitrate", value: formatBitrate(Double(item.fileSize) * 8 / duration))
             }
-            if let codec = photo.videoCodec {
+            if let codec = item.videoCodec {
                 LabeledContent("Video Codec", value: codec)
             }
-            if let codec = photo.audioCodec {
+            if let codec = item.audioCodec {
                 LabeledContent("Audio Codec", value: codec)
             }
         }
@@ -117,20 +117,20 @@ struct PhotoInfoPanel: View {
 
     @ViewBuilder
     private var cameraSection: some View {
-        let hasContent = photo.cameraMake != nil || photo.cameraModel != nil
-            || photo.lensModel != nil || photo.software != nil
+        let hasContent = item.cameraMake != nil || item.cameraModel != nil
+            || item.lensModel != nil || item.software != nil
         if hasContent {
             Section("Camera") {
-                if let make = photo.cameraMake {
+                if let make = item.cameraMake {
                     LabeledContent("Make", value: make)
                 }
-                if let model = photo.cameraModel {
+                if let model = item.cameraModel {
                     LabeledContent("Model", value: model)
                 }
-                if let lens = photo.lensModel {
+                if let lens = item.lensModel {
                     LabeledContent("Lens", value: lens)
                 }
-                if let sw = photo.software {
+                if let sw = item.software {
                     LabeledContent("Software", value: sw)
                 }
             }
@@ -139,49 +139,49 @@ struct PhotoInfoPanel: View {
 
     @ViewBuilder
     private var exposureSection: some View {
-        let hasContent = photo.aperture != nil || photo.shutterSpeed != nil
-            || photo.iso != nil || photo.focalLength != nil
-            || photo.exposureBias != nil || photo.exposureProgram != nil
+        let hasContent = item.aperture != nil || item.shutterSpeed != nil
+            || item.iso != nil || item.focalLength != nil
+            || item.exposureBias != nil || item.exposureProgram != nil
         if hasContent {
             Section("Exposure") {
-                if let aperture = photo.aperture {
+                if let aperture = item.aperture {
                     LabeledContent("Aperture", value: String(format: "f/%.1f", aperture))
                 }
-                if let shutter = photo.shutterSpeed {
+                if let shutter = item.shutterSpeed {
                     LabeledContent("Shutter", value: shutter)
                 }
-                if let iso = photo.iso {
+                if let iso = item.iso {
                     LabeledContent("ISO", value: "\(iso)")
                 }
-                if let focal = photo.focalLength {
-                    if let focal35 = photo.focalLenIn35mm {
+                if let focal = item.focalLength {
+                    if let focal35 = item.focalLenIn35mm {
                         LabeledContent("Focal Length", value: String(format: "%.0fmm (35mm eq: %dmm)", focal, focal35))
                     } else {
                         LabeledContent("Focal Length", value: String(format: "%.0fmm", focal))
                     }
                 }
-                if let bias = photo.exposureBias {
+                if let bias = item.exposureBias {
                     LabeledContent("Exposure Bias", value: String(format: "%+.1f EV", bias))
                 }
-                if let prog = photo.exposureProgram {
+                if let prog = item.exposureProgram {
                     LabeledContent("Exposure Program", value: formatExposureProgram(prog))
                 }
-                if let meter = photo.meteringMode {
+                if let meter = item.meteringMode {
                     LabeledContent("Metering", value: formatMeteringMode(meter))
                 }
-                if let flash = photo.flash {
+                if let flash = item.flash {
                     LabeledContent("Flash", value: formatFlash(flash))
                 }
-                if let wb = photo.whiteBalance {
+                if let wb = item.whiteBalance {
                     LabeledContent("White Balance", value: wb == 0 ? String(localized: "Auto") : String(localized: "Manual"))
                 }
-                if let brightness = photo.brightnessValue {
+                if let brightness = item.brightnessValue {
                     LabeledContent("Brightness", value: String(format: "%.2f", brightness))
                 }
-                if let scene = photo.sceneCaptureType {
+                if let scene = item.sceneCaptureType {
                     LabeledContent("Scene Type", value: formatSceneCaptureType(scene))
                 }
-                if let light = photo.lightSource {
+                if let light = item.lightSource {
                     LabeledContent("Light Source", value: formatLightSource(light))
                 }
             }
@@ -190,7 +190,7 @@ struct PhotoInfoPanel: View {
 
     @ViewBuilder
     private var lensSpecSection: some View {
-        if let spec = photo.lensSpecification, spec.count >= 4 {
+        if let spec = item.lensSpecification, spec.count >= 4 {
             Section("Lens Specification") {
                 LabeledContent("Focal Range", value: String(format: "%.0f–%.0fmm", spec[0], spec[1]))
                 if spec[2] > 0 && spec[3] > 0 {
@@ -206,27 +206,27 @@ struct PhotoInfoPanel: View {
 
     @ViewBuilder
     private var technicalSection: some View {
-        let hasContent = photo.exifVersion != nil || photo.imageStabilization != nil
-            || photo.contrast != nil || photo.saturation != nil || photo.sharpness != nil
-            || photo.digitalZoomRatio != nil
+        let hasContent = item.exifVersion != nil || item.imageStabilization != nil
+            || item.contrast != nil || item.saturation != nil || item.sharpness != nil
+            || item.digitalZoomRatio != nil
         if hasContent {
             Section("Technical") {
-                if let ver = photo.exifVersion {
+                if let ver = item.exifVersion {
                     LabeledContent("EXIF Version", value: ver)
                 }
-                if let stab = photo.imageStabilization {
+                if let stab = item.imageStabilization {
                     LabeledContent("Image Stabilization", value: stab == 1 ? String(localized: "On") : String(localized: "Off"))
                 }
-                if let c = photo.contrast {
+                if let c = item.contrast {
                     LabeledContent("Contrast", value: formatLevel(c))
                 }
-                if let s = photo.saturation {
+                if let s = item.saturation {
                     LabeledContent("Saturation", value: formatLevel(s))
                 }
-                if let s = photo.sharpness {
+                if let s = item.sharpness {
                     LabeledContent("Sharpness", value: formatLevel(s))
                 }
-                if let zoom = photo.digitalZoomRatio, zoom > 0 {
+                if let zoom = item.digitalZoomRatio, zoom > 0 {
                     LabeledContent("Digital Zoom", value: String(format: "%.1fx", zoom))
                 }
             }
@@ -235,9 +235,9 @@ struct PhotoInfoPanel: View {
 
     @ViewBuilder
     private var locationSection: some View {
-        if photo.latitude != nil || photo.longitude != nil {
+        if item.latitude != nil || item.longitude != nil {
             Section("Location") {
-                if let lat = photo.latitude, let lon = photo.longitude {
+                if let lat = item.latitude, let lon = item.longitude {
                     LabeledContent("Coordinates", value: String(format: "%.4f, %.4f", lat, lon))
                 }
             }

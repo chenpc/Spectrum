@@ -60,11 +60,18 @@ enum EXIFService {
     }()
 
     static func readEXIF(from url: URL) -> EXIFData {
-        var result = EXIFData()
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return EXIFData() }
+        return readEXIF(from: source)
+    }
 
-        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-              let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
-        else { return result }
+    static func readEXIF(from source: CGImageSource) -> EXIFData {
+        guard let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        else { return EXIFData() }
+        return parseProperties(properties)
+    }
+
+    private static func parseProperties(_ properties: [CFString: Any]) -> EXIFData {
+        var result = EXIFData()
 
         // Dimensions
         result.pixelWidth = properties[kCGImagePropertyPixelWidth] as? Int

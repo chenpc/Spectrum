@@ -1,4 +1,5 @@
 import SwiftUI
+import SwiftData
 
 struct SettingsView: View {
     var body: some View {
@@ -67,39 +68,76 @@ private struct GeneralSettingsTab: View {
 // MARK: - Cache
 
 private struct CacheSettingsTab: View {
-    @AppStorage("thumbnailCacheLimitMB") private var thumbnailCacheLimitMB: Int = 500
-    @State private var thumbSize: Int64 = 0
+    @Environment(\.modelContext) private var modelContext
+    @AppStorage("thumbnailCacheSizeGB") private var thumbnailCacheSizeGB: Double = 1.0
+    @State private var showResetConfirm = false
 
     var body: some View {
         Form {
-            Section("Thumbnails") {
-                HStack {
-                    Text("Disk Usage")
-                    Spacer()
-                    Text(ByteCountFormatter.string(fromByteCount: thumbSize, countStyle: .file))
-                        .foregroundStyle(.secondary)
-                    Button("Clear") {
-                        Task {
-                            await ThumbnailService.shared.clearCache()
-                            FolderListCache.shared.clear()
-                            ThumbnailCacheState.shared.invalidate()
-                            thumbSize = await ThumbnailService.shared.diskCacheSize()
-                        }
+            Section("Thumbnail Cache") {
+                VStack(alignment: .leading, spacing: 4) {
+                    HStack {
+                        Text("Memory Limit")
+                        Spacer()
+                        Text(verbatim: String(format: "%.1f GB", thumbnailCacheSizeGB))
+                            .foregroundStyle(.secondary)
+                            .monospacedDigit()
                     }
+                    Slider(value: $thumbnailCacheSizeGB, in: 0.5...8.0, step: 0.5)
                 }
+                .onChange(of: thumbnailCacheSizeGB) { _, newValue in
+                    ThumbnailService.shared.updateMemoryCacheLimit(gb: newValue)
+                }
+                Text("Maximum memory used for photo thumbnails. Thumbnails are only stored in memory — never on disk.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
 
-                Picker("Size Limit", selection: $thumbnailCacheLimitMB) {
-                    Text(verbatim: "100 MB").tag(100)
-                    Text(verbatim: "250 MB").tag(250)
-                    Text(verbatim: "500 MB").tag(500)
-                    Text(verbatim: "1 GB").tag(1000)
-                    Text(verbatim: "2 GB").tag(2000)
-                    Text(verbatim: "∞").tag(0)
+            Section("Data") {
+                Button("Reset All Data…", role: .destructive) {
+                    showResetConfirm = true
                 }
+                Text("Remove all folders from the library and clear thumbnail cache. Cannot be undone.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
             }
         }
         .formStyle(.grouped)
-        .task { thumbSize = await ThumbnailService.shared.diskCacheSize() }
+        .confirmationDialog(
+            "Reset All Data?",
+            isPresented: $showResetConfirm,
+            titleVisibility: .visible
+        ) {
+            Button("Reset All Data", role: .destructive) { resetAllData() }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All folders will be removed from the library and thumbnail cache will be cleared. This cannot be undone.")
+        }
+    }
+
+    private func resetAllData() {
+        // 停止所有資料夾監控
+        if let folders = try? modelContext.fetch(FetchDescriptor<ScannedFolder>()) {
+            for folder in folders {
+                FolderMonitor.shared.stopMonitoring(path: folder.path)
+            }
+        }
+
+        // 清除 DB：所有 ScannedFolder（含 bookmarkData）
+        if let folders = try? modelContext.fetch(FetchDescriptor<ScannedFolder>()) {
+            for folder in folders { modelContext.delete(folder) }
+        }
+
+        try? modelContext.save()
+
+        ThumbnailCacheState.shared.invalidate()
+
+        // 清除記憶體縮圖 cache
+        let taskId = StatusBarModel.shared.beginTask("Resetting data...")
+        Task {
+            await ThumbnailService.shared.clearCache()
+            await MainActor.run { StatusBarModel.shared.finishTask(taskId) }
+        }
     }
 }
 

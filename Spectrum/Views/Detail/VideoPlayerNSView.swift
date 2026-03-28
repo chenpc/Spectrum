@@ -81,6 +81,8 @@ class VideoPlayerNSView: NSView {
     nonisolated var codecInfo: String? { metalView.codecInfo }
     nonisolated var colorSpaceInfo: String { metalView.colorSpaceInfo }
     nonisolated var isAVFLayerMode: Bool { metalView.isAVFLayerMode }
+    nonisolated var isAnalyzing: Bool { metalView.isAnalyzing }
+    nonisolated var isBuffering: Bool { metalView.isBuffering }
     nonisolated func setPause(_ paused: Bool) { metalView.setPause(paused) }
     nonisolated func seek(to seconds: Double) { metalView.seek(to: seconds) }
     nonisolated func setVolume(_ volume: Float) { metalView.setVolume(volume) }

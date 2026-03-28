@@ -1,19 +1,16 @@
-import SwiftUI
-import SwiftData
+import Foundation
 
 @Observable
 final class LibraryViewModel {
-    var flatPhotos: [Photo] = []
+    /// 目前資料夾顯示的照片（不含子資料夾、不含 isLivePhotoMov），供 detail view 左右導覽使用。
+    var flatPhotos: [PhotoItem] = []
 
-    func navigatePhoto(from current: Photo?, direction: Int) -> Photo? {
-        guard !flatPhotos.isEmpty else { return nil }
-        guard let current,
-              let index = flatPhotos.firstIndex(where: { $0.persistentModelID == current.persistentModelID })
-        else {
-            return flatPhotos.first
-        }
-        let newIndex = index + direction
-        guard flatPhotos.indices.contains(newIndex) else { return current }
-        return flatPhotos[newIndex]
+    /// 從 `current` 往 `direction`（+1 或 -1）移動，回傳相鄰的 PhotoItem。
+    func navigatePhoto(from current: PhotoItem?, direction: Int) -> PhotoItem? {
+        guard let current else { return nil }
+        guard let idx = flatPhotos.firstIndex(where: { $0.filePath == current.filePath }) else { return nil }
+        let newIdx = idx + direction
+        guard flatPhotos.indices.contains(newIdx) else { return nil }
+        return flatPhotos[newIdx]
     }
 }

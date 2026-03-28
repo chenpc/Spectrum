@@ -3,11 +3,32 @@ import SwiftData
 
 @main
 struct SpectrumApp: App {
+    let container: ModelContainer
+
+    init() {
+        // 必須在任何 SpectrumLibrary.url 存取之前先處理 CLI 參數
+        let launchArgs = AppLaunchArgs.shared
+        if let libURL = launchArgs.spectrumLibrary {
+            // 清空舊的測試 library，確保每次從乾淨狀態開始
+            try? FileManager.default.removeItem(at: libURL)
+            SpectrumLibrary.overrideURL = libURL
+        }
+
+        SpectrumLibrary.migrateFromLegacyLocationIfNeeded()
+        SpectrumLibrary.acquireOrTerminate()
+        do {
+            let config = ModelConfiguration(url: SpectrumLibrary.databaseURL)
+            container = try ModelContainer(for: Photo.self, ScannedFolder.self, configurations: config)
+        } catch {
+            fatalError("Failed to open Spectrum Library database: \(error)")
+        }
+    }
+
     var body: some Scene {
         WindowGroup {
             ContentView()
         }
-        .modelContainer(for: [Photo.self, ScannedFolder.self])
+        .modelContainer(container)
         .windowStyle(.automatic)
         .defaultSize(width: 1200, height: 800)
         .commands {

@@ -67,3 +67,19 @@ CVDisplayLink dispatches to `renderQueue` (.userInteractive), NOT the real-time 
 ### Markdown Style
 
 Never use ASCII art diagrams in markdown documents — use tables, bullet lists, or plain text descriptions instead.
+
+## Development Log
+
+After every bug fix or new feature, append an entry to **`docs/devlog.md`** following this format:
+
+```
+## YYYY-MM-DD — <短標題>
+
+**類型：** Bug Fix / Feature / Refactor
+
+**問題：** 一句話描述問題或需求。
+
+**根因／做法：** 說明根本原因或實作方式。
+
+**修改的檔案：** 列出主要修改的檔案。
+```

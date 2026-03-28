@@ -1,5 +1,4 @@
 import SwiftUI
-import SwiftData
 
 private class AspectFillImageView: NSView {
     let imageView: NSImageView = {
@@ -58,39 +57,23 @@ private struct HDRThumbnailImageView: NSViewRepresentable {
 }
 
 struct PhotoThumbnailView: View {
-    let photo: Photo
+    let item: PhotoItem
     var isSelected: Bool = false
     var folderBookmarkData: Data? = nil
 
     @State private var thumbnail: NSImage?
     @Environment(\.thumbnailCacheState) private var cacheState
-    @Query private var folders: [ScannedFolder]
-
-    private var bookmarkData: Data? {
-        if let folderBookmarkData { return folderBookmarkData }
-        return photo.resolveBookmarkData(from: folders)
-    }
 
     private var displayThumbnail: NSImage? {
         guard let thumbnail else { return nil }
-        let composite = photo.compositeEdit
-        // No edits — return thumbnail as-is
+        let composite = item.compositeEdit
         guard composite.rotation != 0 || composite.flipH || composite.crop != nil else { return thumbnail }
         guard var cg = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return thumbnail }
-        // 1. Flip first (convention: flip before rotate)
-        if composite.flipH, let flipped = flipCGImage(cg, horizontal: true) {
-            cg = flipped
-        }
-        // 2. Rotate
-        if composite.rotation != 0, let rotated = rotateCGImage(cg, degrees: composite.rotation) {
-            cg = rotated
-        }
-        // 3. Crop in rotated space
+        if composite.flipH, let flipped = flipCGImage(cg, horizontal: true) { cg = flipped }
+        if composite.rotation != 0, let rotated = rotateCGImage(cg, degrees: composite.rotation) { cg = rotated }
         if let crop = composite.crop {
             let pixelRect = crop.pixelRect(imageWidth: cg.width, imageHeight: cg.height)
-            if let cropped = cg.cropping(to: pixelRect) {
-                cg = cropped
-            }
+            if let cropped = cg.cropping(to: pixelRect) { cg = cropped }
         }
         return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
@@ -106,20 +89,16 @@ struct PhotoThumbnailView: View {
                 Rectangle()
                     .fill(.quaternary)
                     .frame(height: 150)
-                    .overlay {
-                        ProgressView()
-                            .scaleEffect(0.5)
-                    }
             }
 
-            if photo.isVideo {
+            if item.isVideo {
                 Image(systemName: "play.circle.fill")
                     .font(.largeTitle)
                     .foregroundStyle(.white)
                     .shadow(radius: 3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if let duration = photo.duration {
+                if let duration = item.duration {
                     Text(formatDuration(duration))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.white)
@@ -129,7 +108,7 @@ struct PhotoThumbnailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
                 }
-            } else if photo.livePhotoMovPath != nil {
+            } else if item.livePhotoMovPath != nil {
                 Image(systemName: "livephoto")
                     .font(.body)
                     .foregroundStyle(.white)
@@ -140,6 +119,16 @@ struct PhotoThumbnailView: View {
                     .padding(6)
             }
 
+            let ext = URL(fileURLWithPath: item.filePath).pathExtension.uppercased()
+            if !ext.isEmpty {
+                Text(ext)
+                    .font(.system(size: 9, weight: .semibold, design: .monospaced))
+                    .foregroundStyle(.white)
+                    .padding(.horizontal, 4)
+                    .padding(.vertical, 2)
+                    .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 3))
+                    .padding(6)
+            }
         }
         .contentShape(RoundedRectangle(cornerRadius: 4))
         .clipShape(RoundedRectangle(cornerRadius: 4))
@@ -148,15 +137,14 @@ struct PhotoThumbnailView: View {
                 .stroke(isSelected ? Color.accentColor : .clear, lineWidth: 3)
         )
         .onDrag {
-            NSItemProvider(object: URL(fileURLWithPath: photo.filePath) as NSURL)
+            NSItemProvider(object: URL(fileURLWithPath: item.filePath) as NSURL)
         }
-        .task(id: photo.filePath + "\(cacheState.generation)") {
-            if let cached = ThumbnailService.shared.cachedThumbnail(for: photo.filePath) {
+        .task(id: item.filePath + "\(cacheState.generation)") {
+            if let cached = ThumbnailService.shared.cachedThumbnail(for: item.filePath) {
                 thumbnail = cached
-                return
+            } else {
+                thumbnail = await ThumbnailService.shared.thumbnail(for: item.filePath, bookmarkData: folderBookmarkData)
             }
-            thumbnail = nil
-            thumbnail = await ThumbnailService.shared.thumbnail(for: photo.filePath, bookmarkData: bookmarkData)
         }
     }
 }

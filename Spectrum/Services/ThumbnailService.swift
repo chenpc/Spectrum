@@ -2,50 +2,73 @@ import Foundation
 import AppKit
 import ImageIO
 import AVFoundation
-import CryptoKit
+import QuickLookThumbnailing
 import os
 
+// MARK: - ThumbnailSemaphore
+
+/// 非同步信號量，用來限制同時執行的影片縮圖數量。
+private actor ThumbnailSemaphore {
+    private var available: Int
+    private var waiters: [CheckedContinuation<Void, Never>] = []
+
+    init(count: Int) { self.available = count }
+
+    func wait() async {
+        if available > 0 { available -= 1; return }
+        await withCheckedContinuation { waiters.append($0) }
+    }
+
+    func signal() {
+        if waiters.isEmpty { available += 1 } else { waiters.removeFirst().resume() }
+    }
+}
+
+// MARK: - ThumbnailService
+
+/// 純記憶體縮圖 cache。不寫入磁碟；進入 grid view 時按需生成，
+/// 在記憶體受壓時自動清除。Cache 上限可在 Settings 調整（單位：GB）。
 actor ThumbnailService {
     static let shared = ThumbnailService()
+    nonisolated(unsafe) private static var _pressureSource: DispatchSourceMemoryPressure?
 
     private nonisolated(unsafe) let memoryCache = NSCache<NSString, NSImage>()
-    private let cacheDirectory: URL
-    private let thumbnailSize: Int = 400
+    nonisolated let thumbnailSize: Int = 400
+
+    // 影片縮圖：AVURLAsset + CoreMedia，限制 2 個並行
+    private let videoSemaphore = ThumbnailSemaphore(count: 2)
 
     init() {
-        let caches = FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first!
-        cacheDirectory = caches.appendingPathComponent("Spectrum/Thumbnails", isDirectory: true)
+        let gb = UserDefaults.standard.object(forKey: "thumbnailCacheSizeGB") as? Double ?? 1.0
+        memoryCache.totalCostLimit = Int(gb * 1_073_741_824)  // 1 GB = 1024^3 bytes
 
-        do {
-            try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        } catch {
-            Log.thumbnail.warning("Failed to create thumbnail cache directory: \(error.localizedDescription, privacy: .public)")
+        let pressureSource = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical], queue: .global()
+        )
+        pressureSource.setEventHandler { [weak memoryCache] in
+            Log.thumbnail.info("[thumb] memory pressure — clearing memory cache")
+            memoryCache?.removeAllObjects()
         }
-        memoryCache.countLimit = 500
+        pressureSource.resume()
+        ThumbnailService._pressureSource = pressureSource
     }
 
-    private var cacheLimitBytes: Int64 {
-        let mb = UserDefaults.standard.object(forKey: "thumbnailCacheLimitMB") as? Int ?? 500
-        if mb == 0 { return Int64.max }  // unlimited (user chose ∞)
-        return Int64(max(mb, 100)) * 1024 * 1024
-    }
+    // MARK: - Cache access
 
     nonisolated func cachedThumbnail(for filePath: String) -> NSImage? {
         memoryCache.object(forKey: filePath as NSString)
     }
 
+    /// 取得或生成縮圖。先查 memory cache；未命中則即時生成並存入 cache。
+    /// 回傳 nil 表示檔案不存在或生成失敗。
     func thumbnail(for filePath: String, bookmarkData: Data? = nil) async -> NSImage? {
         let key = filePath as NSString
-        let fileName = URL(fileURLWithPath: filePath).lastPathComponent
 
         if let cached = memoryCache.object(forKey: key) {
-            Log.debug(Log.thumbnail, "[thumb] memory hit: \(fileName)")
+            Log.debug(Log.thumbnail, "[thumb] hit: \(URL(fileURLWithPath: filePath).lastPathComponent)")
             return cached
         }
 
-        // Start security scope BEFORE disk cache lookup, because diskCacheURL uses
-        // mtime from resourceValues which needs scope access on network volumes.
-        let url = URL(fileURLWithPath: filePath)
         var folderURL: URL?
         var didStart = false
         if let bookmarkData {
@@ -54,183 +77,68 @@ actor ThumbnailService {
                 folderURL = resolved
                 didStart = resolved.startAccessingSecurityScopedResource()
             } catch {
-                Log.bookmark.warning("Failed to resolve bookmark for thumbnail \(fileName, privacy: .public): \(error.localizedDescription, privacy: .public)")
+                Log.bookmark.warning("[thumb] bookmark resolve failed: \(error.localizedDescription, privacy: .public)")
             }
         }
+        defer { if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() } }
 
-        let diskURL = diskCacheURL(for: filePath)
-        if FileManager.default.fileExists(atPath: diskURL.path),
-           let image = NSImage(contentsOf: diskURL) {
-            Log.debug(Log.thumbnail, "[thumb] disk hit: \(fileName)")
-            if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() }
-            memoryCache.setObject(image, forKey: key)
-            return image
-        }
-
-        // Skip if the source file no longer exists — avoids IIOImageSource errors
         guard FileManager.default.fileExists(atPath: filePath) else {
-            Log.debug(Log.thumbnail, "[thumb] source file missing: \(fileName)")
-            if didStart, let folderURL { folderURL.stopAccessingSecurityScopedResource() }
+            Log.debug(Log.thumbnail, "[thumb] source missing: \(URL(fileURLWithPath: filePath).lastPathComponent)")
             return nil
         }
-        Log.debug(Log.thumbnail, "[thumb] cache miss → generating: \(fileName)")
 
-        let image = await generateAndCacheThumbnail(from: url, to: diskURL)
-        if didStart, let folderURL {
-            folderURL.stopAccessingSecurityScopedResource()
+        Log.debug(Log.thumbnail, "[thumb] generating: \(URL(fileURLWithPath: filePath).lastPathComponent)")
+        let image = await generateThumbnail(from: URL(fileURLWithPath: filePath))
+        if let image {
+            memoryCache.setObject(image, forKey: key, cost: imageCost(image))
         }
-
-        guard let image else { return nil }
-
-        memoryCache.setObject(image, forKey: key)
-        evictIfNeeded()
         return image
     }
 
+    /// 清除所有記憶體縮圖（例如 folder 刪除或 Reset All Data）。
     func clearCache() {
         memoryCache.removeAllObjects()
-        do {
-            try FileManager.default.removeItem(at: cacheDirectory)
-        } catch {
-            Log.thumbnail.warning("Failed to remove cache directory: \(error.localizedDescription, privacy: .public)")
-        }
-        do {
-            try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true)
-        } catch {
-            Log.thumbnail.warning("Failed to recreate cache directory: \(error.localizedDescription, privacy: .public)")
-        }
     }
 
-    func diskCacheSize() async -> Int64 {
-        let directory = cacheDirectory
-        return await Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            guard let enumerator = fm.enumerator(
-                at: directory,
-                includingPropertiesForKeys: [.fileSizeKey],
-                options: [.skipsHiddenFiles]
-            ) else { return 0 }
+    /// 更新記憶體 cache 上限（Settings 變更時呼叫）。
+    nonisolated func updateMemoryCacheLimit(gb: Double) {
+        memoryCache.totalCostLimit = Int(gb * 1_073_741_824)
+    }
 
-            var total: Int64 = 0
-            for case let fileURL as URL in enumerator.allObjects {
-                if let size = try? fileURL.resourceValues(forKeys: [.fileSizeKey]).fileSize {
-                    total += Int64(size)
+    // MARK: - Generation
+
+    private nonisolated func generateViaQL(from url: URL) async -> NSImage? {
+        let request = QLThumbnailGenerator.Request(
+            fileAt: url,
+            size: CGSize(width: thumbnailSize, height: thumbnailSize),
+            scale: 1.0,
+            representationTypes: .thumbnail
+        )
+
+        let t0 = ContinuousClock.now
+        do {
+            let cgImage: CGImage = try await withCheckedThrowingContinuation { cont in
+                QLThumbnailGenerator.shared.generateBestRepresentation(for: request) { thumb, error in
+                    if let thumb { cont.resume(returning: thumb.cgImage) }
+                    else { cont.resume(throwing: error ?? CancellationError()) }
                 }
             }
-            return total
-        }.value
-    }
-
-    // MARK: - Cache eviction
-
-    private func evictIfNeeded() {
-        let limit = cacheLimitBytes
-        guard limit < Int64.max else { return }
-
-        let directory = cacheDirectory
-        Task.detached(priority: .utility) {
-            let fm = FileManager.default
-            guard let enumerator = fm.enumerator(
-                at: directory,
-                includingPropertiesForKeys: [.fileSizeKey, .contentAccessDateKey],
-                options: [.skipsHiddenFiles]
-            ) else { return }
-
-            struct CacheEntry {
-                let url: URL
-                let size: Int64
-                let accessDate: Date
-            }
-
-            var entries: [CacheEntry] = []
-            var totalSize: Int64 = 0
-
-            for case let fileURL as URL in enumerator.allObjects {
-                guard let values = try? fileURL.resourceValues(forKeys: [.fileSizeKey, .contentAccessDateKey]) else { continue }
-                let size = Int64(values.fileSize ?? 0)
-                let date = values.contentAccessDate ?? .distantPast
-                entries.append(CacheEntry(url: fileURL, size: size, accessDate: date))
-                totalSize += size
-            }
-
-            guard totalSize > limit else { return }
-            Log.debug(Log.thumbnail, "[thumb] eviction triggered: \(totalSize / 1024 / 1024)MB > limit \(limit / 1024 / 1024)MB, \(entries.count) entries")
-
-            // Sort oldest-accessed first
-            entries.sort { $0.accessDate < $1.accessDate }
-
-            for entry in entries {
-                guard totalSize > limit else { break }
-                do {
-                    try fm.removeItem(at: entry.url)
-                } catch {
-                    Log.thumbnail.warning("Failed to evict cache entry: \(error.localizedDescription, privacy: .public)")
-                }
-                totalSize -= entry.size
-            }
+            let dt = ContinuousClock.now - t0
+            Log.info(Log.thumbnail, "[thumb] \(url.pathExtension.uppercased()) ql=\(fmtDur(dt)) \(url.lastPathComponent)")
+            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        } catch {
+            Log.debug(Log.thumbnail, "[thumb] QL failed for \(url.lastPathComponent): \(error.localizedDescription)")
+            return nil
         }
     }
 
-    // MARK: - Thumbnail generation
-
-    private func generateAndCacheThumbnail(from url: URL, to diskURL: URL) async -> NSImage? {
-        if url.isVideoFile {
-            return await generateAndCacheVideoThumbnail(from: url, to: diskURL)
-        }
-
-        // SVG: CGImageSource doesn't support vector formats; render via NSImage
-        if url.pathExtension.lowercased() == "svg" {
-            return generateAndCacheSVGThumbnail(from: url, to: diskURL)
-        }
-
-        return await Task.detached(priority: .medium) {
-            guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
-
-            let options: [CFString: Any] = [
-                kCGImageSourceThumbnailMaxPixelSize: self.thumbnailSize,
-                kCGImageSourceCreateThumbnailFromImageAlways: true,
-                kCGImageSourceCreateThumbnailWithTransform: true
-            ]
-
-            guard let cgImage = CGImageSourceCreateThumbnailAtIndex(source, 0, options as CFDictionary)
-            else { return nil }
-
-            // Strip alpha for opaque photos to avoid "AlphaPremulLast" warnings
-            let opaqueImage: CGImage
-            if cgImage.alphaInfo != .none && cgImage.alphaInfo != .noneSkipLast && cgImage.alphaInfo != .noneSkipFirst,
-               let colorSpace = cgImage.colorSpace,
-               let ctx = CGContext(
-                   data: nil,
-                   width: cgImage.width,
-                   height: cgImage.height,
-                   bitsPerComponent: cgImage.bitsPerComponent,
-                   bytesPerRow: 0,
-                   space: colorSpace,
-                   bitmapInfo: CGImageAlphaInfo.noneSkipLast.rawValue
-               ) {
-                ctx.draw(cgImage, in: CGRect(x: 0, y: 0, width: cgImage.width, height: cgImage.height))
-                opaqueImage = ctx.makeImage() ?? cgImage
-            } else {
-                opaqueImage = cgImage
-            }
-
-            guard let destination = CGImageDestinationCreateWithURL(
-                diskURL as CFURL, "public.heic" as CFString, 1, nil
-            ) else {
-                return NSImage(cgImage: opaqueImage, size: NSSize(width: opaqueImage.width, height: opaqueImage.height))
-            }
-
-            CGImageDestinationAddImage(destination, opaqueImage, nil)
-            if !CGImageDestinationFinalize(destination) {
-                Log.thumbnail.error("[thumb] CGImageDestinationFinalize failed for \(url.lastPathComponent, privacy: .public)")
-            }
-
-            return NSImage(contentsOf: diskURL)
-                ?? NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
-        }.value
+    private func generateThumbnail(from url: URL) async -> NSImage? {
+        if url.isVideoFile { return await generateVideoThumbnail(from: url) }
+        if url.pathExtension.lowercased() == "svg" { return generateSVGThumbnail(from: url) }
+        return await generateViaQL(from: url)
     }
 
-    private func generateAndCacheSVGThumbnail(from url: URL, to diskURL: URL) -> NSImage? {
+    private func generateSVGThumbnail(from url: URL) -> NSImage? {
         guard let svgImage = NSImage(contentsOf: url) else { return nil }
         let size = svgImage.size
         guard size.width > 0, size.height > 0 else { return nil }
@@ -255,52 +163,44 @@ actor ThumbnailService {
         NSGraphicsContext.restoreGraphicsState()
 
         guard let cgImg = ctx.makeImage() else { return svgImage }
-
-        if let destination = CGImageDestinationCreateWithURL(diskURL as CFURL, "public.heic" as CFString, 1, nil) {
-            CGImageDestinationAddImage(destination, cgImg, nil)
-            CGImageDestinationFinalize(destination)
-        }
-
-        return NSImage(contentsOf: diskURL)
-            ?? NSImage(cgImage: cgImg, size: newSize)
+        return NSImage(cgImage: cgImg, size: newSize)
     }
 
-    private func generateAndCacheVideoThumbnail(from url: URL, to diskURL: URL) async -> NSImage? {
+    private func generateVideoThumbnail(from url: URL) async -> NSImage? {
+        await videoSemaphore.wait()
+        defer { Task { await self.videoSemaphore.signal() } }
+
+        let t0 = ContinuousClock.now
         let asset = AVURLAsset(url: url)
         let generator = AVAssetImageGenerator(asset: asset)
         generator.maximumSize = CGSize(width: thumbnailSize, height: thumbnailSize)
         generator.appliesPreferredTrackTransform = true
 
-        let cgImage: CGImage
         do {
             let result = try await generator.image(at: .zero)
-            cgImage = result.image
+            let cgImage = result.image
+            Log.debug(Log.thumbnail, "[thumb] video \(url.lastPathComponent): \(fmtDur(ContinuousClock.now - t0))")
+            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         } catch {
-            Log.thumbnail.warning("Failed to generate video thumbnail for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
+            Log.thumbnail.warning("[thumb] video failed for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil
         }
+    }
 
-        if let destination = CGImageDestinationCreateWithURL(
-            diskURL as CFURL, "public.heic" as CFString, 1, nil
-        ) {
-            CGImageDestinationAddImage(destination, cgImage, nil)
-            CGImageDestinationFinalize(destination)
+    // MARK: - Helpers
+
+    private nonisolated func imageCost(_ image: NSImage) -> Int {
+        guard let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil) else {
+            return max(1, Int(image.size.width) * Int(image.size.height) * 4)
         }
-
-        return NSImage(contentsOf: diskURL)
-            ?? NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+        let bytesPerPixel = max(1, cg.bitsPerPixel / 8)
+        return max(1, cg.width * cg.height * bytesPerPixel)
     }
+}
 
-    private func diskCacheURL(for filePath: String) -> URL {
-        // Include mtime in the key so cache is automatically invalidated when file changes.
-        // resourceValues works without security scope for most local/mounted files.
-        let mtime = (try? URL(fileURLWithPath: filePath)
-            .resourceValues(forKeys: [.contentModificationDateKey])
-            .contentModificationDate)
-            .map { Int($0.timeIntervalSince1970) }
-        let key = mtime.map { "\(filePath)_\($0)" } ?? filePath
-        let hash = SHA256.hash(data: Data(key.utf8))
-        let hashString = hash.compactMap { String(format: "%02x", $0) }.joined()
-        return cacheDirectory.appendingPathComponent("\(hashString).heic")
-    }
+// MARK: - Timing helper (file-private)
+
+private func fmtDur(_ d: Duration) -> String {
+    let ms = Double(d.components.seconds) * 1_000 + Double(d.components.attoseconds) / 1_000_000_000_000_000
+    return ms < 1_000 ? String(format: "%.1fms", ms) : String(format: "%.2fs", ms / 1_000)
 }

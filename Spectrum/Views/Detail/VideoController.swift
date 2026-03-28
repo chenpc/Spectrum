@@ -34,6 +34,11 @@ final class VideoController: @unchecked Sendable {
     /// Gyro Stability Index: RMS inter-frame rotation angle (radians). Lower = more stable.
     private(set) var gyroSI: Double = 0
 
+    /// True while AVFMetalView is running analyzeVideo() (between load() and player creation).
+    private(set) var videoIsAnalyzing: Bool = false
+    /// True while AVPlayer is created but not yet readyToPlay.
+    private(set) var videoIsBuffering: Bool = false
+
     /// True when gyro stabilization is loaded and active.
     private(set) var gyroStabEnabled: Bool = false
     /// True once gyro loaded successfully for this video — survives stopGyroStab().
@@ -43,6 +48,8 @@ final class VideoController: @unchecked Sendable {
     private(set) var gyroLastError: String? = nil
     /// Debug: true while gyro is currently loading in background.
     private(set) var gyroIsLoading: Bool = false
+    /// Gyro parse progress 0.0–1.0 while loading; -1.0 otherwise.
+    private(set) var gyroLoadProgress: Double = -1.0
     /// Retained during loading and playback; nil = stab off.
     private var activeGyroCore: GyroCore?
     /// When true, the user pressed play while gyro was loading — defer actual unpause
@@ -76,6 +83,8 @@ final class VideoController: @unchecked Sendable {
         gyroAvailable = false
         gyroLastError = nil
         gyroIsLoading = false
+        videoIsAnalyzing = false
+        videoIsBuffering = false
         currentTime = 0
         duration = 0
         isPlaying = false
@@ -124,6 +133,16 @@ final class VideoController: @unchecked Sendable {
         }
         let core = GyroCore()
         activeGyroCore = core
+        // Poll gyro load progress every 150 ms until done.
+        Task { @MainActor [weak self] in
+            while let self, self.gyroIsLoading, self.activeGyroCore === core {
+                let p = core.loadProgress
+                self.gyroLoadProgress = p
+                try? await Task.sleep(for: .milliseconds(150))
+            }
+            self?.gyroLoadProgress = -1.0
+        }
+
         core.start(
             videoPath: videoPath,
             lensPath: lensPath,
@@ -132,6 +151,7 @@ final class VideoController: @unchecked Sendable {
                 guard let self, self.activeGyroCore === core else { return }  // stale guard
                 self.gyroLoadPending = false
                 self.gyroIsLoading = false
+                self.gyroLoadProgress = -1.0
                 self.gyroStabEnabled = true
                 self.gyroAvailable = true
                 // loadGyroCore() clears waitingForGyro and resumes if pendingPause==false
@@ -151,6 +171,7 @@ final class VideoController: @unchecked Sendable {
                 guard let self, self.activeGyroCore === core else { return }  // stale guard
                 self.gyroLoadPending = false
                 self.gyroIsLoading = false
+                self.gyroLoadProgress = -1.0
                 self.gyroLastError = msg
                 self.gyroAvailable = false
                 self.activeGyroCore = nil
@@ -230,10 +251,14 @@ final class VideoController: @unchecked Sendable {
         let codec   = diag ? v.codecInfo : nil
         let csInfo2 = diag ? v.colorSpaceInfo : "-"
         let avfLayer = v.isAVFLayerMode
+        let analyzing = v.isAnalyzing
+        let buffering = v.isBuffering
 
         // Main thread only does fast property assignments.
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
+            self.videoIsAnalyzing = analyzing
+            self.videoIsBuffering = buffering
             if d > 0 { self.duration = d }
             if eof {
                 self.currentTime = 0
