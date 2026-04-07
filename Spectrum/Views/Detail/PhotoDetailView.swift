@@ -731,8 +731,7 @@ struct PhotoDetailView: View {
         playbackStarted = false
         gyroConfigJson = nil
         videoController.reset()
-        hideTask?.cancel()
-        controlsVisible = true
+        resetControlsTimer()
         barOffset = .zero
         barDragStart = .zero
         removeSpaceMonitor()

@@ -197,6 +197,11 @@ struct PhotoGridView: View {
             Button("Paste \"\(item.name)\"") {
                 Task { await performPaste() }
             }
+        } else if let f = clipboard.files {
+            Divider()
+            Button("\(f.isCut ? "Move" : "Paste") \(f.count) Items") {
+                Task { await performPasteFiles() }
+            }
         }
         if let group = importModel.draggedGroup {
             Divider()
@@ -349,7 +354,23 @@ struct PhotoGridView: View {
                 }
                 .contextMenu {
                     if selectedItemIds.contains(item.filePath) && selectedItemIds.count > 1 {
-                        Button("Move \(selectedItemIds.count) Items to Trash", role: .destructive) {
+                        let count = selectedItemIds.count
+                        let bm = folder?.bookmarkData ?? Data()
+                        let paths = Array(selectedItemIds)
+                        Button("Copy \(count) Items") {
+                            clipboard.copyFiles(paths: paths, bookmarkData: bm)
+                        }
+                        Button("Cut \(count) Items") {
+                            clipboard.cutFiles(paths: paths, bookmarkData: bm)
+                        }
+                        Divider()
+                        Button("Show in Finder") {
+                            for path in paths {
+                                NSWorkspace.shared.selectFile(path, inFileViewerRootedAtPath: "")
+                            }
+                        }
+                        Divider()
+                        Button("Move \(count) Items to Trash", role: .destructive) {
                             triggerDeleteSelected()
                         }
                     } else {
@@ -631,6 +652,54 @@ struct PhotoGridView: View {
         }
     }
 
+    private func performPasteFiles() async {
+        guard let item = clipboard.files,
+              let destPath = effectivePath,
+              let dstBM = folder?.bookmarkData else { return }
+
+        guard let srcRootURL = try? BookmarkService.resolveBookmark(item.bookmarkData),
+              let dstRootURL = try? BookmarkService.resolveBookmark(dstBM) else {
+            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
+            return
+        }
+
+        let crossScope = srcRootURL.standardizedFileURL != dstRootURL.standardizedFileURL
+        let srcStarted = srcRootURL.startAccessingSecurityScopedResource()
+        let dstStarted = crossScope ? dstRootURL.startAccessingSecurityScopedResource() : false
+        defer {
+            if srcStarted { srcRootURL.stopAccessingSecurityScopedResource() }
+            if dstStarted { dstRootURL.stopAccessingSecurityScopedResource() }
+        }
+
+        var encounteredError: Error?
+        for path in item.paths {
+            let src = URL(fileURLWithPath: path)
+            let dst = URL(fileURLWithPath: destPath).appendingPathComponent(src.lastPathComponent)
+            guard !FileManager.default.fileExists(atPath: dst.path) else { continue }
+            do {
+                if item.isCut {
+                    if crossScope {
+                        try FileManager.default.copyItem(at: src, to: dst)
+                        do { try FileManager.default.removeItem(at: src) } catch {
+                            try? FileManager.default.removeItem(at: dst)
+                            throw error
+                        }
+                    } else {
+                        try FileManager.default.moveItem(at: src, to: dst)
+                    }
+                } else {
+                    try FileManager.default.copyItem(at: src, to: dst)
+                }
+            } catch {
+                encounteredError = error
+            }
+        }
+
+        if item.isCut { clipboard.clear() }
+        await loadCurrentLevel()
+        if let err = encounteredError { errorMessage = fileErrorMessage(err) }
+    }
+
     private func handleDrop(_ providers: [NSItemProvider], destinationPath: String) {
         guard let bm = folder?.bookmarkData else { return }
 
@@ -674,6 +743,9 @@ struct PhotoGridView: View {
         var processedURLs = Set<URL>()
         var encounteredError: Error?
 
+        let taskLabel = "\(isCut ? "Moving" : "Copying") \(group.folderName)"
+        let taskId = importModel.beginImportTask(label: taskLabel, total: group.items.count)
+
         for item in group.items {
             let dst = folderURL.appendingPathComponent(item.url.lastPathComponent)
             do {
@@ -693,9 +765,12 @@ struct PhotoGridView: View {
             } catch {
                 encounteredError = error
             }
+            importModel.updateImportTask(taskId, done: processedURLs.count)
         }
         if srcScopeStarted { srcURL?.stopAccessingSecurityScopedResource() }
         if dstStarted { dstRootURL.stopAccessingSecurityScopedResource() }
+
+        importModel.finishImportTask(taskId)
 
         if let error = encounteredError {
             errorMessage = fileErrorMessage(error)

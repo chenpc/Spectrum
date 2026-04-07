@@ -27,6 +27,32 @@ final class ImportPanelModel {
     var items: [ImportItem] = []
     var isScanning = false
 
+    // MARK: - Copy/Move 多任務進度
+    struct ImportTask: Identifiable {
+        let id = UUID()
+        var label: String
+        var done: Int
+        var total: Int
+        var isDeterminate: Bool { total > 0 }
+    }
+    private(set) var importTasks: [ImportTask] = []
+
+    func beginImportTask(label: String, total: Int) -> UUID {
+        let task = ImportTask(label: label, done: 0, total: total)
+        importTasks.append(task)
+        return task.id
+    }
+
+    func updateImportTask(_ id: UUID, done: Int) {
+        guard let idx = importTasks.firstIndex(where: { $0.id == id }) else { return }
+        importTasks[idx].done = done
+    }
+
+    func finishImportTask(_ id: UUID) {
+        importTasks.removeAll { $0.id == id }
+    }
+
+
     /// Toggle to expand/collapse all groups (toggling triggers onChange in views)
     var expandCollapseToken = 0
     var expandAll = true
@@ -83,15 +109,25 @@ final class ImportPanelModel {
     func scanFolder(url: URL) async {
         isScanning = true
         items = []
+        await Task.yield()  // 讓 SwiftUI 先 render 掃描狀態再開始工作
 
-        // Acquire scope only for the duration of enumeration, then release to allow umount
         let scopeStarted = url.startAccessingSecurityScopedResource()
-        let found = await Task.detached {
-            ImportPanelModel.enumerateMedia(in: url)
-        }.value
+        let stream = AsyncStream<ImportItem> { continuation in
+            Task.detached {
+                ImportPanelModel.enumerateMedia(in: url, yield: { continuation.yield($0) })
+                continuation.finish()
+            }
+        }
+        var batchCount = 0
+        for await item in stream {
+            items.append(item)
+            batchCount += 1
+            if batchCount % 10 == 0 {
+                await Task.yield()
+            }
+        }
         if scopeStarted { url.stopAccessingSecurityScopedResource() }
 
-        items = found
         isScanning = false
     }
 
@@ -106,25 +142,18 @@ final class ImportPanelModel {
         items.removeAll { urls.contains($0.url) }
     }
 
-    nonisolated private static func enumerateMedia(in url: URL) -> [ImportItem] {
+    nonisolated private static func enumerateMedia(in url: URL, yield yieldItem: (ImportItem) -> Void) {
         let fm = FileManager.default
-        guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else {
-            return []
-        }
+        guard let enumerator = fm.enumerator(at: url, includingPropertiesForKeys: [.contentModificationDateKey, .isRegularFileKey], options: [.skipsHiddenFiles]) else { return }
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
-        var result: [ImportItem] = []
         for case let fileURL as URL in enumerator {
             guard fileURL.isMediaFile else { continue }
-            let date = extractDateStatic(from: fileURL, formatter: dateFormatter) ?? (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate ?? Date()
-            result.append(ImportItem(
-                url: fileURL,
-                fileName: fileURL.lastPathComponent,
-                dateTaken: date,
-                isVideo: fileURL.isVideoFile
-            ))
+            let date = extractDateStatic(from: fileURL, formatter: dateFormatter)
+                ?? (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate
+                ?? Date()
+            yieldItem(ImportItem(url: fileURL, fileName: fileURL.lastPathComponent, dateTaken: date, isVideo: fileURL.isVideoFile))
         }
-        return result
     }
 
     nonisolated private static func extractDateStatic(from url: URL, formatter: DateFormatter) -> Date? {
@@ -153,11 +182,7 @@ struct ImportPanelView: View {
             Divider()
             if model.sourceURL == nil {
                 emptyState
-            } else if model.isScanning {
-                Spacer()
-                ProgressView("Scanning…")
-                Spacer()
-            } else if model.items.isEmpty {
+            } else if model.items.isEmpty && !model.isScanning {
                 Spacer()
                 Text("No media files found")
                     .foregroundStyle(.secondary)
@@ -165,6 +190,9 @@ struct ImportPanelView: View {
             } else {
                 fileList
             }
+        }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            ImportPanelFooter(model: model)
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
     }
@@ -346,6 +374,44 @@ struct ImportThumbnailView: View {
             return thumb.nsImage
         } catch {
             return nil
+        }
+    }
+}
+
+// MARK: - Import Panel Footer
+
+private struct ImportPanelFooter: View {
+    let model: ImportPanelModel
+
+    var body: some View {
+        if !model.importTasks.isEmpty || model.isScanning {
+            VStack(spacing: 0) {
+                Divider()
+                VStack(spacing: 4) {
+                    ForEach(model.importTasks) { task in
+                        HStack(spacing: 8) {
+                            ProgressView(value: Double(task.done), total: Double(max(1, task.total)))
+                                .progressViewStyle(.linear)
+                                .frame(maxWidth: .infinity)
+                            Text("\(task.label) \(task.done)/\(task.total)")
+                                .font(.caption2.monospacedDigit())
+                                .foregroundStyle(.secondary)
+                                .fixedSize()
+                        }
+                    }
+                    if model.isScanning {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small).frame(width: 20)
+                            Text(model.items.isEmpty ? "Scanning…" : "Scanning… \(model.items.count) files found")
+                                .font(.caption2).foregroundStyle(.secondary)
+                            Spacer()
+                        }
+                    }
+                }
+                .padding(.horizontal, 12)
+                .padding(.vertical, 5)
+            }
+            .background(.bar)
         }
     }
 }

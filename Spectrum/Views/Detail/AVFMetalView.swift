@@ -178,6 +178,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private var playerItem: AVPlayerItem?
     nonisolated(unsafe) private var videoOutput: AVPlayerItemVideoOutput?
     nonisolated(unsafe) private var displayLink: CVDisplayLink?
+    /// Semaphore (value=1)：防止 render queue 積壓。CVDisplayLink tick 若前一幀尚未完成直接丟棄。
+    private let renderSemaphore = DispatchSemaphore(value: 1)
     nonisolated(unsafe) private var timeObserver: Any?
 
     /// True while analyzeVideo() is running (between load() and player creation).
@@ -299,6 +301,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         metalLayer.device = dev
         metalLayer.pixelFormat = .rgba16Float
         metalLayer.framebufferOnly = true
+        metalLayer.displaySyncEnabled = true
         metalLayer.colorspace = CGColorSpace(name: CGColorSpace.itur_2100_HLG)
         metalLayer.wantsExtendedDynamicRangeContent = true
         metalLayer.contentsScale = NSScreen.main?.backingScaleFactor ?? 2.0
@@ -666,7 +669,12 @@ class AVFMetalView: NSView, @unchecked Sendable {
         CVDisplayLinkSetOutputCallback(dl, { (_, _, _, _, _, userInfo) -> CVReturn in
             guard let userInfo else { return kCVReturnSuccess }
             let view = Unmanaged<AVFMetalView>.fromOpaque(userInfo).takeUnretainedValue()
-            view.renderQueue.async { view.renderFrame() }
+            // 若前一幀還在渲染，直接丟棄此 tick，避免 queue 積壓造成跳幀
+            guard view.renderSemaphore.wait(timeout: .now()) == .success else { return kCVReturnSuccess }
+            view.renderQueue.async {
+                defer { view.renderSemaphore.signal() }
+                view.renderFrame()
+            }
             return kCVReturnSuccess
         }, selfPtr)
         CVDisplayLinkStart(dl)
@@ -873,6 +881,11 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
         cmdBuf.present(drawable)
         cmdBuf.commit()
+
+        // Flush stale CVMetalTexture cache entries every frame so VideoToolbox
+        // can reclaim pixel buffers. Without this the decoder pool fills up and
+        // copyPixelBuffer() starts returning nil intermittently, causing frame drops.
+        CVMetalTextureCacheFlush(textureCache, 0)
 
         // FPS / CV measurement (diagnostics only)
         if diagnosticsEnabled {

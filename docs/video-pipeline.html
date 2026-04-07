@@ -1,0 +1,627 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Spectrum Video Playback Pipeline</title>
+<style>
+  :root {
+    --bg: #0d1117; --card: #161b22; --border: #30363d;
+    --text: #e6edf3; --dim: #8b949e; --accent: #58a6ff;
+    --green: #3fb950; --orange: #d29922; --red: #f85149;
+    --purple: #bc8cff; --cyan: #39d2c0; --pink: #f778ba;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body { background: var(--bg); color: var(--text); font-family: -apple-system, 'SF Pro', system-ui, sans-serif; line-height: 1.6; overflow: hidden; height: 100vh; }
+
+  /* ── Slide system ── */
+  .slide {
+    display: none; flex-direction: column; justify-content: center;
+    width: 100vw; height: 100vh; padding: 60px 80px;
+    opacity: 0; transition: opacity 0.4s ease;
+  }
+  .slide.active { display: flex; opacity: 1; }
+  .slide.fade-out { opacity: 0; }
+
+  /* ── Nav bar ── */
+  .nav {
+    position: fixed; bottom: 0; left: 0; right: 0; z-index: 100;
+    display: flex; align-items: center; justify-content: center; gap: 16px;
+    padding: 12px 24px; background: rgba(22,27,34,0.92); backdrop-filter: blur(12px);
+    border-top: 1px solid var(--border);
+  }
+  .nav button {
+    background: var(--border); color: var(--text); border: none; border-radius: 8px;
+    padding: 8px 20px; font-size: 0.9em; cursor: pointer; transition: background 0.2s;
+  }
+  .nav button:hover { background: var(--accent); color: #000; }
+  .nav button:disabled { opacity: 0.3; cursor: default; background: var(--border); color: var(--text); }
+  .nav .page-info { color: var(--dim); font-size: 0.85em; min-width: 80px; text-align: center; font-variant-numeric: tabular-nums; }
+  .progress-bar { position: fixed; top: 0; left: 0; height: 3px; background: var(--accent); transition: width 0.4s ease; z-index: 101; }
+
+  /* ── Keyboard hint ── */
+  .kbd-hint { position: fixed; top: 16px; right: 24px; color: var(--dim); font-size: 0.75em; z-index: 100; }
+  .kbd-hint kbd { background: var(--border); padding: 2px 8px; border-radius: 4px; font-family: inherit; margin: 0 2px; }
+
+  /* ── Slide typography ── */
+  .slide h1 { font-size: 2.4em; margin-bottom: 12px; }
+  .slide h2 { font-size: 1.8em; margin-bottom: 20px; }
+  .slide .subtitle { color: var(--dim); font-size: 1.15em; }
+  .slide .section-num { color: var(--accent); font-size: 0.9em; font-weight: 700; letter-spacing: 2px; margin-bottom: 8px; }
+
+  /* ── Pipeline steps ── */
+  .pipeline { background: var(--card); border: 1px solid var(--border); border-radius: 12px; padding: 24px; flex: 1; min-width: 340px; }
+  .pipeline-title { font-size: 1.1em; font-weight: 700; margin-bottom: 14px; display: flex; align-items: center; gap: 8px; }
+  .badge { display: inline-block; padding: 2px 10px; border-radius: 20px; font-size: 0.75em; font-weight: 600; }
+  .badge-standard { background: #1f6feb33; color: var(--accent); }
+  .badge-spectrum { background: #3fb95033; color: var(--green); }
+  .badge-dv { background: #bc8cff33; color: var(--purple); }
+
+  .flow { display: flex; flex-direction: column; }
+  .step { position: relative; padding: 10px 16px; border-left: 3px solid var(--border); margin-left: 16px; }
+  .step:last-child { border-left-color: transparent; }
+  .step::before {
+    content: ''; position: absolute; left: -8px; top: 12px;
+    width: 13px; height: 13px; border-radius: 50%;
+    background: var(--card); border: 3px solid var(--accent);
+  }
+  .step.gpu::before { border-color: var(--green); }
+  .step.warn::before { border-color: var(--orange); }
+  .step.audio::before { border-color: var(--pink); }
+  .step.gyro::before { border-color: var(--purple); }
+  .step-label { font-weight: 600; font-size: 0.9em; }
+  .step-desc { color: var(--dim); font-size: 0.82em; margin-top: 2px; }
+  .step-code { background: #0d1117; border: 1px solid var(--border); border-radius: 6px; padding: 6px 12px; margin-top: 6px; font-family: 'SF Mono', 'Fira Code', monospace; font-size: 0.78em; color: var(--cyan); white-space: pre; overflow-x: auto; }
+
+  .thread { display: inline-block; padding: 1px 8px; border-radius: 4px; font-size: 0.7em; font-weight: 700; margin-left: 6px; vertical-align: middle; }
+  .thread-rt { background: #f8514933; color: var(--red); }
+  .thread-render { background: #3fb95033; color: var(--green); }
+  .thread-main { background: #d2992233; color: var(--orange); }
+  .thread-bg { background: #8b949e33; color: var(--dim); }
+  .thread-hw { background: #bc8cff33; color: var(--purple); }
+
+  .columns { display: flex; gap: 24px; flex-wrap: wrap; }
+
+  /* ── Two-pass diagram ── */
+  .pass-diagram { display: flex; align-items: center; justify-content: center; gap: 10px; flex-wrap: wrap; margin: 14px 0; }
+  .pass-box { background: #0d1117; border: 2px solid var(--border); border-radius: 8px; padding: 12px 18px; text-align: center; min-width: 120px; }
+  .pass-box.active { border-color: var(--green); }
+  .pass-box.gyro-box { border-color: var(--purple); }
+  .pass-box .label { font-size: 0.72em; color: var(--dim); }
+  .pass-box .value { font-size: 0.88em; font-weight: 600; margin-top: 3px; }
+  .pass-arrow { font-size: 1.4em; color: var(--dim); }
+  .pass-arrow.active { color: var(--green); }
+
+  /* ── Thread lanes ── */
+  .thread-lanes { display: flex; flex-direction: column; gap: 2px; }
+  .lane { display: flex; align-items: center; min-height: 44px; }
+  .lane-label { width: 150px; flex-shrink: 0; font-size: 0.78em; font-weight: 600; text-align: right; padding-right: 14px; }
+  .lane-track { flex: 1; display: flex; align-items: center; gap: 2px; height: 36px; background: #ffffff06; border-radius: 6px; overflow: hidden; }
+  .block { height: 28px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 0.65em; font-weight: 600; white-space: nowrap; padding: 0 6px; }
+  .block-rt { background: #f8514944; border: 1px solid #f8514966; color: var(--red); }
+  .block-render { background: #3fb95033; border: 1px solid #3fb95055; color: var(--green); }
+  .block-gpu { background: #58a6ff33; border: 1px solid #58a6ff55; color: var(--accent); }
+  .block-decode { background: #bc8cff33; border: 1px solid #bc8cff55; color: var(--purple); }
+  .block-main { background: #d2992233; border: 1px solid #d2992255; color: var(--orange); }
+  .block-idle { background: transparent; }
+  .legend { display: flex; flex-wrap: wrap; gap: 14px; justify-content: center; margin: 14px 0 0; }
+  .legend-item { display: flex; align-items: center; gap: 5px; font-size: 0.75em; color: var(--dim); }
+  .legend-dot { width: 10px; height: 10px; border-radius: 50%; }
+
+  /* ── Table ── */
+  table { width: 100%; border-collapse: collapse; font-size: 0.85em; }
+  th, td { padding: 8px 12px; text-align: left; border: 1px solid var(--border); }
+  th { background: #1c2128; color: var(--accent); font-weight: 600; }
+  td { background: var(--card); }
+  td.good { color: var(--green); }
+  td.warn { color: var(--orange); }
+  td.bad { color: var(--red); }
+
+  /* ── Notes ── */
+  .note { background: #1c2128; border: 1px solid var(--border); border-radius: 8px; padding: 16px; margin: 16px 0; }
+  .note-title { font-weight: 700; margin-bottom: 6px; }
+  .note-title.orange { color: var(--orange); }
+  .note-title.green { color: var(--green); }
+  .note-title.red { color: var(--red); }
+  .note ul { padding-left: 20px; color: var(--dim); font-size: 0.88em; }
+  .note li { margin: 3px 0; }
+  .note li code { background: #0d1117; padding: 1px 6px; border-radius: 4px; font-size: 0.9em; color: var(--cyan); }
+
+  /* ── Cover slide ── */
+  .cover { text-align: center; }
+  .cover h1 { font-size: 3em; margin-bottom: 16px; background: linear-gradient(135deg, var(--accent), var(--green)); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .cover .subtitle { font-size: 1.3em; }
+  .cover .date { color: var(--dim); font-size: 0.9em; margin-top: 32px; }
+</style>
+</head>
+<body>
+
+<div class="progress-bar" id="progressBar"></div>
+<div class="kbd-hint"><kbd>&larr;</kbd> <kbd>&rarr;</kbd> or <kbd>Space</kbd></div>
+
+<!-- ========== SLIDE 1: Cover ========== -->
+<div class="slide active cover" data-slide="0">
+  <div>
+    <h1>Spectrum Video Pipeline</h1>
+    <p class="subtitle">一般 AVPlayer 播放流程 vs. Spectrum 自訂 Metal 渲染管線</p>
+    <p class="date">2026-04-08</p>
+  </div>
+</div>
+
+<!-- ========== SLIDE 2: Standard — AVPlayerLayer ========== -->
+<div class="slide" data-slide="1">
+  <div class="section-num">01 / STANDARD</div>
+  <h2>一般播放：AVPlayer + AVPlayerLayer</h2>
+  <div class="columns" style="margin-top: 16px;">
+    <div class="pipeline" style="flex:1.2">
+      <div class="pipeline-title"><span class="badge badge-standard">Standard</span> 最簡單的播放方式</div>
+      <div class="flow">
+        <div class="step">
+          <div class="step-label">1. 建立 AVPlayer <span class="thread thread-main">Main</span></div>
+          <div class="step-desc">載入影片檔，AVFoundation 自動分析格式、codec</div>
+          <div class="step-code">let player = AVPlayer(url: videoURL)
+let layer = AVPlayerLayer(player: player)</div>
+        </div>
+        <div class="step">
+          <div class="step-label">2. 等待 readyToPlay <span class="thread thread-bg">Background</span></div>
+          <div class="step-desc">背景初始化 VideoToolbox 硬體解碼器、填充 buffer</div>
+        </div>
+        <div class="step">
+          <div class="step-label">3. player.play() <span class="thread thread-main">Main</span></div>
+          <div class="step-desc">開始播放，audio/video clock 啟動</div>
+        </div>
+        <div class="step gpu">
+          <div class="step-label">4. 系統自動渲染 <span class="thread thread-hw">Hardware</span></div>
+          <div class="step-desc">AVPlayerLayer 自動取 frame → 顯示。App 完全不介入。</div>
+        </div>
+        <div class="step audio">
+          <div class="step-label">5. A/V Sync <span class="thread thread-hw">Hardware</span></div>
+          <div class="step-desc">系統自動處理音畫同步</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:0.8;display:flex;flex-direction:column;gap:16px;">
+      <div class="note">
+        <div class="note-title green">優點</div>
+        <ul>
+          <li>程式碼約 10 行</li>
+          <li>系統自動處理 HDR / DV / rotation</li>
+          <li>Main Thread 幾乎零負擔</li>
+          <li>音畫同步由系統保證</li>
+        </ul>
+      </div>
+      <div class="note">
+        <div class="note-title red">限制</div>
+        <ul>
+          <li>無法插入自訂 shader</li>
+          <li>無法控制色彩轉換</li>
+          <li>無法取得 per-frame PTS</li>
+          <li>無法做 gyro stabilization</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 3: Standard — Custom Metal ========== -->
+<div class="slide" data-slide="2">
+  <div class="section-num">02 / STANDARD</div>
+  <h2>自訂渲染：AVPlayer + VideoOutput + Metal</h2>
+  <div class="columns" style="margin-top: 16px;">
+    <div class="pipeline">
+      <div class="pipeline-title"><span class="badge badge-standard">Standard</span> 自訂 Metal 渲染</div>
+      <div class="flow">
+        <div class="step">
+          <div class="step-label">1. AVPlayerItemVideoOutput</div>
+          <div class="step-desc">指定像素格式（YCbCr 8/10-bit），掛載到 AVPlayerItem</div>
+        </div>
+        <div class="step">
+          <div class="step-label">2. CVDisplayLink 驅動 <span class="thread thread-rt">Real-time</span></div>
+          <div class="step-desc">每次 vsync（60/120 Hz）觸發 callback</div>
+        </div>
+        <div class="step">
+          <div class="step-label">3. 取 Pixel Buffer</div>
+          <div class="step-desc">hasNewPixelBuffer → copyPixelBuffer</div>
+        </div>
+        <div class="step gpu">
+          <div class="step-label">4. Metal Render <span class="thread thread-render">Render Queue</span></div>
+          <div class="step-desc">CVPixelBuffer → CVMetalTexture → shader → drawable</div>
+        </div>
+        <div class="step warn">
+          <div class="step-label">5. Present</div>
+          <div class="step-desc">present(drawable) + commit</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:1;display:flex;flex-direction:column;justify-content:center;">
+      <div class="pass-diagram" style="flex-direction:column;gap:16px;">
+        <div style="display:flex;align-items:center;gap:10px;">
+          <div class="pass-box"><div class="label">Input</div><div class="value">CVPixelBuffer</div></div>
+          <div class="pass-arrow">→</div>
+          <div class="pass-box"><div class="label">Cache</div><div class="value">CVMetalTexture</div></div>
+          <div class="pass-arrow">→</div>
+          <div class="pass-box active"><div class="label" style="color:var(--green)">Shader</div><div class="value">YCbCr → RGB</div></div>
+          <div class="pass-arrow">→</div>
+          <div class="pass-box" style="border-color:var(--orange)"><div class="label" style="color:var(--orange)">Output</div><div class="value">Drawable</div></div>
+        </div>
+      </div>
+      <div class="note" style="margin-top:24px;">
+        <div class="note-title orange">注意事項</div>
+        <ul>
+          <li>CVDisplayLink 是 real-time thread，不應直接做 GPU work</li>
+          <li>必須呼叫 <code>CVMetalTextureCacheFlush</code> 釋放 buffer</li>
+          <li>需自行處理 frame drop（避免 render queue 堆積）</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 4: Spectrum — Load Phase ========== -->
+<div class="slide" data-slide="3">
+  <div class="section-num">03 / SPECTRUM</div>
+  <h2>Spectrum 啟動階段（Load → Play）</h2>
+  <div class="pipeline" style="max-width: 900px;">
+    <div class="pipeline-title"><span class="badge badge-spectrum">Spectrum</span> 7 步啟動流程</div>
+    <div class="flow">
+      <div class="step">
+        <div class="step-label">1. load(path:) <span class="thread thread-main">Main</span></div>
+        <div class="step-desc">清理舊 player、重設狀態、記錄 loadStartTime</div>
+      </div>
+      <div class="step">
+        <div class="step-label">2. analyzeVideo(asset:) <span class="thread thread-main">Main (async)</span></div>
+        <div class="step-desc">讀取 format descriptions → codec / bitDepth / HDR / DV / rotation</div>
+      </div>
+      <div class="step">
+        <div class="step-label">3. 自動選擇管線參數</div>
+        <div class="step-desc">outputPixelFormat (8/10bit × V/F) &bull; decodeMode (601/709/2020) &bull; colorspace (HLG/PQ/sRGB) &bull; EDR</div>
+      </div>
+      <div class="step">
+        <div class="step-label">4. 建立 AVPlayer <span class="thread thread-main">Main</span></div>
+        <div class="step-desc">AVPlayerItem + VideoOutput + preferredForwardBufferDuration (5s)</div>
+      </div>
+      <div class="step warn">
+        <div class="step-label">5. KVO: readyToPlay</div>
+        <div class="step-desc">等待解碼器就緒 — 確保第一幀不黑屏</div>
+      </div>
+      <div class="step gyro">
+        <div class="step-label">6. Gyro 延遲載入（可選）<span class="thread thread-bg">Background ~300ms</span></div>
+        <div class="step-desc">waitingForGyro = true → GyroCore.start() → loadGyroCore() → 恢復播放</div>
+      </div>
+      <div class="step">
+        <div class="step-label">7. player.play() <span class="thread thread-main">Main</span></div>
+        <div class="step-desc">readyToPlay ∧ gyro 就緒 → 開始播放 + startDisplayLink()</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 5: Spectrum — Render Loop ========== -->
+<div class="slide" data-slide="4">
+  <div class="section-num">04 / SPECTRUM</div>
+  <h2>Spectrum 渲染迴圈（每幀）</h2>
+  <div class="columns">
+    <div class="pipeline">
+      <div class="pipeline-title"><span class="badge badge-spectrum">Spectrum</span> renderFrame()</div>
+      <div class="flow">
+        <div class="step">
+          <div class="step-label">1. CVDisplayLink Tick <span class="thread thread-rt">Real-time</span></div>
+          <div class="step-desc">非阻塞 semaphore check — 前一幀未完成就跳過</div>
+          <div class="step-code">guard renderSemaphore.wait(timeout: .now()) == .success</div>
+        </div>
+        <div class="step">
+          <div class="step-label">2. renderQueue.async <span class="thread thread-render">Render</span></div>
+          <div class="step-desc">QoS = .userInteractive（不佔 real-time thread）</div>
+        </div>
+        <div class="step">
+          <div class="step-label">3. copyPixelBuffer <span class="thread thread-render">Render</span></div>
+          <div class="step-desc">精確 PTS 用於 gyro 時間對齊</div>
+        </div>
+        <div class="step gyro">
+          <div class="step-label">4. Gyro Matrix <span class="thread thread-render">Render</span></div>
+          <div class="step-desc">computeMatrixAtTime(pts) → matTex</div>
+        </div>
+        <div class="step gpu">
+          <div class="step-label">5. Metal Encode + Submit</div>
+          <div class="step-desc">Pass 1 + Pass 2 (見下一頁)</div>
+        </div>
+        <div class="step">
+          <div class="step-label">6. Present + Flush</div>
+          <div class="step-code">cmdBuf.present(drawable)
+cmdBuf.commit()
+CVMetalTextureCacheFlush(textureCache, 0)</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:0.8;display:flex;flex-direction:column;gap:16px;justify-content:center;">
+      <div class="note">
+        <div class="note-title green">Frame Drop 策略</div>
+        <ul>
+          <li><code>DispatchSemaphore(value: 1)</code></li>
+          <li>CVDisplayLink tick 時如果前一幀還在渲染 → 直接放棄此 tick</li>
+          <li>保證 renderQueue 永遠只有 1 個工作</li>
+          <li>graceful drop，不會累積延遲</li>
+        </ul>
+      </div>
+      <div class="note">
+        <div class="note-title orange">為什麼不在 CVDisplayLink thread 直接渲染？</div>
+        <ul>
+          <li>CVDisplayLink 是 real-time priority</li>
+          <li>CoreAudio 也在 real-time 執行</li>
+          <li>如果 GPU wait 卡住 → 搶佔音訊 → 爆音</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 6: Two-Pass Pipeline ========== -->
+<div class="slide" data-slide="5">
+  <div class="section-num">05 / SPECTRUM</div>
+  <h2>Metal Two-Pass 渲染管線</h2>
+
+  <div style="margin:20px 0;">
+    <div style="text-align:center;font-weight:600;margin-bottom:12px;color:var(--green);">有 Gyro Stabilization：Two-Pass</div>
+    <div class="pass-diagram">
+      <div class="pass-box"><div class="label">Input</div><div class="value">CVPixelBuffer<br><span style="font-size:0.8em;color:var(--dim)">YCbCr 8/10-bit</span></div></div>
+      <div class="pass-arrow">→</div>
+      <div class="pass-box"><div class="label">CVMetalTextureCache</div><div class="value">texY + texCbCr<br><span style="font-size:0.8em;color:var(--dim)">r8/r16 + rg8/rg16</span></div></div>
+      <div class="pass-arrow active">→</div>
+      <div class="pass-box active"><div class="label" style="color:var(--green)">Pass 1: Decode</div><div class="value">YCbCr → RGBA16F<br><span style="font-size:0.8em;color:var(--dim)">14 decode modes</span></div></div>
+      <div class="pass-arrow active">→</div>
+      <div class="pass-box" style="border-color:var(--accent)"><div class="label" style="color:var(--accent)">Offscreen Tex</div><div class="value">RGBA16Float</div></div>
+      <div class="pass-arrow" style="color:var(--purple)">→</div>
+      <div class="pass-box gyro-box"><div class="label" style="color:var(--purple)">Pass 2: Warp</div><div class="value">Gyro Stabilize<br><span style="font-size:0.8em;color:var(--dim)">5 distortion models</span></div></div>
+      <div class="pass-arrow">→</div>
+      <div class="pass-box" style="border-color:var(--orange)"><div class="label" style="color:var(--orange)">CAMetalLayer</div><div class="value">Drawable</div></div>
+    </div>
+  </div>
+
+  <div style="margin:28px 0;">
+    <div style="text-align:center;font-weight:600;margin-bottom:12px;color:var(--dim);">無 Gyro：Single-Pass</div>
+    <div class="pass-diagram">
+      <div class="pass-box"><div class="label">Input</div><div class="value">CVPixelBuffer</div></div>
+      <div class="pass-arrow">→</div>
+      <div class="pass-box"><div class="label">Texture</div><div class="value">texY + texCbCr</div></div>
+      <div class="pass-arrow active">→</div>
+      <div class="pass-box active"><div class="label" style="color:var(--green)">Single Pass</div><div class="value">YCbCr → RGB<br><span style="font-size:0.8em;color:var(--dim)">直接到 drawable</span></div></div>
+      <div class="pass-arrow">→</div>
+      <div class="pass-box" style="border-color:var(--orange)"><div class="label" style="color:var(--orange)">Drawable</div><div class="value">CAMetalLayer</div></div>
+    </div>
+  </div>
+
+  <div class="note" style="max-width:800px;margin:0 auto;">
+    <div class="note-title green">14 Decode Modes</div>
+    <ul>
+      <li>BT.601 / BT.709 / BT.2020 — 各有 Video Range 和 Full Range</li>
+      <li>NoClamp 變體 — 用於超出標準範圍的 HDR 值</li>
+      <li>PQ↔HLG 互轉 — 跨 HDR 格式轉換</li>
+      <li>PQ/HLG → Linear — 用於後處理</li>
+      <li>Passthrough Y / CbCr — 診斷用</li>
+    </ul>
+  </div>
+</div>
+
+<!-- ========== SLIDE 7: Thread Timing ========== -->
+<div class="slide" data-slide="6">
+  <div class="section-num">06 / SPECTRUM</div>
+  <h2>執行緒時序圖（一幀 ~16.7ms @ 60Hz）</h2>
+
+  <div style="background:var(--card);border:1px solid var(--border);border-radius:12px;padding:24px;margin-top:16px;">
+    <div class="thread-lanes">
+      <div class="lane">
+        <div class="lane-label" style="color:var(--red)">CVDisplayLink<br>(Real-time)</div>
+        <div class="lane-track">
+          <div class="block block-rt" style="width:8%">tick</div>
+          <div class="block block-idle" style="width:50%"></div>
+          <div class="block block-rt" style="width:8%">tick</div>
+          <div class="block block-idle" style="width:26%"></div>
+          <div class="block block-rt" style="width:8%">tick</div>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lane-label" style="color:var(--green)">renderQueue<br>(.userInteractive)</div>
+        <div class="lane-track">
+          <div class="block block-idle" style="width:2%"></div>
+          <div class="block block-render" style="width:5%">sem</div>
+          <div class="block block-render" style="width:7%">copy PB</div>
+          <div class="block block-render" style="width:5%">gyro</div>
+          <div class="block block-render" style="width:12%">encode</div>
+          <div class="block block-render" style="width:4%">commit</div>
+          <div class="block block-render" style="width:4%">flush</div>
+          <div class="block block-idle" style="width:19%"></div>
+          <div class="block block-render" style="width:5%">sem</div>
+          <div class="block block-render" style="width:7%">copy PB</div>
+          <div class="block block-render" style="width:5%">gyro</div>
+          <div class="block block-render" style="width:12%">encode</div>
+          <div class="block block-render" style="width:4%">commit</div>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lane-label" style="color:var(--accent)">GPU</div>
+        <div class="lane-track">
+          <div class="block block-idle" style="width:20%"></div>
+          <div class="block block-gpu" style="width:8%">Pass 1</div>
+          <div class="block block-gpu" style="width:10%">Pass 2</div>
+          <div class="block block-gpu" style="width:5%">present</div>
+          <div class="block block-idle" style="width:15%"></div>
+          <div class="block block-gpu" style="width:8%">Pass 1</div>
+          <div class="block block-gpu" style="width:10%">Pass 2</div>
+          <div class="block block-gpu" style="width:5%">present</div>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lane-label" style="color:var(--purple)">VideoToolbox<br>(HW Decoder)</div>
+        <div class="lane-track">
+          <div class="block block-decode" style="width:15%">decode N</div>
+          <div class="block block-idle" style="width:5%"></div>
+          <div class="block block-decode" style="width:15%">decode N+1</div>
+          <div class="block block-idle" style="width:5%"></div>
+          <div class="block block-decode" style="width:15%">decode N+2</div>
+          <div class="block block-idle" style="width:5%"></div>
+          <div class="block block-decode" style="width:15%">decode N+3</div>
+        </div>
+      </div>
+      <div class="lane">
+        <div class="lane-label" style="color:var(--orange)">Main Thread</div>
+        <div class="lane-track">
+          <div class="block block-idle" style="width:40%"></div>
+          <div class="block block-main" style="width:8%">poll 4Hz</div>
+          <div class="block block-idle" style="width:52%"></div>
+        </div>
+      </div>
+    </div>
+    <div class="legend">
+      <div class="legend-item"><div class="legend-dot" style="background:var(--red)"></div>CVDisplayLink (vsync)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--green)"></div>renderQueue (CPU)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--accent)"></div>GPU (shader)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--purple)"></div>VideoToolbox (HW decode)</div>
+      <div class="legend-item"><div class="legend-dot" style="background:var(--orange)"></div>Main Thread (4Hz UI poll)</div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 8: DV Fallback ========== -->
+<div class="slide" data-slide="7">
+  <div class="section-num">07 / SPECTRUM</div>
+  <h2>Dolby Vision 特例：AVPlayerLayer 直通</h2>
+  <div class="columns" style="margin-top:24px;">
+    <div class="pipeline" style="max-width:600px;">
+      <div class="pipeline-title"><span class="badge badge-dv">Dolby Vision</span> 自動 Fallback</div>
+      <div class="flow">
+        <div class="step">
+          <div class="step-label">偵測 DV Profile</div>
+          <div class="step-desc">從 dvcC / dvvC atom 讀取 DV Profile & Level</div>
+        </div>
+        <div class="step">
+          <div class="step-label">啟用 AVPlayerLayer</div>
+          <div class="step-desc">AVPlayerLayer 疊在 CAMetalLayer 上</div>
+          <div class="step-code">enableAVFLayer()
+// renderFrame() → avfLayerMode guard → return
+// currentTime 改用 4Hz periodic observer</div>
+        </div>
+        <div class="step gpu">
+          <div class="step-label">系統處理 HDR Tone Mapping</div>
+          <div class="step-desc">Apple 內部自動套用 DV RPU → EDR rendering</div>
+        </div>
+      </div>
+    </div>
+    <div style="flex:1;display:flex;align-items:center;">
+      <div class="note">
+        <div class="note-title orange">為什麼 DV 必須用 AVPlayerLayer？</div>
+        <ul>
+          <li>Dolby Vision 的 RPU（Reference Processing Unit）是 proprietary metadata</li>
+          <li>只有 Apple 的 AVPlayerLayer 有 DV RPU decoder</li>
+          <li><code>copyPixelBuffer()</code> 拿到的 pixel data 不含 RPU 處理結果</li>
+          <li>直接用 Metal 渲染 DV 內容 = 丟失動態 tone mapping</li>
+          <li>代價：無法套用 gyro stabilization</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ========== SLIDE 9: Comparison Table ========== -->
+<div class="slide" data-slide="8">
+  <div class="section-num">08 / COMPARISON</div>
+  <h2>比較表</h2>
+  <div style="overflow-x:auto;margin-top:16px;">
+  <table>
+    <thead>
+      <tr><th>面向</th><th>標準 AVPlayerLayer</th><th>標準 Metal 自訂</th><th>Spectrum</th></tr>
+    </thead>
+    <tbody>
+      <tr><td><b>渲染控制</b></td><td>系統全自動</td><td>App 控制每幀</td><td>App 控制 + gyro warp</td></tr>
+      <tr><td><b>色彩空間</b></td><td>系統自動</td><td>手動 CAMetalLayer</td><td class="good">自動偵測 + frame 1 校正 + 手動切換</td></tr>
+      <tr><td><b>HDR</b></td><td class="good">自動 (HLG/PQ/DV)</td><td>需自行處理</td><td class="good">HLG/PQ native + DV fallback</td></tr>
+      <tr><td><b>YCbCr Decode</b></td><td>系統內部</td><td>1 種 shader</td><td class="good">14 種 decode modes</td></tr>
+      <tr><td><b>Gyro 穩定</b></td><td class="bad">不可能</td><td>需自行實作</td><td class="good">Two-pass + 5 distortion models</td></tr>
+      <tr><td><b>Frame Drop</b></td><td>系統管理</td><td>通常無處理</td><td class="good">Semaphore(1) graceful drop</td></tr>
+      <tr><td><b>Main Thread</b></td><td class="good">幾乎為零</td><td class="warn">取決於實作</td><td class="good">僅 4Hz poll</td></tr>
+      <tr><td><b>Texture Cache</b></td><td>N/A</td><td class="warn">常忘記 flush</td><td class="good">每幀 flush</td></tr>
+      <tr><td><b>影片旋轉</b></td><td class="good">自動</td><td>需自行處理</td><td class="good">vertex shader rotation</td></tr>
+      <tr><td><b>複雜度</b></td><td class="good">~10 行</td><td class="warn">~200 行</td><td class="warn">~900 行</td></tr>
+    </tbody>
+  </table>
+  </div>
+</div>
+
+<!-- ========== SLIDE 10: Known Issues ========== -->
+<div class="slide" data-slide="9">
+  <div class="section-num">09 / NOTES</div>
+  <h2>效能關鍵點</h2>
+  <div class="columns" style="margin-top:16px;">
+    <div class="note" style="flex:1;">
+      <div class="note-title orange">為什麼需要自訂管線？</div>
+      <ul>
+        <li>AVPlayerLayer 無法插入 gyro warp shader</li>
+        <li>Sony 影片的 color matrix mislabel 無法修正</li>
+        <li>需要精確 per-frame PTS 對齊 gyro 資料</li>
+        <li>需支援多種 HDR 並允許手動切換</li>
+      </ul>
+    </div>
+    <div class="note" style="flex:1;">
+      <div class="note-title green">效能保護措施</div>
+      <ul>
+        <li><code>renderSemaphore(1)</code> — graceful frame drop</li>
+        <li><code>renderQueue .userInteractive</code> — 不搶 CoreAudio</li>
+        <li><code>displaySyncEnabled = true</code> — 對齊 vsync</li>
+        <li><code>CVMetalTextureCacheFlush</code> — 回收解碼 buffer</li>
+        <li><code>framebufferOnly = true</code> — GPU 優化</li>
+        <li><code>VideoController 4Hz poll</code> — 最小化 Main Thread</li>
+      </ul>
+    </div>
+    <div class="note" style="flex:1;">
+      <div class="note-title red">曾導致卡頓的原因</div>
+      <ul>
+        <li><b>Texture Cache 未 flush</b> — buffer pool 耗盡 → 間歇掉幀</li>
+        <li><b>CVDisplayLink 直接渲染</b> — 搶佔 CoreAudio → 爆音</li>
+        <li><b>無 semaphore</b> — renderQueue 堆積 → GPU 背壓 → 延遲累積</li>
+      </ul>
+    </div>
+  </div>
+</div>
+
+<!-- ========== NAV ========== -->
+<div class="nav">
+  <button id="btnPrev" onclick="go(-1)">&larr; Prev</button>
+  <div class="page-info" id="pageInfo">1 / 10</div>
+  <button id="btnNext" onclick="go(1)">Next &rarr;</button>
+</div>
+
+<script>
+const slides = document.querySelectorAll('.slide');
+const total = slides.length;
+let current = 0;
+
+function show(idx) {
+  slides[current].classList.remove('active');
+  current = Math.max(0, Math.min(total - 1, idx));
+  slides[current].classList.add('active');
+  document.getElementById('pageInfo').textContent = `${current + 1} / ${total}`;
+  document.getElementById('btnPrev').disabled = current === 0;
+  document.getElementById('btnNext').disabled = current === total - 1;
+  document.getElementById('progressBar').style.width = `${((current + 1) / total) * 100}%`;
+}
+
+function go(delta) { show(current + delta); }
+
+document.addEventListener('keydown', e => {
+  if (e.key === 'ArrowRight' || e.key === ' ' || e.key === 'ArrowDown') { e.preventDefault(); go(1); }
+  if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); go(-1); }
+  if (e.key === 'Home') { e.preventDefault(); show(0); }
+  if (e.key === 'End') { e.preventDefault(); show(total - 1); }
+});
+
+// Touch swipe
+let touchStartX = 0;
+document.addEventListener('touchstart', e => { touchStartX = e.touches[0].clientX; });
+document.addEventListener('touchend', e => {
+  const dx = e.changedTouches[0].clientX - touchStartX;
+  if (Math.abs(dx) > 50) go(dx < 0 ? 1 : -1);
+});
+
+show(0);
+</script>
+</body>
+</html>

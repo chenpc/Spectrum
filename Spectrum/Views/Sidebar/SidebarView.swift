@@ -341,7 +341,7 @@ struct SidebarView: View {
 // MARK: - Sidebar progress bar
 
 private struct SidebarProgressBar: View {
-    @State private var progress = ThumbnailProgress.shared
+    private let progress = ThumbnailProgress.shared
 
     var body: some View {
         if progress.isActive {
@@ -353,7 +353,6 @@ private struct SidebarProgressBar: View {
                         Text("Removing \(progress.removingName)…")
                             .font(.caption2).foregroundStyle(.secondary)
                     } else {
-                        // 掃描或縮圖生成中：thumbTotal 有值時顯示確定性進度條，否則顯示 0/0
                         if progress.thumbTotal > 0 {
                             ProgressView(value: Double(progress.thumbDone), total: Double(progress.thumbTotal))
                                 .progressViewStyle(.linear).frame(maxWidth: .infinity)
