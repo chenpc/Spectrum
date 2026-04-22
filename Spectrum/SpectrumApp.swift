@@ -61,6 +61,7 @@ struct FileCommands: Commands {
 
 struct FolderEditCommands: Commands {
     @FocusedValue(\.folderEditAction) var folderEdit
+    @FocusedValue(\.selectAllAction) var selectAll
 
     var body: some Commands {
         // Replace the system Cut/Copy/Paste entries in the Edit menu.
@@ -78,6 +79,12 @@ struct FolderEditCommands: Commands {
             Button("Paste") { folderEdit?.paste?() }
                 .keyboardShortcut("v", modifiers: .command)
                 .disabled(folderEdit?.paste == nil)
+
+            Divider()
+
+            Button("Select All") { selectAll?() }
+                .keyboardShortcut("a", modifiers: .command)
+                .disabled(selectAll == nil)
         }
     }
 }

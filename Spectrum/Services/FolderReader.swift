@@ -174,7 +174,8 @@ enum FolderReader {
         ) else { return [] }
 
         return contents.compactMap { url in
-            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true else { return nil }
+            guard (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true,
+                  !url.isSkippedCameraDirectory else { return nil }
             let (coverPath, coverDate) = firstImageFile(in: url.path)
             return (name: url.lastPathComponent, path: url.path,
                     coverPath: coverPath, coverDate: coverDate)

@@ -76,10 +76,12 @@ struct SidebarView: View {
                 }
             } header: {
                 Text("Folders")
+                    .accessibilityIdentifier(AccessibilityID.sidebarFoldersSection)
             }
 
         }
         .listStyle(.sidebar)
+        .accessibilityIdentifier(AccessibilityID.sidebarList)
         .frame(minWidth: 200)
         .overlay {
             if folders.isEmpty {
@@ -88,6 +90,7 @@ struct SidebarView: View {
                 } description: {
                     Text("Drag folders here or use File → Add Folder...")
                 }
+                .accessibilityIdentifier(AccessibilityID.sidebarEmptyMessage)
             }
         }
         .overlay {

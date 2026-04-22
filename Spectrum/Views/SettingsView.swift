@@ -6,10 +6,13 @@ struct SettingsView: View {
         TabView {
             GeneralSettingsTab()
                 .tabItem { Label("General", systemImage: "gearshape") }
+                .accessibilityIdentifier(AccessibilityID.settingsGeneral)
             CacheSettingsTab()
                 .tabItem { Label("Cache", systemImage: "internaldrive") }
+                .accessibilityIdentifier(AccessibilityID.settingsCache)
             GyroSettingsTab()
                 .tabItem { Label("Gyro", systemImage: "gyroscope") }
+                .accessibilityIdentifier(AccessibilityID.settingsGyro)
             // TODO: [Backlog] Face/Object Detection — Vision framework VNDetectFaceRectanglesRequest
         }
         .frame(width: 460, height: 600)
@@ -37,6 +40,7 @@ private struct GeneralSettingsTab: View {
 
             Section("Playback") {
                 Toggle("Show diagnostics badge", isOn: $showDiagBadge)
+                    .accessibilityIdentifier(AccessibilityID.settingsDiagBadgeToggle)
 
                 Picker("Buffer Duration", selection: $preferredBufferDuration) {
                     Text(verbatim: "1s").tag(1.0)
@@ -97,6 +101,7 @@ private struct CacheSettingsTab: View {
                 Button("Reset All Data…", role: .destructive) {
                     showResetConfirm = true
                 }
+                .accessibilityIdentifier(AccessibilityID.settingsResetButton)
                 Text("Remove all folders from the library and clear thumbnail cache. Cannot be undone.")
                     .font(.caption2)
                     .foregroundStyle(.tertiary)

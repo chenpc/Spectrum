@@ -23,12 +23,14 @@ struct VideoControlBar: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(.primary)
+            .accessibilityIdentifier(AccessibilityID.videoPlayPause)
 
             // Elapsed time
             Text(formatTime(displaySeconds))
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .trailing)
+                .accessibilityIdentifier(AccessibilityID.videoElapsedTime)
 
             // Scrubber
             Slider(
@@ -50,12 +52,14 @@ struct VideoControlBar: View {
                 }
             )
             .controlSize(.small)
+            .accessibilityIdentifier(AccessibilityID.videoScrubber)
 
             // Remaining / total
             Text(formatTime(controller.duration))
                 .font(.system(size: 11).monospacedDigit())
                 .foregroundStyle(.secondary)
                 .frame(width: 40, alignment: .leading)
+                .accessibilityIdentifier(AccessibilityID.videoTotalTime)
 
             // Mute toggle
             Button {
@@ -71,6 +75,7 @@ struct VideoControlBar: View {
             }
             .buttonStyle(.plain)
             .foregroundStyle(controller.isMuted ? .secondary : .primary)
+            .accessibilityIdentifier(AccessibilityID.videoMuteToggle)
 
             // Volume slider
             Slider(value: Binding(
@@ -82,6 +87,7 @@ struct VideoControlBar: View {
             ), in: 0...1)
             .controlSize(.small)
             .frame(width: 60)
+            .accessibilityIdentifier(AccessibilityID.videoVolumeSlider)
         }
         .padding(.horizontal, 14)
         .padding(.vertical, 8)

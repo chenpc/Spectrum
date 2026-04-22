@@ -46,6 +46,16 @@
                ReferencedContainer = "container:Spectrum.xcodeproj">
             </BuildableReference>
          </TestableReference>
+         <TestableReference
+            skipped = "NO">
+            <BuildableReference
+               BuildableIdentifier = "primary"
+               BlueprintIdentifier = "UI600001"
+               BuildableName = "SpectrumUITests.xctest"
+               BlueprintName = "SpectrumUITests"
+               ReferencedContainer = "container:Spectrum.xcodeproj">
+            </BuildableReference>
+         </TestableReference>
       </Testables>
    </TestAction>
    <LaunchAction

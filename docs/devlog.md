@@ -6,6 +6,66 @@
 
 ---
 
+## 2026-04-23 — PhotoDetailView Binding 崩潰修復
+
+**類型：** Bug Fix
+
+**問題：** 使用者在 detail view 的 async image load 尚未完成時退出 detail view，app 直接 `EXC_BREAKPOINT` 崩潰。崩潰堆疊：`PhotoDetailView.prefetchAdjacentImages()` ← `Binding.readValue()` ← closure in `ContentView.photoDetail()`。
+
+**根因：** `ContentView.photoDetail()` 的 Binding get 寫成 `detailPhoto!` force-unwrap。使用者退出 detail view 後 `detailPhoto` 變成 nil，但 `loadFullImage()` 內部的 async Task 還在執行，之後呼叫 `prefetchAdjacentImages()` 透過 Binding 讀 `photo.filePath`，force-unwrap nil 直接崩。
+
+**做法：** 新增 `lastDetailPhoto: PhotoItem?` @State 保留最後一次有效 photo，Binding get 改成 `detailPhoto ?? lastDetailPhoto!`；Binding set 同時更新兩者；`.onChange(of: detailPhoto?.filePath)` 同步 lastDetailPhoto。因 `PhotoItem` 是 struct 不符合 `Equatable`，onChange 監聽 `filePath` String 而非 struct 本身。
+
+**修改的檔案：** `Spectrum/Views/ContentView.swift`
+
+---
+
+## 2026-04-23 — Loading Gyro badge 誤顯示修復
+
+**類型：** Bug Fix
+
+**問題：** 播放沒有 gyro data 的影片時，仍會短暫閃現 "Loading Gyro" badge。
+
+**根因：** gyroflow-core Rust 端 `LOAD_PROGRESS` 初始值是 0.0，`gyrocore_load()` 進入時也會 `set_load_progress(0.0)`，所以只要 gyro 載入一啟動 progress 立刻是 0.0。Swift 端若用 `progress >= 0` 判斷會立即為 true，即使影片完全沒有 gyro data 也會顯示 badge（直到解析失敗）。
+
+**做法：** VideoController 新增 `gyroShowLoadingUI` 屬性，polling loop 改成 `if p > 0 { gyroShowLoadingUI = true }`。只有當 gyroflow-core 的 `load_gyro_data()` progress callback 真的被呼叫（代表偵測到 telemetry 正在解析）才會進入 UI 顯示狀態。PhotoDetailView 的 badge 改用 `gyroShowLoadingUI` 而非 `gyroIsLoading`。
+
+**修改的檔案：** `Spectrum/Views/Detail/VideoController.swift`、`Spectrum/Views/Detail/PhotoDetailView.swift`
+
+---
+
+## 2026-04-23 — 相機輔助目錄 skip list
+
+**類型：** Feature
+
+**問題：** Sony XAVC 卡有一堆輔助目錄（`THMBNL`、`SUB`、`TAKE`、`GENERAL`、`DATABASE`、`AVF_INFO`）裡面裝縮圖、代理檔、metadata，scanner 會把這些也當成媒體檔列入，造成 grid 充滿重複低解析縮圖。
+
+**做法：** `URL+ImageTypes.swift` 新增 `isSkippedCameraDirectory` 判斷；`FolderScanner`、`FolderReader`、`ImportPanelModel` enumerator 遇到這些目錄呼叫 `skipDescendants()` 整支跳過。
+
+**修改的檔案：** `Spectrum/Extensions/URL+ImageTypes.swift`、`Spectrum/Services/FolderScanner.swift`、`Spectrum/Services/FolderReader.swift`、`Spectrum/Views/Import/ImportPanelView.swift`
+
+---
+
+## 2026-04-23 — Select All (Cmd+A) 全選支援
+
+**類型：** Feature
+
+**做法：** 新增 `SelectAllActionKey` FocusedValueKey。`PhotoGridView` 的 `selectAll(flatItems:)` 一次把全部 item id 灌進 `selectedItemIds`，並用 `.focusedSceneValue(\.selectAllAction, …)` 暴露。Edit menu 透過 `@FocusedValue` 綁定 `Cmd+A`。
+
+**修改的檔案：** `Spectrum/Views/ContentView.swift`、`Spectrum/Views/Grid/PhotoGridView.swift`、`Spectrum/SpectrumApp.swift`
+
+---
+
+## 2026-04-23 — UI test infrastructure
+
+**類型：** Feature
+
+**做法：** 新增 `SpectrumUITests` target 與 `AccessibilityID.swift` 集中管理 UI element identifier。各關鍵 SwiftUI 元件（sidebar、grid empty state、video control bar、settings tabs、import/full screen buttons）補上 `.accessibilityIdentifier()`。`test.sh` 加上 `-u|--ui` flag 切換 `SpectrumTests` ↔ `SpectrumUITests`。
+
+**修改的檔案：** `Spectrum/AccessibilityID.swift`（新增）、`SpectrumUITests/`（新增）、`Spectrum/Views/ContentView.swift`、`Spectrum/Views/Sidebar/SidebarView.swift`、`Spectrum/Views/Detail/VideoControlBar.swift`、`Spectrum/Views/SettingsView.swift`、`test.sh`、`Spectrum.xcodeproj/project.pbxproj`
+
+---
+
 ## 2026-03-27 — Library Folder Exclusive Lock（防止多個 app instance 同時開啟 DB）
 
 **類型：** Feature

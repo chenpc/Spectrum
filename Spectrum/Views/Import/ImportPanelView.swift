@@ -148,6 +148,10 @@ final class ImportPanelModel {
         let dateFormatter = DateFormatter()
         dateFormatter.dateFormat = "yyyy:MM:dd HH:mm:ss"
         for case let fileURL as URL in enumerator {
+            if fileURL.hasDirectoryPath && fileURL.isSkippedCameraDirectory {
+                enumerator.skipDescendants()
+                continue
+            }
             guard fileURL.isMediaFile else { continue }
             let date = extractDateStatic(from: fileURL, formatter: dateFormatter)
                 ?? (try? fileURL.resourceValues(forKeys: [.contentModificationDateKey]))?.contentModificationDate

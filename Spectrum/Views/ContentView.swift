@@ -56,6 +56,10 @@ struct DeletePhotoActionKey: FocusedValueKey {
     typealias Value = () -> Void
 }
 
+struct SelectAllActionKey: FocusedValueKey {
+    typealias Value = () -> Void
+}
+
 struct MpvPlayPauseKey: FocusedValueKey {
     typealias Value = () -> Void
 }
@@ -92,6 +96,10 @@ extension FocusedValues {
     var deletePhotoAction: (() -> Void)? {
         get { self[DeletePhotoActionKey.self] }
         set { self[DeletePhotoActionKey.self] = newValue }
+    }
+    var selectAllAction: (() -> Void)? {
+        get { self[SelectAllActionKey.self] }
+        set { self[SelectAllActionKey.self] = newValue }
     }
     var videoPlayPause: (() -> Void)? {
         get { self[MpvPlayPauseKey.self] }
@@ -134,6 +142,11 @@ struct ContentView: View {
     @State private var selectedSidebarItem: SidebarItem?
     @State private var selectedPhoto: PhotoItem?
     @State private var detailPhoto: PhotoItem?
+    /// Retains the last non-nil detailPhoto so in-flight async Tasks in PhotoDetailView
+    /// can still read the binding safely after the user exits detail view (detailPhoto → nil).
+    /// Without this, the force-unwrap in photoDetail()'s Binding would crash on any
+    /// late Task that reads photo.filePath after teardown begins.
+    @State private var lastDetailPhoto: PhotoItem?
     @State private var showInspector = false
     @State private var showImportPanel = false
     private let importModel = ImportPanelModel.shared
@@ -205,6 +218,11 @@ struct ContentView: View {
         }
         .preferredColorScheme(appearanceMode == "light" ? .light : appearanceMode == "dark" ? .dark : nil)
         .environment(\.thumbnailCacheState, thumbnailCacheState)
+        .onChange(of: detailPhoto?.filePath) { _, _ in
+            // Keep lastDetailPhoto in sync whenever a new photo opens — ensures
+            // the Binding fallback in photoDetail() always has a valid reference.
+            if let new = detailPhoto { lastDetailPhoto = new }
+        }
         .onChange(of: selectedSidebarItem) { _, newItem in
             detailPhoto = nil
             selectedPhoto = nil
@@ -296,6 +314,7 @@ struct ContentView: View {
                                     }
                                     .help("Full Screen")
                                     .keyboardShortcut("f", modifiers: .command)
+                                    .accessibilityIdentifier(AccessibilityID.fullScreenButton)
                                 }
                             }
                     } else if case .subfolder(let folder, let subPath) = selectedSidebarItem {
@@ -349,6 +368,7 @@ struct ContentView: View {
             Image(systemName: "square.and.arrow.down")
         }
         .help("Import")
+        .accessibilityIdentifier(AccessibilityID.importButton)
     }
 
     private func handleEscape() {
@@ -391,7 +411,15 @@ struct ContentView: View {
 
     private func photoDetail(showInspector: Binding<Bool>) -> some View {
         PhotoDetailView(
-            photo: Binding(get: { detailPhoto! }, set: { detailPhoto = $0 }),
+            photo: Binding(
+                // Fallback to lastDetailPhoto when detailPhoto briefly becomes nil
+                // (user exited detail view while an async Task is still in flight).
+                get: { detailPhoto ?? lastDetailPhoto! },
+                set: {
+                    detailPhoto = $0
+                    lastDetailPhoto = $0
+                }
+            ),
             showInspector: showInspector,
             isHDR: $isPhotoHDR,
             viewModel: viewModel
@@ -435,6 +463,7 @@ struct ContentView: View {
                 systemImage: "folder",
                 description: Text("Choose a folder from the sidebar to browse photos.")
             )
+            .accessibilityIdentifier(AccessibilityID.gridEmptyState)
         }
     }
 }

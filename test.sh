@@ -10,22 +10,26 @@ mkdir -p "$BUILD_DIR"
 
 # ── Parse arguments ──────────────────────────────────────────────────────────
 
-FILTER=""          # -only-testing value (e.g. SpectrumTests/GyroConfigTests)
+FILTER=""          # -only-testing value (e.g. GyroConfigTests, ImageHDRDetectionTests/testDetectHDR_sdrJPEG)
 VERBOSE=0
 CLEAN=0
+UI_TEST=0          # -u: run UI tests instead of unit tests
 
 usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
     echo "  -t, --test FILTER   Run specific test (e.g. GyroConfigTests, ImageHDRDetectionTests/testDetectHDR_sdrJPEG)"
+    echo "  -u, --ui            Run UI tests (SpectrumUITests) instead of unit tests"
     echo "  -v, --verbose       Show full xcodebuild output"
     echo "  -c, --clean         Clean build before testing"
     echo "  -h, --help          Show this help"
     echo ""
     echo "Examples:"
-    echo "  $0                          # Run all tests"
-    echo "  $0 -t GyroConfigTests       # Run one test class"
+    echo "  $0                          # Run all unit tests"
+    echo "  $0 -u                       # Run all UI tests"
+    echo "  $0 -u -t AppLaunchTests     # Run one UI test class"
+    echo "  $0 -t GyroConfigTests       # Run one unit test class"
     echo "  $0 -t ImageHDRDetectionTests/testDetectHDR_correctlyTaggedHLG"
     echo "  $0 -v                       # Verbose output"
     echo "  $0 -c                       # Clean + test"
@@ -34,6 +38,7 @@ usage() {
 while [[ $# -gt 0 ]]; do
     case $1 in
         -t|--test)   FILTER="$2"; shift 2 ;;
+        -u|--ui)     UI_TEST=1; shift ;;
         -v|--verbose) VERBOSE=1; shift ;;
         -c|--clean)  CLEAN=1; shift ;;
         -h|--help)   usage; exit 0 ;;
@@ -50,12 +55,21 @@ fi
 
 # ── Build test target ────────────────────────────────────────────────────────
 
-ONLY_TESTING="-only-testing:SpectrumTests"
-if [ -n "$FILTER" ]; then
-    ONLY_TESTING="-only-testing:SpectrumTests/$FILTER"
+TEST_BUNDLE="SpectrumTests"
+if [ "$UI_TEST" -eq 1 ]; then
+    TEST_BUNDLE="SpectrumUITests"
 fi
 
-echo "==> Building & running tests..."
+ONLY_TESTING="-only-testing:$TEST_BUNDLE"
+if [ -n "$FILTER" ]; then
+    ONLY_TESTING="-only-testing:$TEST_BUNDLE/$FILTER"
+fi
+
+if [ "$UI_TEST" -eq 1 ]; then
+    echo "==> Building & running UI tests..."
+else
+    echo "==> Building & running tests..."
+fi
 if [ -n "$FILTER" ]; then
     echo "    Filter: $FILTER"
 fi

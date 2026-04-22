@@ -564,7 +564,7 @@ struct PhotoDetailView: View {
     private var videoLoadingBadge: some View {
         let analyzing = videoController.videoIsAnalyzing
         let buffering  = videoController.videoIsBuffering
-        let gyroLoad   = videoController.gyroIsLoading
+        let gyroLoad   = videoController.gyroShowLoadingUI
         if playbackStarted && (analyzing || buffering || gyroLoad) {
             VStack(alignment: .leading, spacing: 5) {
                 if analyzing {

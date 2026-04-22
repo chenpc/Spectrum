@@ -48,6 +48,10 @@ final class VideoController: @unchecked Sendable {
     private(set) var gyroLastError: String? = nil
     /// Debug: true while gyro is currently loading in background.
     private(set) var gyroIsLoading: Bool = false
+    /// True only after gyro telemetry parsing has actually started (progress ≥ 0).
+    /// Use this for UI badge display so that videos without gyro data never flash
+    /// a brief "Loading Gyro" badge — progress only fires when gyro data is detected.
+    private(set) var gyroShowLoadingUI: Bool = false
     /// Gyro parse progress 0.0–1.0 while loading; -1.0 otherwise.
     private(set) var gyroLoadProgress: Double = -1.0
     /// Retained during loading and playback; nil = stab off.
@@ -83,6 +87,7 @@ final class VideoController: @unchecked Sendable {
         gyroAvailable = false
         gyroLastError = nil
         gyroIsLoading = false
+        gyroShowLoadingUI = false
         videoIsAnalyzing = false
         videoIsBuffering = false
         currentTime = 0
@@ -126,6 +131,7 @@ final class VideoController: @unchecked Sendable {
         gyroLoadPending = true
         gyroLastError = nil
         gyroIsLoading = true
+        gyroShowLoadingUI = false
         // If config.readoutMs is 0, estimate from fps
         var cfg = config
         if cfg.readoutMs <= 0 {
@@ -134,10 +140,18 @@ final class VideoController: @unchecked Sendable {
         let core = GyroCore()
         activeGyroCore = core
         // Poll gyro load progress every 150 ms until done.
+        // UI badge is only shown once progress > 0, which means gyroflow-core's
+        // load_gyro_data() progress callback actually fired — i.e., telemetry was
+        // detected and is being parsed. The Rust side sets progress=0.0 at the very
+        // start of gyrocore_load(), so `>= 0` would match immediately; we need `> 0`
+        // to ensure real parsing has begun. Videos without gyro data never trigger
+        // the progress callback, so progress stays at 0.0 until it errors out and
+        // the badge never shows.
         Task { @MainActor [weak self] in
             while let self, self.gyroIsLoading, self.activeGyroCore === core {
                 let p = core.loadProgress
                 self.gyroLoadProgress = p
+                if p > 0 { self.gyroShowLoadingUI = true }
                 try? await Task.sleep(for: .milliseconds(150))
             }
             self?.gyroLoadProgress = -1.0
@@ -151,6 +165,7 @@ final class VideoController: @unchecked Sendable {
                 guard let self, self.activeGyroCore === core else { return }  // stale guard
                 self.gyroLoadPending = false
                 self.gyroIsLoading = false
+                self.gyroShowLoadingUI = false
                 self.gyroLoadProgress = -1.0
                 self.gyroStabEnabled = true
                 self.gyroAvailable = true
@@ -171,6 +186,7 @@ final class VideoController: @unchecked Sendable {
                 guard let self, self.activeGyroCore === core else { return }  // stale guard
                 self.gyroLoadPending = false
                 self.gyroIsLoading = false
+                self.gyroShowLoadingUI = false
                 self.gyroLoadProgress = -1.0
                 self.gyroLastError = msg
                 self.gyroAvailable = false

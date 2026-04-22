@@ -41,4 +41,23 @@ extension URL {
     var isMediaFile: Bool {
         isImageFile || isVideoFile
     }
+
+    // MARK: - Camera directory skip list
+
+    /// Directory names that should be skipped during folder scanning.
+    /// These are auxiliary directories created by cameras (e.g. Sony XAVC)
+    /// that contain thumbnails, metadata, or other non-user-facing files.
+    private static let skippedDirectoryNames: Set<String> = [
+        "THMBNL",       // Sony XAVC video thumbnails
+        "SUB",          // Sony XAVC subtitle/proxy
+        "TAKE",         // Sony XAVC take metadata
+        "GENERAL",      // Sony XAVC LUT/settings
+        "DATABASE",     // Sony device database
+        "AVF_INFO",     // Sony AVCHD index
+    ]
+
+    /// True if this URL is a directory that should be skipped during media scanning.
+    var isSkippedCameraDirectory: Bool {
+        URL.skippedDirectoryNames.contains(lastPathComponent)
+    }
 }

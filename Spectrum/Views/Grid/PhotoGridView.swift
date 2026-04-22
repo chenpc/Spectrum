@@ -264,6 +264,7 @@ struct PhotoGridView: View {
             ))
             .focusedSceneValue(\.folderEditAction, currentFolderEditAction)
             .focusedSceneValue(\.deletePhotoAction, !selectedItemIds.isEmpty ? { triggerDeleteSelected() } : nil)
+            .focusedSceneValue(\.selectAllAction, { selectAll(flatItems: flatItems) })
         }
     }
 
@@ -463,6 +464,13 @@ struct PhotoGridView: View {
     private func selectSingle(_ id: String) {
         selectedItemIds = [id]
         lastSelectedId = id
+        syncSelection()
+    }
+
+    private func selectAll(flatItems: [String]) {
+        guard !flatItems.isEmpty else { return }
+        selectedItemIds = Set(flatItems)
+        lastSelectedId = flatItems.last
         syncSelection()
     }
 

@@ -69,10 +69,24 @@
 		AA200001 /* ImportPanelView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB200001 /* ImportPanelView.swift */; };
 		AA300001 /* SearchResultsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB300001 /* SearchResultsView.swift */; };
 		FB8F417446864EC954E89573 /* FolderReader.swift in Sources */ = {isa = PBXBuildFile; fileRef = E49A6E7980B797E2224A3AEA /* FolderReader.swift */; };
+		UIACC001 /* AccessibilityID.swift in Sources */ = {isa = PBXBuildFile; fileRef = UIACC002 /* AccessibilityID.swift */; };
+		UI000001 /* SpectrumUITestBase.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100001 /* SpectrumUITestBase.swift */; };
+		UI000002 /* AppLaunchTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100002 /* AppLaunchTests.swift */; };
+		UI000003 /* SidebarUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100003 /* SidebarUITests.swift */; };
+		UI000004 /* SettingsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100004 /* SettingsUITests.swift */; };
+		UI000005 /* NavigationUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100005 /* NavigationUITests.swift */; };
+		UI000006 /* ImportPanelUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100006 /* ImportPanelUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
 		B5100001 /* PBXContainerItemProxy */ = {
+			isa = PBXContainerItemProxy;
+			containerPortal = B2000001 /* Project object */;
+			proxyType = 1;
+			remoteGlobalIDString = AF000001;
+			remoteInfo = Spectrum;
+		};
+		UI500001 /* PBXContainerItemProxy */ = {
 			isa = PBXContainerItemProxy;
 			containerPortal = B2000001 /* Project object */;
 			proxyType = 1;
@@ -146,6 +160,14 @@
 		AB300001 /* SearchResultsView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchResultsView.swift; sourceTree = "<group>"; };
 		AC000001 /* Spectrum.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Spectrum.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		AC100001 /* SpectrumTests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpectrumTests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		UI200001 /* SpectrumUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpectrumUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
+		UI100001 /* SpectrumUITestBase.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SpectrumUITestBase.swift; sourceTree = "<group>"; };
+		UI100002 /* AppLaunchTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AppLaunchTests.swift; sourceTree = "<group>"; };
+		UI100003 /* SidebarUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarUITests.swift; sourceTree = "<group>"; };
+		UI100004 /* SettingsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsUITests.swift; sourceTree = "<group>"; };
+		UI100005 /* NavigationUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = NavigationUITests.swift; sourceTree = "<group>"; };
+		UI100006 /* ImportPanelUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportPanelUITests.swift; sourceTree = "<group>"; };
+		UIACC002 /* AccessibilityID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityID.swift; sourceTree = "<group>"; };
 		E49A6E7980B797E2224A3AEA /* FolderReader.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = FolderReader.swift; sourceTree = "<group>"; };
 		F8314D5B529E4E2B909FD903 /* LivePhotoPlayerView.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = LivePhotoPlayerView.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
@@ -165,6 +187,13 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		UI300001 /* Frameworks */ = {
+			isa = PBXFrameworksBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXFrameworksBuildPhase section */
 
 /* Begin PBXGroup section */
@@ -174,6 +203,7 @@
 				AE000014 /* Config */,
 				AE000002 /* Spectrum */,
 				AE100001 /* SpectrumTests */,
+				UI400001 /* SpectrumUITests */,
 				AE000099 /* Products */,
 			);
 			sourceTree = "<group>";
@@ -182,6 +212,7 @@
 			isa = PBXGroup;
 			children = (
 				AB000001 /* SpectrumApp.swift */,
+				UIACC002 /* AccessibilityID.swift */,
 				AB000017 /* Spectrum.entitlements */,
 				AB00001C /* Assets.xcassets */,
 				AB000080 /* Localizable.xcstrings */,
@@ -320,6 +351,7 @@
 			children = (
 				AC000001 /* Spectrum.app */,
 				AC100001 /* SpectrumTests.xctest */,
+				UI200001 /* SpectrumUITests.xctest */,
 			);
 			name = Products;
 			sourceTree = "<group>";
@@ -358,6 +390,19 @@
 				AB200001 /* ImportPanelView.swift */,
 			);
 			path = Import;
+			sourceTree = "<group>";
+		};
+		UI400001 /* SpectrumUITests */ = {
+			isa = PBXGroup;
+			children = (
+				UI100001 /* SpectrumUITestBase.swift */,
+				UI100002 /* AppLaunchTests.swift */,
+				UI100003 /* SidebarUITests.swift */,
+				UI100004 /* SettingsUITests.swift */,
+				UI100005 /* NavigationUITests.swift */,
+				UI100006 /* ImportPanelUITests.swift */,
+			);
+			path = SpectrumUITests;
 			sourceTree = "<group>";
 		};
 /* End PBXGroup section */
@@ -400,6 +445,24 @@
 			productReference = AC100001 /* SpectrumTests.xctest */;
 			productType = "com.apple.product-type.bundle.unit-test";
 		};
+		UI600001 /* SpectrumUITests */ = {
+			isa = PBXNativeTarget;
+			buildConfigurationList = UI800001 /* Build configuration list for PBXNativeTarget "SpectrumUITests" */;
+			buildPhases = (
+				UI700001 /* Sources */,
+				UI300001 /* Frameworks */,
+				UI700002 /* Resources */,
+			);
+			buildRules = (
+			);
+			dependencies = (
+				UI500002 /* PBXTargetDependency */,
+			);
+			name = SpectrumUITests;
+			productName = SpectrumUITests;
+			productReference = UI200001 /* SpectrumUITests.xctest */;
+			productType = "com.apple.product-type.bundle.ui-testing";
+		};
 /* End PBXNativeTarget section */
 
 /* Begin PBXProject section */
@@ -414,6 +477,10 @@
 						CreatedOnToolsVersion = 15.0;
 					};
 					AF100001 = {
+						CreatedOnToolsVersion = 15.0;
+						TestTargetID = AF000001;
+					};
+					UI600001 = {
 						CreatedOnToolsVersion = 15.0;
 						TestTargetID = AF000001;
 					};
@@ -437,6 +504,7 @@
 			targets = (
 				AF000001 /* Spectrum */,
 				AF100001 /* SpectrumTests */,
+				UI600001 /* SpectrumUITests */,
 			);
 		};
 /* End PBXProject section */
@@ -461,6 +529,13 @@
 				AA100013 /* hlg_video.mp4 in Resources */,
 				AA100014 /* sdr_video.mp4 in Resources */,
 				AA100015 /* sdr_photo.jpg in Resources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
+		UI700002 /* Resources */ = {
+			isa = PBXResourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -513,6 +588,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				UIACC001 /* AccessibilityID.swift in Sources */,
 				AA000001 /* SpectrumApp.swift in Sources */,
 				AA000002 /* ContentView.swift in Sources */,
 				AA000003 /* Photo.swift in Sources */,
@@ -577,6 +653,19 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
+		UI700001 /* Sources */ = {
+			isa = PBXSourcesBuildPhase;
+			buildActionMask = 2147483647;
+			files = (
+				UI000001 /* SpectrumUITestBase.swift in Sources */,
+				UI000002 /* AppLaunchTests.swift in Sources */,
+				UI000003 /* SidebarUITests.swift in Sources */,
+				UI000004 /* SettingsUITests.swift in Sources */,
+				UI000005 /* NavigationUITests.swift in Sources */,
+				UI000006 /* ImportPanelUITests.swift in Sources */,
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+		};
 /* End PBXSourcesBuildPhase section */
 
 /* Begin PBXTargetDependency section */
@@ -584,6 +673,11 @@
 			isa = PBXTargetDependency;
 			target = AF000001 /* Spectrum */;
 			targetProxy = B5100001 /* PBXContainerItemProxy */;
+		};
+		UI500002 /* PBXTargetDependency */ = {
+			isa = PBXTargetDependency;
+			target = AF000001 /* Spectrum */;
+			targetProxy = UI500001 /* PBXContainerItemProxy */;
 		};
 /* End PBXTargetDependency section */
 
@@ -811,6 +905,40 @@
 			};
 			name = Release;
 		};
+		UI900001 /* Debug */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Spectrum;
+			};
+			name = Debug;
+		};
+		UI900002 /* Release */ = {
+			isa = XCBuildConfiguration;
+			buildSettings = {
+				CODE_SIGN_STYLE = Automatic;
+				CURRENT_PROJECT_VERSION = 1;
+				DEAD_CODE_STRIPPING = YES;
+				GENERATE_INFOPLIST_FILE = YES;
+				MARKETING_VERSION = 1.10.0;
+				PRODUCT_BUNDLE_IDENTIFIER = com.spectrum.SpectrumUITests;
+				PRODUCT_NAME = "$(TARGET_NAME)";
+				SWIFT_EMIT_LOC_STRINGS = NO;
+				SWIFT_STRICT_CONCURRENCY = targeted;
+				SWIFT_VERSION = 5.0;
+				TEST_TARGET_NAME = Spectrum;
+			};
+			name = Release;
+		};
 /* End XCBuildConfiguration section */
 
 /* Begin XCConfigurationList section */
@@ -837,6 +965,15 @@
 			buildConfigurations = (
 				B3100001 /* Debug */,
 				B3100002 /* Release */,
+			);
+			defaultConfigurationIsVisible = 0;
+			defaultConfigurationName = Release;
+		};
+		UI800001 /* Build configuration list for PBXNativeTarget "SpectrumUITests" */ = {
+			isa = XCConfigurationList;
+			buildConfigurations = (
+				UI900001 /* Debug */,
+				UI900002 /* Release */,
 			);
 			defaultConfigurationIsVisible = 0;
 			defaultConfigurationName = Release;

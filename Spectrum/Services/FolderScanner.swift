@@ -348,6 +348,10 @@ actor FolderScanner {
     private static func collectMediaURLs(from enumerator: FileManager.DirectoryEnumerator) -> [URL] {
         var result: [URL] = []
         for case let url as URL in enumerator {
+            if url.hasDirectoryPath && url.isSkippedCameraDirectory {
+                enumerator.skipDescendants()
+                continue
+            }
             if url.isMediaFile { result.append(url) }
         }
         return result
