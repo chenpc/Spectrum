@@ -16,10 +16,10 @@ final class SidebarUITests: SpectrumUITestBase {
     }
 
     func testAddFolderViaMenu() {
-        // File → Add Folder… menu should exist
+        // File → Add Folder... menu should exist (uses ASCII "...")
         app.menuBars.menuBarItems["File"].click()
-        let addFolder = app.menuBars.menuItems["Add Folder…"]
-        XCTAssertTrue(addFolder.waitForExistence(timeout: 3), "File → Add Folder… menu item should exist")
+        let addFolder = app.menuBars.menuBarItems["File"].menuItems["Add Folder..."]
+        XCTAssertTrue(addFolder.waitForExistence(timeout: 3), "File → Add Folder... menu item should exist")
         // Press escape to dismiss menu without acting
         app.typeKey(.escape, modifierFlags: [])
     }

@@ -5,7 +5,7 @@ final class NavigationUITests: SpectrumUITestBase {
 
     func testImportPanelToggle() {
         // Click import button — panel should appear
-        let importBtn = app.buttons["Import"]
+        let importBtn = app.buttons.matching(identifier: "toolbar.import").firstMatch
         waitForElement(importBtn)
         importBtn.click()
 
@@ -61,9 +61,10 @@ final class NavigationUITests: SpectrumUITestBase {
     }
 
     func testKeyboardShortcutCmdComma() {
-        // Cmd+, should open Settings
+        // Cmd+, should open Settings (a second window appears)
+        app.activate()
         app.typeKey(",", modifierFlags: .command)
-        let settingsWindow = app.windows["Settings"]
+        let settingsWindow = app.windows.element(boundBy: 1)
         XCTAssertTrue(settingsWindow.waitForExistence(timeout: 5), "Cmd+, should open Settings")
     }
 }

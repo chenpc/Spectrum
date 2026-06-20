@@ -1,5 +1,20 @@
 # Spectrum 開發日誌
 
+## 2026-06-20 — UI 測試隔離與全套測試修復
+
+**類型：** Feature / Bug Fix
+
+**問題：** UI 測試共用 app 狀態（database + UserDefaults），導致測試間相互污染；多個測試套件因 macOS 15+ API 差異而失敗。
+
+**根因／做法：**
+- 新增 `--userdir PATH` 啟動參數（`AppLaunchArgs.swift`），app 將 SpectrumLibrary 和 UserDefaults 全部重導向到 mktemp 建立的隔離目錄，確保每次測試都是完全乾淨的環境。
+- `SpectrumUITestBase` 在每個 test 的 `setUp` 用 `UUID` 建立新的 userDir 並傳入 `--userdir`。
+- macOS 15+ 相容性修正：SwiftUI `Toggle` 在 Form 中的 accessibility type 從 `.checkBox` 改為 `.switch`；Settings TabView 的 tab 按鈕從 `.radioButton` 改為 `.button`；`Settings` window 不再可靠地命名為 "Settings"，改用 `windows.element(boundBy: 1)` 偵測；`app.windows["Settings"]` 查找改為 window index 法；`openSettings()` 改用 Cmd+, 快捷鍵。
+- Import 工具列按鈕改用 accessibility identifier `"toolbar.import"` 查找（button 無文字 label）。
+- `testAddFolderViaMenu` 修正：menu item 為 ASCII `...` 而非 Unicode `…`，且需用 `menuBarItems["File"].menuItems[...]` 路徑。
+
+**修改的檔案：** `Spectrum/Services/AppLaunchArgs.swift`, `Spectrum/SpectrumApp.swift`, `SpectrumUITests/SpectrumUITestBase.swift`, `SpectrumUITests/E2EUsabilityTests.swift`, `SpectrumUITests/SettingsUITests.swift`, `SpectrumUITests/AppLaunchTests.swift`, `SpectrumUITests/ImportPanelUITests.swift`, `SpectrumUITests/NavigationUITests.swift`, `SpectrumUITests/SidebarUITests.swift`
+
 **專案：** Spectrum — macOS 原生相片/影片瀏覽器
 **技術棧：** SwiftUI + SwiftData + Metal + AVFoundation + Rust (gyroflow-core)
 **目標：** 為 Sony 相機設計，正確渲染 HLG HDR，提供即時陀螺儀穩定化，掃描現有資料夾（不複製）

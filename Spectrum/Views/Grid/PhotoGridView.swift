@@ -252,6 +252,7 @@ struct PhotoGridView: View {
                             }
                     }
                 }
+                .accessibilityIdentifier(AccessibilityID.photoGrid)
                 .id(effectivePath)
                 .onChange(of: lastSelectedId) { _, newId in
                     if let newId {

@@ -27,7 +27,8 @@ final class AppLaunchTests: SpectrumUITestBase {
     }
 
     func testImportButtonExists() {
-        let importBtn = app.buttons["Import"]
+        // Import button uses an SF Symbol image; find by accessibility identifier
+        let importBtn = app.buttons.matching(identifier: "toolbar.import").firstMatch
         XCTAssertTrue(importBtn.waitForExistence(timeout: 5), "Import button should exist in toolbar")
     }
 

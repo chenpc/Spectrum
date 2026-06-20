@@ -53,6 +53,7 @@ XCODEBUILD_CMD=(
     -scheme "$APP_NAME"
     -configuration Debug
     -derivedDataPath "$BUILD_DIR/DerivedData"
+    CODE_SIGNING_ALLOWED=NO
 )
 
 if [ "$VERBOSE" -eq 1 ]; then

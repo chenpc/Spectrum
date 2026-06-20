@@ -189,6 +189,7 @@ struct PhotoDetailView: View {
                     Image(systemName: "info.circle")
                 }
                 .help("Toggle Inspector")
+                .accessibilityIdentifier(AccessibilityID.detailInspectorToggle)
             }
         }
         .navigationTitle(photo.fileName)

@@ -3,22 +3,23 @@ import XCTest
 /// Tests for the import panel.
 final class ImportPanelUITests: SpectrumUITestBase {
 
-    func testImportPanelOpens() {
-        let importBtn = app.buttons["Import"]
-        waitForElement(importBtn)
-        importBtn.click()
+    private var importBtn: XCUIElement {
+        // Import button uses SF Symbol image; find by accessibility identifier
+        app.buttons.matching(identifier: "toolbar.import").firstMatch
+    }
 
-        // The import panel should appear — look for "Select Folder" button or panel content
+    func testImportPanelOpens() {
+        XCTAssertTrue(importBtn.waitForExistence(timeout: 5), "Import toolbar button should exist")
+        importBtn.click()
         sleep(1)
 
-        // Clicking import again should close the panel
+        // Click again to dismiss
         importBtn.click()
         sleep(1)
     }
 
     func testImportPanelCloseButton() {
-        let importBtn = app.buttons["Import"]
-        waitForElement(importBtn)
+        XCTAssertTrue(importBtn.waitForExistence(timeout: 5), "Import toolbar button should exist")
         importBtn.click()
         sleep(1)
 

@@ -19,20 +19,36 @@ usage() {
     echo "Usage: $0 [options]"
     echo ""
     echo "Options:"
-    echo "  -t, --test FILTER   Run specific test (e.g. GyroConfigTests, ImageHDRDetectionTests/testDetectHDR_sdrJPEG)"
+    echo "  -t, --test FILTER   Run specific test class or method"
     echo "  -u, --ui            Run UI tests (SpectrumUITests) instead of unit tests"
     echo "  -v, --verbose       Show full xcodebuild output"
     echo "  -c, --clean         Clean build before testing"
     echo "  -h, --help          Show this help"
     echo ""
-    echo "Examples:"
-    echo "  $0                          # Run all unit tests"
-    echo "  $0 -u                       # Run all UI tests"
-    echo "  $0 -u -t AppLaunchTests     # Run one UI test class"
-    echo "  $0 -t GyroConfigTests       # Run one unit test class"
-    echo "  $0 -t ImageHDRDetectionTests/testDetectHDR_correctlyTaggedHLG"
-    echo "  $0 -v                       # Verbose output"
-    echo "  $0 -c                       # Clean + test"
+    echo "Unit Tests (fast, no signing required):"
+    echo "  $0                                    # Run all unit tests"
+    echo "  $0 -t GyroConfigTests                 # Run one test class"
+    echo "  $0 -t EditOpTests/testRotateThenCrop  # Run one test method"
+    echo "  $0 -c                                 # Clean + test"
+    echo ""
+    echo "E2E Usability Tests (UI tests, requires Apple Developer signing):"
+    echo "  $0 -u                                 # Run all UI tests"
+    echo "  $0 -u -t E2EUsabilityTests            # Run e2e usability suite"
+    echo "  $0 -u -t E2EUsabilityTests/test01_FolderAppearsInSidebar  # Quick smoke test"
+    echo ""
+    echo "  E2E test fixtures: SpectrumUITests/E2EFixtures/"
+    echo "  (5 JPEG photos + 1 MP4 video, free stock media)"
+    echo ""
+    echo "  Note: UI tests launch the real app and require:"
+    echo "    1. Apple Development certificate in Keychain"
+    echo "    2. Apple ID logged in to Xcode (Settings → Accounts)"
+    echo "    3. Automation permission granted on first run (click OK)"
+    echo "  On CI (GitHub Actions macos runner) these run without a display."
+    echo ""
+    echo "Other UI test suites:"
+    echo "  $0 -u -t AppLaunchTests"
+    echo "  $0 -u -t NavigationUITests"
+    echo "  $0 -u -t SettingsUITests"
 }
 
 while [[ $# -gt 0 ]]; do
@@ -74,14 +90,31 @@ if [ -n "$FILTER" ]; then
     echo "    Filter: $FILTER"
 fi
 
-XCODEBUILD_CMD=(
-    xcodebuild test
-    -project "$PROJECT"
-    -scheme Spectrum
-    -destination 'platform=macOS'
-    "$ONLY_TESTING"
-    -derivedDataPath "$BUILD_DIR/DerivedData"
-)
+if [ "$UI_TEST" -eq 1 ]; then
+    # UI Tests：需要穩定簽署讓 macOS TCC 記住 Automation 授權
+    XCODEBUILD_CMD=(
+        xcodebuild test
+        -project "$PROJECT"
+        -scheme Spectrum
+        -destination 'platform=macOS'
+        "$ONLY_TESTING"
+        -derivedDataPath "$BUILD_DIR/DerivedData"
+        -allowProvisioningUpdates
+    )
+else
+    # Unit Tests：不需啟動 app，關掉簽署加速 build
+    XCODEBUILD_CMD=(
+        xcodebuild test
+        -project "$PROJECT"
+        -scheme Spectrum
+        -destination 'platform=macOS'
+        "$ONLY_TESTING"
+        -derivedDataPath "$BUILD_DIR/DerivedData"
+        CODE_SIGNING_ALLOWED=NO
+        CODE_SIGN_IDENTITY=-
+        CODE_SIGN_STYLE=Manual
+    )
+fi
 
 if [ "$VERBOSE" -eq 1 ]; then
     "${XCODEBUILD_CMD[@]}" 2>&1 | tee "$LOG"

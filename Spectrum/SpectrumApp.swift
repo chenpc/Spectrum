@@ -8,10 +8,14 @@ struct SpectrumApp: App {
     init() {
         // 必須在任何 SpectrumLibrary.url 存取之前先處理 CLI 參數
         let launchArgs = AppLaunchArgs.shared
-        if let libURL = launchArgs.spectrumLibrary {
-            // 清空舊的測試 library，確保每次從乾淨狀態開始
-            try? FileManager.default.removeItem(at: libURL)
-            SpectrumLibrary.overrideURL = libURL
+        if let userDir = launchArgs.userDir {
+            // --userdir：由 mktemp -d 建立的乾淨目錄，直接使用不清除
+            SpectrumLibrary.overrideURL = userDir
+            // UserDefaults 隔離：清除 app 的 persistent domain，
+            // 避免視窗位置、設定值等跨測試污染
+            if let bundleID = Bundle.main.bundleIdentifier {
+                UserDefaults.standard.removePersistentDomain(forName: bundleID)
+            }
         }
 
         SpectrumLibrary.migrateFromLegacyLocationIfNeeded()
