@@ -58,6 +58,7 @@
 		AA100003 /* GyroConfigTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100003 /* GyroConfigTests.swift */; };
 		AA100004 /* PhotoResolveBookmarkTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100004 /* PhotoResolveBookmarkTests.swift */; };
 		AA100005 /* ImagePreloadCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100005 /* ImagePreloadCacheTests.swift */; };
+		AA100099 /* XMPSidecarServiceUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100099 /* XMPSidecarServiceUnitTests.swift */; };
 		AA100006 /* EditOpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100006 /* EditOpTests.swift */; };
 		AA100007 /* PhotoEditOpsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100007 /* PhotoEditOpsTests.swift */; };
 		AA100010 /* hlg_correctly_tagged.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100010 /* hlg_correctly_tagged.HIF */; };
@@ -78,6 +79,29 @@
 		UI000007 /* BenchmarkUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100007 /* BenchmarkUITests.swift */; };
 		UI000008 /* E2EUsabilityTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = UI100008 /* E2EUsabilityTests.swift */; };
 		UIACC001 /* AccessibilityID.swift in Sources */ = {isa = PBXBuildFile; fileRef = UIACC002 /* AccessibilityID.swift */; };
+		760D8381E0696E6705C8ADC5 /* FolderScannerUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = E72D544E417F6983185252B6 /* FolderScannerUnitTests.swift */; };
+		96495504BADEEC136CE606A2 /* EXIFServiceUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 97D61DC2A77C01F92AFDFCE9 /* EXIFServiceUnitTests.swift */; };
+		DE4F660BBBCE61D7D75474DC /* VideoMetadataServiceUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = CEB332FD66761E998A8E2985 /* VideoMetadataServiceUnitTests.swift */; };
+		395FA4B28320A6B67C6FE173 /* CGImageRotationUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = B5367E4A146E77A8F0616713 /* CGImageRotationUnitTests.swift */; };
+		5D26FF563CDF4438CE4C5ABA /* ThumbnailServiceUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 030B745E699141E3BFB30059 /* ThumbnailServiceUnitTests.swift */; };
+		7A69668BBEE59EA05FBAAEF1 /* StatusBarModelUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = EBC05C381659F082EC5F8D01 /* StatusBarModelUnitTests.swift */; };
+		C4B34916F65E1E656FB2CE5E /* FolderClipboardUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 2E5CF32CDD862468C67E252A /* FolderClipboardUnitTests.swift */; };
+		21C7CCDE0BEC9CB0078CB54A /* FolderReaderExtraTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = D3C2BCAE152E3F0B7495F90A /* FolderReaderExtraTests.swift */; };
+		4C6995E8D544326356EF544B /* CoreServicesUnitTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5B39ADA4741EAE16388D9AE7 /* CoreServicesUnitTests.swift */; };
+		4E73F6291353D71A73E35A71 /* SettingsDeepUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3C286236C02ED51B64B49F72 /* SettingsDeepUITests.swift */; };
+		FEA466391FFC599C614057D2 /* ImportFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = F879AF48BB0855350E2DDC3D /* ImportFlowUITests.swift */; };
+		BEC8F5335C7554A0265420B9 /* CropOverlayUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1BDAC3D1D12820BED63329CA /* CropOverlayUITests.swift */; };
+		72CCC43F5CF36D2CD7107AAF /* SearchFlowUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = C8B16AA31DF6A0130B2F6770 /* SearchFlowUITests.swift */; };
+		5A5299F6FAE8AAC529D96F22 /* InspectorDeepUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5DF9273DFEBEE10A02E79360 /* InspectorDeepUITests.swift */; };
+		6CDDAA468F2DD0B6656A63E6 /* GridInteractionUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 9ABB363ABA5CEC54429415C0 /* GridInteractionUITests.swift */; };
+		4282155B4D08130E81950BB2 /* SidebarOpsUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AF9BC3F47A3BFBE45A6500BC /* SidebarOpsUITests.swift */; };
+		C8934C2A3FFED100D366C760 /* PhotoDetailDeepUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 40E0EF4E73CAFF8B009B4E0C /* PhotoDetailDeepUITests.swift */; };
+		4F8059233EB2044AC105F21A /* ExtraModelTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 285E724008EB324EE0DE2E02 /* ExtraModelTests.swift */; };
+		471CB12CE61BEB42C080DB24 /* PhotoInfoPanelRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 70099A768F45A0531370E991 /* PhotoInfoPanelRenderTests.swift */; };
+		F6CCDBBBF550B122A9FD5469 /* ViewRenderTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3534C1F80961887FC9FC67E7 /* ViewRenderTests.swift */; };
+		80779461E2C7AEA91F25EC39 /* ServiceGapTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BA092D419FFA70669C52E942 /* ServiceGapTests.swift */; };
+		9C5DF6E7ACF278855A75218C /* GyroInspectorUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = BCB9FB9311DE486820212B86 /* GyroInspectorUITests.swift */; };
+		F5CDB1E0701EE91266F1355A /* SidebarDeepUITests.swift in Sources */ = {isa = PBXBuildFile; fileRef = 8BBD9928C9CDA8A37A9BE103 /* SidebarDeepUITests.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -150,6 +174,7 @@
 		AB100003 /* GyroConfigTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroConfigTests.swift; sourceTree = "<group>"; };
 		AB100004 /* PhotoResolveBookmarkTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoResolveBookmarkTests.swift; sourceTree = "<group>"; };
 		AB100005 /* ImagePreloadCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCacheTests.swift; sourceTree = "<group>"; };
+		AB100099 /* XMPSidecarServiceUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = XMPSidecarServiceUnitTests.swift; sourceTree = "<group>"; };
 		AB100006 /* EditOpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOpTests.swift; sourceTree = "<group>"; };
 		AB100007 /* PhotoEditOpsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditOpsTests.swift; sourceTree = "<group>"; };
 		AB100010 /* hlg_correctly_tagged.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_correctly_tagged.HIF; sourceTree = "<group>"; };
@@ -174,6 +199,29 @@
 		UI100008 /* E2EUsabilityTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = E2EUsabilityTests.swift; sourceTree = "<group>"; };
 		UI200001 /* SpectrumUITests.xctest */ = {isa = PBXFileReference; explicitFileType = wrapper.cfbundle; includeInIndex = 0; path = SpectrumUITests.xctest; sourceTree = BUILT_PRODUCTS_DIR; };
 		UIACC002 /* AccessibilityID.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = AccessibilityID.swift; sourceTree = "<group>"; };
+		E72D544E417F6983185252B6 /* FolderScannerUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderScannerUnitTests.swift; sourceTree = "<group>"; };
+		97D61DC2A77C01F92AFDFCE9 /* EXIFServiceUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EXIFServiceUnitTests.swift; sourceTree = "<group>"; };
+		CEB332FD66761E998A8E2985 /* VideoMetadataServiceUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = VideoMetadataServiceUnitTests.swift; sourceTree = "<group>"; };
+		B5367E4A146E77A8F0616713 /* CGImageRotationUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CGImageRotationUnitTests.swift; sourceTree = "<group>"; };
+		030B745E699141E3BFB30059 /* ThumbnailServiceUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ThumbnailServiceUnitTests.swift; sourceTree = "<group>"; };
+		EBC05C381659F082EC5F8D01 /* StatusBarModelUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = StatusBarModelUnitTests.swift; sourceTree = "<group>"; };
+		2E5CF32CDD862468C67E252A /* FolderClipboardUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderClipboardUnitTests.swift; sourceTree = "<group>"; };
+		D3C2BCAE152E3F0B7495F90A /* FolderReaderExtraTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = FolderReaderExtraTests.swift; sourceTree = "<group>"; };
+		5B39ADA4741EAE16388D9AE7 /* CoreServicesUnitTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CoreServicesUnitTests.swift; sourceTree = "<group>"; };
+		3C286236C02ED51B64B49F72 /* SettingsDeepUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SettingsDeepUITests.swift; sourceTree = "<group>"; };
+		F879AF48BB0855350E2DDC3D /* ImportFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImportFlowUITests.swift; sourceTree = "<group>"; };
+		1BDAC3D1D12820BED63329CA /* CropOverlayUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = CropOverlayUITests.swift; sourceTree = "<group>"; };
+		C8B16AA31DF6A0130B2F6770 /* SearchFlowUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SearchFlowUITests.swift; sourceTree = "<group>"; };
+		5DF9273DFEBEE10A02E79360 /* InspectorDeepUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = InspectorDeepUITests.swift; sourceTree = "<group>"; };
+		9ABB363ABA5CEC54429415C0 /* GridInteractionUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GridInteractionUITests.swift; sourceTree = "<group>"; };
+		AF9BC3F47A3BFBE45A6500BC /* SidebarOpsUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarOpsUITests.swift; sourceTree = "<group>"; };
+		40E0EF4E73CAFF8B009B4E0C /* PhotoDetailDeepUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoDetailDeepUITests.swift; sourceTree = "<group>"; };
+		285E724008EB324EE0DE2E02 /* ExtraModelTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ExtraModelTests.swift; sourceTree = "<group>"; };
+		70099A768F45A0531370E991 /* PhotoInfoPanelRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoInfoPanelRenderTests.swift; sourceTree = "<group>"; };
+		3534C1F80961887FC9FC67E7 /* ViewRenderTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ViewRenderTests.swift; sourceTree = "<group>"; };
+		BA092D419FFA70669C52E942 /* ServiceGapTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ServiceGapTests.swift; sourceTree = "<group>"; };
+		BCB9FB9311DE486820212B86 /* GyroInspectorUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = GyroInspectorUITests.swift; sourceTree = "<group>"; };
+		8BBD9928C9CDA8A37A9BE103 /* SidebarDeepUITests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = SidebarDeepUITests.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -363,11 +411,25 @@
 		AE100001 /* SpectrumTests */ = {
 			isa = PBXGroup;
 			children = (
+				BA092D419FFA70669C52E942 /* ServiceGapTests.swift */,
+				3534C1F80961887FC9FC67E7 /* ViewRenderTests.swift */,
+				70099A768F45A0531370E991 /* PhotoInfoPanelRenderTests.swift */,
+				285E724008EB324EE0DE2E02 /* ExtraModelTests.swift */,
+				5B39ADA4741EAE16388D9AE7 /* CoreServicesUnitTests.swift */,
+				D3C2BCAE152E3F0B7495F90A /* FolderReaderExtraTests.swift */,
+				2E5CF32CDD862468C67E252A /* FolderClipboardUnitTests.swift */,
+				EBC05C381659F082EC5F8D01 /* StatusBarModelUnitTests.swift */,
+				030B745E699141E3BFB30059 /* ThumbnailServiceUnitTests.swift */,
+				B5367E4A146E77A8F0616713 /* CGImageRotationUnitTests.swift */,
+				CEB332FD66761E998A8E2985 /* VideoMetadataServiceUnitTests.swift */,
+				97D61DC2A77C01F92AFDFCE9 /* EXIFServiceUnitTests.swift */,
+				E72D544E417F6983185252B6 /* FolderScannerUnitTests.swift */,
 				AB100001 /* ImageHDRDetectionTests.swift */,
 				AB100002 /* VideoHDRDetectionTests.swift */,
 				AB100003 /* GyroConfigTests.swift */,
 				AB100004 /* PhotoResolveBookmarkTests.swift */,
 				AB100005 /* ImagePreloadCacheTests.swift */,
+				AB100099 /* XMPSidecarServiceUnitTests.swift */,
 				AB100006 /* EditOpTests.swift */,
 				AB100007 /* PhotoEditOpsTests.swift */,
 				AE100002 /* Fixtures */,
@@ -399,6 +461,16 @@
 		UI400001 /* SpectrumUITests */ = {
 			isa = PBXGroup;
 			children = (
+				8BBD9928C9CDA8A37A9BE103 /* SidebarDeepUITests.swift */,
+				BCB9FB9311DE486820212B86 /* GyroInspectorUITests.swift */,
+				40E0EF4E73CAFF8B009B4E0C /* PhotoDetailDeepUITests.swift */,
+				AF9BC3F47A3BFBE45A6500BC /* SidebarOpsUITests.swift */,
+				9ABB363ABA5CEC54429415C0 /* GridInteractionUITests.swift */,
+				5DF9273DFEBEE10A02E79360 /* InspectorDeepUITests.swift */,
+				C8B16AA31DF6A0130B2F6770 /* SearchFlowUITests.swift */,
+				1BDAC3D1D12820BED63329CA /* CropOverlayUITests.swift */,
+				F879AF48BB0855350E2DDC3D /* ImportFlowUITests.swift */,
+				3C286236C02ED51B64B49F72 /* SettingsDeepUITests.swift */,
 				UI100001 /* SpectrumUITestBase.swift */,
 				UI100002 /* AppLaunchTests.swift */,
 				UI100003 /* SidebarUITests.swift */,
@@ -649,11 +721,25 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				80779461E2C7AEA91F25EC39 /* ServiceGapTests.swift in Sources */,
+				F6CCDBBBF550B122A9FD5469 /* ViewRenderTests.swift in Sources */,
+				471CB12CE61BEB42C080DB24 /* PhotoInfoPanelRenderTests.swift in Sources */,
+				4F8059233EB2044AC105F21A /* ExtraModelTests.swift in Sources */,
+				4C6995E8D544326356EF544B /* CoreServicesUnitTests.swift in Sources */,
+				21C7CCDE0BEC9CB0078CB54A /* FolderReaderExtraTests.swift in Sources */,
+				C4B34916F65E1E656FB2CE5E /* FolderClipboardUnitTests.swift in Sources */,
+				7A69668BBEE59EA05FBAAEF1 /* StatusBarModelUnitTests.swift in Sources */,
+				5D26FF563CDF4438CE4C5ABA /* ThumbnailServiceUnitTests.swift in Sources */,
+				395FA4B28320A6B67C6FE173 /* CGImageRotationUnitTests.swift in Sources */,
+				DE4F660BBBCE61D7D75474DC /* VideoMetadataServiceUnitTests.swift in Sources */,
+				96495504BADEEC136CE606A2 /* EXIFServiceUnitTests.swift in Sources */,
+				760D8381E0696E6705C8ADC5 /* FolderScannerUnitTests.swift in Sources */,
 				AA100001 /* ImageHDRDetectionTests.swift in Sources */,
 				AA100002 /* VideoHDRDetectionTests.swift in Sources */,
 				AA100003 /* GyroConfigTests.swift in Sources */,
 				AA100004 /* PhotoResolveBookmarkTests.swift in Sources */,
 				AA100005 /* ImagePreloadCacheTests.swift in Sources */,
+				AA100099 /* XMPSidecarServiceUnitTests.swift in Sources */,
 				AA100006 /* EditOpTests.swift in Sources */,
 				AA100007 /* PhotoEditOpsTests.swift in Sources */,
 			);
@@ -663,6 +749,16 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				F5CDB1E0701EE91266F1355A /* SidebarDeepUITests.swift in Sources */,
+				9C5DF6E7ACF278855A75218C /* GyroInspectorUITests.swift in Sources */,
+				C8934C2A3FFED100D366C760 /* PhotoDetailDeepUITests.swift in Sources */,
+				4282155B4D08130E81950BB2 /* SidebarOpsUITests.swift in Sources */,
+				6CDDAA468F2DD0B6656A63E6 /* GridInteractionUITests.swift in Sources */,
+				5A5299F6FAE8AAC529D96F22 /* InspectorDeepUITests.swift in Sources */,
+				72CCC43F5CF36D2CD7107AAF /* SearchFlowUITests.swift in Sources */,
+				BEC8F5335C7554A0265420B9 /* CropOverlayUITests.swift in Sources */,
+				FEA466391FFC599C614057D2 /* ImportFlowUITests.swift in Sources */,
+				4E73F6291353D71A73E35A71 /* SettingsDeepUITests.swift in Sources */,
 				UI000001 /* SpectrumUITestBase.swift in Sources */,
 				UI000002 /* AppLaunchTests.swift in Sources */,
 				UI000003 /* SidebarUITests.swift in Sources */,

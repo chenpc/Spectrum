@@ -126,6 +126,7 @@ struct PhotoDetailView: View {
                         Image(systemName: "arrow.up.left.and.arrow.down.right")
                     }
                     .help("Fit to Window")
+                    .accessibilityIdentifier(AccessibilityID.detailFitWindow)
 
                     Button {
                         if let image, containerSize.width > 0 {
@@ -139,6 +140,7 @@ struct PhotoDetailView: View {
                         Image(systemName: "1.magnifyingglass")
                     }
                     .help("Actual Size")
+                    .accessibilityIdentifier(AccessibilityID.detailActualSize)
 
                     Button {
                         zoomLevel = min(zoomLevel * 1.5, 10.0)
@@ -146,6 +148,7 @@ struct PhotoDetailView: View {
                         Image(systemName: "plus.magnifyingglass")
                     }
                     .help("Zoom In")
+                    .accessibilityIdentifier(AccessibilityID.detailZoomIn)
 
                     Button {
                         zoomLevel = max(zoomLevel / 1.5, 0.1)
@@ -153,6 +156,7 @@ struct PhotoDetailView: View {
                         Image(systemName: "minus.magnifyingglass")
                     }
                     .help("Zoom Out")
+                    .accessibilityIdentifier(AccessibilityID.detailZoomOut)
 
                     Divider()
 
@@ -161,18 +165,21 @@ struct PhotoDetailView: View {
                     }
                     .help("Crop")
                     .disabled(isCropMode)
+                    .accessibilityIdentifier(AccessibilityID.detailCrop)
 
                     Button { rotateLeft() } label: {
                         Image(systemName: "rotate.left")
                     }
                     .help("Rotate Left")
                     .disabled(isCropMode)
+                    .accessibilityIdentifier(AccessibilityID.detailRotateLeft)
 
                     Button { flipHorizontal() } label: {
                         Image(systemName: "arrow.left.and.right.righttriangle.left.righttriangle.right")
                     }
                     .help("Flip Horizontal")
                     .disabled(isCropMode)
+                    .accessibilityIdentifier(AccessibilityID.detailFlipH)
 
                     if !photo.editOps.isEmpty {
                         Button { restoreEdits() } label: {
@@ -180,6 +187,7 @@ struct PhotoDetailView: View {
                         }
                         .help("Restore Original")
                         .disabled(isCropMode)
+                        .accessibilityIdentifier(AccessibilityID.detailRestore)
                     }
                 }
 

@@ -74,19 +74,28 @@ enum FolderReader {
             movByBasename[base] = mov
         }
 
-        var items: [PhotoItem] = []
-        var companionMovPaths = Set<String>()
-
-        // Images (+ Live Photo companion detection)
-        for url in imageURLs {
-            let base = url.deletingPathExtension().lastPathComponent.lowercased()
-            var item = makeItem(from: url, isVideo: false)
-            if let movURL = movByBasename[base] {
-                item.livePhotoMovPath = movURL.path
-                companionMovPaths.insert(movURL.path)
+        // Images (+ Live Photo companion detection).
+        // makeItem() reads EXIF/XMP per file and is the dominant cost when opening a
+        // folder (especially HEIC, whose property read triggers a ColorSync ICC MD5).
+        // Parallelise across cores; write into a preallocated array by index so there
+        // is no shared mutation during the concurrent loop.
+        var imageItems = [PhotoItem?](repeating: nil, count: imageURLs.count)
+        imageItems.withUnsafeMutableBufferPointer { buffer in
+            DispatchQueue.concurrentPerform(iterations: imageURLs.count) { i in
+                let url = imageURLs[i]
+                var item = makeItem(from: url, isVideo: false)
+                let base = url.deletingPathExtension().lastPathComponent.lowercased()
+                if let movURL = movByBasename[base] {
+                    item.livePhotoMovPath = movURL.path
+                }
+                buffer[i] = item
             }
-            items.append(item)
         }
+
+        var items: [PhotoItem] = imageItems.compactMap { $0 }
+
+        // .mov files paired as Live Photo companions are folded into their image above.
+        let companionMovPaths = Set(items.compactMap { $0.livePhotoMovPath })
 
         // Standalone .mov files (not Live Photo companions)
         for url in movURLs where !companionMovPaths.contains(url.path) {

@@ -117,6 +117,10 @@ struct SidebarView: View {
                 addFolderURL(folderURL)
             }
         }
+        .onChange(of: folders.map(\.path)) { _, newPaths in
+            // 有新資料夾加入時重新載入所有子資料夾（包含新加的那個）
+            loadAllFolderChildren()
+        }
         .alert(
             "無法加入資料夾",
             isPresented: Binding(get: { pendingDeletionConflictName != nil },
@@ -132,27 +136,30 @@ struct SidebarView: View {
 
     private func loadAllFolderChildren() {
         var nowMissing: Set<String> = []
-        var toScan: [(path: String, bookmarkData: Data)] = []
+        var toScan: [(path: String, bookmarkData: Data?)] = []
 
         for folder in folders {
-            guard let bookmarkData = folder.bookmarkData,
-                  let (url, freshData) = try? BookmarkService.resolveBookmarkRefreshing(bookmarkData) else {
-                nowMissing.insert(folder.path)
-                folderChildren[folder.path] = nil
+            // 先嘗試 bookmark 存取（沙盒外部磁碟需要）
+            if let bookmarkData = folder.bookmarkData,
+               let (url, freshData) = try? BookmarkService.resolveBookmarkRefreshing(bookmarkData) {
+                if let freshData {
+                    folder.bookmarkData = freshData
+                }
+                let accessible = BookmarkService.withSecurityScope(url) {
+                    FileManager.default.fileExists(atPath: url.path)
+                }
+                if accessible {
+                    toScan.append((folder.path, folder.bookmarkData ?? bookmarkData))
+                    continue
+                }
+            }
+            // Fallback：bookmark 失敗時改用直接 path 檢查（內部磁碟或沙盒已有權限）
+            if FileManager.default.fileExists(atPath: folder.path) {
+                toScan.append((folder.path, folder.bookmarkData))
                 continue
             }
-            if let freshData {
-                folder.bookmarkData = freshData
-            }
-            let accessible = BookmarkService.withSecurityScope(url) {
-                FileManager.default.fileExists(atPath: url.path)
-            }
-            guard accessible else {
-                nowMissing.insert(folder.path)
-                folderChildren[folder.path] = nil
-                continue
-            }
-            toScan.append((folder.path, folder.bookmarkData ?? bookmarkData))
+            nowMissing.insert(folder.path)
+            folderChildren[folder.path] = nil
         }
         missingFolders = nowMissing
 

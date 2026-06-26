@@ -1,5 +1,41 @@
 # Spectrum 開發日誌
 
+## 2026-06-26 — 大幅提升測試覆蓋率（13.8% → 77.95%）
+
+**類型：** Test
+
+**問題：** app target 的程式碼覆蓋率僅 13.8%，多數 service / model / view 缺乏測試。
+
+**根因／做法：** 三條測試路線並行擴充，新增約 130+ 個測試：
+- **Unit（service/model）：** 為 FolderScanner、EXIFService、VideoMetadataService、CGImageRotation、XMPSidecarService、ThumbnailService/Scheduler、StatusBarModel、FolderClipboard、FolderReader、PhotoItem、BookmarkService、FolderMonitor、SpectrumLibrary 等補齊測試（多數達 90%+）。
+- **View-render（關鍵手法）：** 用 `NSHostingView` 在快速 unit target 中直接 render SwiftUI view 強制 body 評估，覆蓋 UI 難觸發的條件分支——PhotoInfoPanel（餵入完整 EXIF 的 PhotoItem）、TimelineSectionHeader、HDRImageViews、LivePhotoPlayerView、VideoControlBar、SettingsView、PhotoGridView。
+- **E2E/UI：** 深化 Settings、Import、Crop、Search、Inspector、Grid（多選/context menu/Rename/Trash，用 fixtures temp-copy 隔離破壞性操作）、Sidebar（子資料夾 disclosure + Rescan/Remove）、Gyro tab（video → inspector → Gyro → Custom Gyro Config，覆蓋 GyroConfigSection）。
+- 為編輯工具列按鈕（crop/rotate/flip/zoom）補上 `accessibilityIdentifier` 以利 XCUITest 定位。
+
+**結果：** app target line coverage 13.8% → **77.95%**（11088/14225）。剩餘缺口集中在測試環境本質上難觸及的程式：GyroCore（需 gyroflow dylib + 真實 gyro 影像資料）、AVFMetalView（Metal GPU 分支）、PhotoGridView 的 drag-drop、NetworkVolumeService（網路磁碟）。
+
+**修改的檔案：** `SpectrumTests/*`（多個新測試檔）、`SpectrumUITests/*`（多個新/強化測試檔 + E2EFixtures/richexif.jpg）、`Spectrum/AccessibilityID.swift`、`Spectrum/Views/Detail/PhotoDetailView.swift`、`Spectrum.xcodeproj/project.pbxproj`
+
+## 2026-06-21 — 加速開啟資料夾（平行讀取 EXIF）
+
+**類型：** Refactor
+
+**問題：** 開啟含大量照片（尤其 HEIC）的資料夾時明顯卡頓。Instruments time profile 顯示 `FolderReader.readExifDate` 佔總取樣 8.3%，遠超其他項目，是單一最大熱點。
+
+**根因／做法：** `readLevel` 用單執行緒序列對每張圖呼叫 `readExifDate`（為了依拍攝日期排序）。HEIC 的 `CGImageSourceCopyPropertiesAtIndex` 會觸發 ColorSync 對 ICC profile 做 MD5（`md5_compress`），單張即昂貴，序列累加導致整個資料夾要等全部讀完才顯示。改用 `DispatchQueue.concurrentPerform` 把 per-file 的 `makeItem`（EXIF + XMP sidecar + 檔案屬性 I/O）平行化，寫入預先配置、以 index 定位的陣列避免共享變數競爭；Live Photo 配對改在併發後從結果收集 companion mov 路徑。`makeItem` 相依的元件（ImageIO、Foundation XMLDocument、DateFormatter 解析）皆併發安全。
+
+**修改的檔案：** `Spectrum/Services/FolderReader.swift`
+
+## 2026-06-21 — Sidebar 子資料夾不顯示 + 多餘 "?" 圖示
+
+**類型：** Bug Fix
+
+**問題：** 新增的資料夾在 sidebar 不展開子資料夾，且資料夾旁出現問號圖示。
+
+**根因／做法：** (1) `loadAllFolderChildren()` 只在 `.task` 執行一次，`Add Folder` 後不會重新查詢新資料夾的子目錄，`folderChildren` 永遠為空使 DisclosureGroup 不出現 → 加 `.onChange(of: folders.map(\.path))` 觸發重新載入。(2) bookmark 解析失敗即標記 `isMissing`（問號圖示），缺少 fallback → 改為 bookmark 失敗時改用 `FileManager.fileExists(atPath:)` 直接檢查路徑，只有路徑也不存在才標 missing。
+
+**修改的檔案：** `Spectrum/Views/Sidebar/SidebarView.swift`
+
 ## 2026-06-20 — UI 測試隔離與全套測試修復
 
 **類型：** Feature / Bug Fix

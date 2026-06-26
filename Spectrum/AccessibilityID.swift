@@ -22,6 +22,14 @@ enum AccessibilityID {
     // MARK: - Detail
     static let detailView = "detail.view"
     static let detailInspectorToggle = "detail.inspectorToggle"
+    static let detailFitWindow = "detail.fitWindow"
+    static let detailActualSize = "detail.actualSize"
+    static let detailZoomIn = "detail.zoomIn"
+    static let detailZoomOut = "detail.zoomOut"
+    static let detailCrop = "detail.crop"
+    static let detailRotateLeft = "detail.rotateLeft"
+    static let detailFlipH = "detail.flipH"
+    static let detailRestore = "detail.restore"
 
     // MARK: - Video Control Bar
     static let videoPlayPause = "video.playPause"
