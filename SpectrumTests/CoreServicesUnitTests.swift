@@ -220,3 +220,47 @@ final class CoreServicesUnitTests: XCTestCase {
         XCTAssertNil(photo.duration)
     }
 }
+
+// MARK: - TextInputFocusMonitor
+
+@MainActor
+final class TextInputFocusMonitorTests: XCTestCase {
+
+    func testIsTextInput_classification() {
+        XCTAssertTrue(TextInputFocusMonitor.isTextInput(NSTextView()),
+                      "NSTextView (field editor) is text input")
+        XCTAssertFalse(TextInputFocusMonitor.isTextInput(NSView()),
+                       "Plain NSView is not text input")
+        XCTAssertFalse(TextInputFocusMonitor.isTextInput(nil))
+    }
+
+    func testMonitor_tracksFieldEditorFocus() async {
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 300, height: 100),
+            styleMask: [.titled], backing: .buffered, defer: false
+        )
+        let textField = NSTextField(frame: NSRect(x: 10, y: 10, width: 200, height: 24))
+        textField.isEditable = true
+        window.contentView?.addSubview(textField)
+
+        let monitor = TextInputFocusMonitor()
+        monitor.attach(to: window)
+
+        // Focusing the text field installs the shared field editor (NSTextView)
+        window.makeFirstResponder(textField)
+        await Task.yield()
+        XCTAssertTrue(TextInputFocusMonitor.isTextInput(window.firstResponder),
+                      "Focused NSTextField should route to field editor NSTextView")
+        XCTAssertTrue(monitor.isTextInputActive)
+
+        // Releasing focus back to the window clears the flag
+        window.makeFirstResponder(nil)
+        await Task.yield()
+        XCTAssertFalse(TextInputFocusMonitor.isTextInput(window.firstResponder))
+        XCTAssertFalse(monitor.isTextInputActive)
+
+        // Detaching resets state
+        monitor.attach(to: nil)
+        XCTAssertFalse(monitor.isTextInputActive)
+    }
+}

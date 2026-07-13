@@ -37,20 +37,42 @@ enum ImagePreloadCache {
 
     @MainActor private static var cache: [String: CachedImageEntry] = [:]
     @MainActor private static var cacheOrder: [String] = []
-    private static let maxCacheSize = 5
+    /// Loads in progress, keyed by path — concurrent callers await the same task
+    /// instead of decoding the same image twice.
+    @MainActor private static var inFlight: [String: Task<CachedImageEntry, Never>] = [:]
+    static let maxCacheSize = 13
+
+    /// Entries hold full-resolution decoded images (up to ~240MB each for 61MP files),
+    /// so the cache must release everything under system memory pressure.
+    /// Lazy static — first touched from storeInCache().
+    private static let memoryPressureSource: DispatchSourceMemoryPressure = {
+        let source = DispatchSource.makeMemoryPressureSource(
+            eventMask: [.warning, .critical], queue: .main
+        )
+        source.setEventHandler {
+            Log.video.info("[preload] memory pressure — clearing preload cache")
+            Task { @MainActor in clearCache() }
+        }
+        source.resume()
+        return source
+    }()
 
     @MainActor static func cachedEntry(for path: String) -> CachedImageEntry? {
         cache[path]
     }
 
     @MainActor static func prefetch(path: String, bookmarkData: Data?) {
-        guard cache[path] == nil else { return }
-        Task.detached {
-            _ = await loadImageEntry(path: path, bookmarkData: bookmarkData)
-        }
+        guard cache[path] == nil, inFlight[path] == nil else { return }
+        Task { _ = await loadImageEntry(path: path, bookmarkData: bookmarkData) }
+    }
+
+    @MainActor static func clearCache() {
+        cache.removeAll()
+        cacheOrder.removeAll()
     }
 
     @MainActor private static func storeInCache(path: String, entry: CachedImageEntry) {
+        _ = memoryPressureSource
         if let idx = cacheOrder.firstIndex(of: path) {
             cacheOrder.remove(at: idx)
         }
@@ -141,7 +163,11 @@ enum ImagePreloadCache {
             }
             return cached
         }
-        let entry = await Task.detached {
+        // Join an in-progress load instead of decoding the same image again
+        if let pending = inFlight[path] {
+            return await pending.value
+        }
+        let task = Task.detached { () -> CachedImageEntry in
             // Skip if the source file no longer exists — avoids IIOImageSource errors
             guard FileManager.default.fileExists(atPath: path) else {
                 Log.debug(Log.video, "[preload] file missing: \(URL(fileURLWithPath: path).lastPathComponent)")
@@ -185,7 +211,10 @@ enum ImagePreloadCache {
             }
 
             return CachedImageEntry(image: img, hlgCGImage: hlgCGImage, hdrFormat: hdrFormat)
-        }.value
+        }
+        inFlight[path] = task
+        let entry = await task.value
+        inFlight[path] = nil
         storeInCache(path: path, entry: entry)
         return entry
     }

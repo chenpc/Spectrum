@@ -966,7 +966,8 @@ struct PhotoDetailView: View {
     private func prefetchAdjacentImages() {
         let flatPhotos = viewModel?.flatPhotos ?? []
         guard let idx = flatPhotos.firstIndex(where: { $0.filePath == photo.filePath }) else { return }
-        for offset in [-1, 1] {
+        // Nearest neighbors first so they win the decode queue
+        for offset in [1, -1, 2, -2, 3, -3, 4, -4, 5, -5] {
             let ni = idx + offset
             guard flatPhotos.indices.contains(ni) else { continue }
             let adj = flatPhotos[ni]

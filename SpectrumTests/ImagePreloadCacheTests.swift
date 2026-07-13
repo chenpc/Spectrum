@@ -49,10 +49,10 @@ final class ImagePreloadCacheTests: XCTestCase {
     // MARK: - LRU eviction
 
     func testLRUEviction_removesOldestEntry() async {
-        // Load 6 unique non-existent paths to exceed maxCacheSize (5)
-        // The first path should be evicted
+        // Load maxCacheSize + 1 unique non-existent paths; the first should be evicted
+        let n = ImagePreloadCache.maxCacheSize
         var paths: [String] = []
-        for i in 0..<6 {
+        for i in 0..<(n + 1) {
             let path = "/tmp/lru_test_\(UUID())_\(i).jpg"
             paths.append(path)
             _ = await ImagePreloadCache.loadImageEntry(path: path, bookmarkData: nil)
@@ -62,17 +62,18 @@ final class ImagePreloadCacheTests: XCTestCase {
         XCTAssertNil(ImagePreloadCache.cachedEntry(for: paths[0]),
                      "Oldest entry should be evicted when cache exceeds maxCacheSize")
 
-        // Last 5 should still be cached
-        for i in 1..<6 {
+        // Remaining maxCacheSize entries should still be cached
+        for i in 1...n {
             XCTAssertNotNil(ImagePreloadCache.cachedEntry(for: paths[i]),
                             "Entry \(i) should still be in cache")
         }
     }
 
     func testLRUOrder_reaccesMovesToEnd() async {
-        // Fill cache with 5 entries
+        // Fill cache to exactly maxCacheSize entries (evicts anything from earlier tests)
+        let n = ImagePreloadCache.maxCacheSize
         var paths: [String] = []
-        for i in 0..<5 {
+        for i in 0..<n {
             let path = "/tmp/lru_order_\(UUID())_\(i).jpg"
             paths.append(path)
             _ = await ImagePreloadCache.loadImageEntry(path: path, bookmarkData: nil)
@@ -81,7 +82,7 @@ final class ImagePreloadCacheTests: XCTestCase {
         // Re-access the first entry to move it to end of LRU
         _ = await ImagePreloadCache.loadImageEntry(path: paths[0], bookmarkData: nil)
 
-        // Now add a 6th entry — paths[1] (the oldest untouched) should be evicted, not paths[0]
+        // Now add one more entry — paths[1] (the oldest untouched) should be evicted, not paths[0]
         let newPath = "/tmp/lru_order_\(UUID())_new.jpg"
         _ = await ImagePreloadCache.loadImageEntry(path: newPath, bookmarkData: nil)
 
@@ -89,6 +90,35 @@ final class ImagePreloadCacheTests: XCTestCase {
                         "Re-accessed entry should NOT be evicted")
         XCTAssertNil(ImagePreloadCache.cachedEntry(for: paths[1]),
                      "Oldest untouched entry should be evicted")
+    }
+
+    // MARK: - clearCache
+
+    func testClearCache_removesAllEntries() async {
+        let url = fixtureURL("sdr_photo.jpg")
+        _ = await ImagePreloadCache.loadImageEntry(path: url.path, bookmarkData: nil)
+        XCTAssertNotNil(ImagePreloadCache.cachedEntry(for: url.path))
+
+        ImagePreloadCache.clearCache()
+        XCTAssertNil(ImagePreloadCache.cachedEntry(for: url.path),
+                     "clearCache should remove all cached entries")
+    }
+
+    // MARK: - In-flight dedup
+
+    func testLoadImageEntry_concurrentCallsShareSingleLoad() async {
+        ImagePreloadCache.clearCache()
+        let url = fixtureURL("sdr_photo.jpg")
+
+        // Both calls start before either finishes; the second must join the
+        // in-flight load instead of decoding a second NSImage.
+        async let first = ImagePreloadCache.loadImageEntry(path: url.path, bookmarkData: nil)
+        async let second = ImagePreloadCache.loadImageEntry(path: url.path, bookmarkData: nil)
+        let (entry1, entry2) = await (first, second)
+
+        XCTAssertNotNil(entry1.image)
+        XCTAssert(entry1.image === entry2.image,
+                  "Concurrent loads of the same path should share one decode")
     }
 
     // MARK: - prefetch

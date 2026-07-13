@@ -126,6 +126,11 @@ private final class EscapeKeyMonitor {
         guard monitorBox.value == nil else { return }
         monitorBox.value = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
             guard event.keyCode == 53 else { return event }
+            // Yield to active text input (rename box, search field) — Escape
+            // there means "cancel editing / clear field", not "navigate back".
+            if TextInputFocusMonitor.isTextInput(event.window?.firstResponder) {
+                return event
+            }
             Task { @MainActor [weak self] in
                 self?.escaped.toggle()
             }
@@ -157,6 +162,8 @@ struct ContentView: View {
     @State private var savedColumnVisibility = NavigationSplitViewVisibility.all
     @State private var thumbnailCacheState = ThumbnailCacheState.shared
     @State private var escapeMonitor = EscapeKeyMonitor()
+    // 文字輸入作用中時停用 detail view 的方向鍵導航（見 PhotoGridView 同名屬性）
+    private let textFocus = TextInputFocusMonitor.shared
     @State private var searchText = ""
     @AppStorage("appearanceMode") private var appearanceMode: String = "system"
     @AppStorage("lastFolderPath") private var lastFolderPath: String = ""
@@ -424,7 +431,7 @@ struct ContentView: View {
             isHDR: $isPhotoHDR,
             viewModel: viewModel
         )
-        .focusedSceneValue(\.photoNavigation, detailNavigation)
+        .focusedSceneValue(\.photoNavigation, textFocus.isTextInputActive ? nil : detailNavigation)
     }
 
     @ViewBuilder

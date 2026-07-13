@@ -1,5 +1,4 @@
 import Foundation
-import ImageIO
 
 /// 直接從 filesystem 讀取媒體檔案清單，不使用 SwiftData DB。
 enum FolderReader {
@@ -7,8 +6,9 @@ enum FolderReader {
     // MARK: - Public API
 
     /// 列出 `folderPath` 目錄的直接媒體檔案（不遞迴）。
-    /// 回傳依 dateTaken 降冪排列的 [PhotoItem]。
-    /// 必須在背景 Task 呼叫（可能進行 filesystem I/O 和 CGImageSource EXIF 讀取）。
+    /// 回傳依 dateTaken（= 檔案 mtime）降冪排列的 [PhotoItem]。
+    /// 相機直寫的檔案 mtime 即拍攝時間；精確的 EXIF 拍攝時間由 detail view 按需讀取。
+    /// 必須在背景 Task 呼叫（filesystem I/O）。
     static func listLevel(folderPath: String, bookmarkData: Data?) -> [PhotoItem] {
         var items = withScope(bookmarkData) {
             readLevel(folderPath: folderPath)
@@ -50,14 +50,21 @@ enum FolderReader {
             options: [.skipsHiddenFiles]
         ) else { return [] }
 
-        // Separate: images (non-video), .mov files (potential Live Photo), other videos
+        // Separate: images (non-video), .mov files (potential Live Photo), other videos.
+        // Also collect .xmp sidecar paths from the same listing so makeItem can skip
+        // the per-file fileExists() stat — on network volumes those N stats dominate.
         var imageURLs: [URL] = []
         var movURLs: [URL] = []
         var otherVideoURLs: [URL] = []
+        var sidecarPaths = Set<String>()
 
         for url in contents {
-            guard url.isMediaFile else { continue }
             let ext = url.pathExtension.lowercased()
+            if ext == "xmp" {
+                sidecarPaths.insert(url.path)
+                continue
+            }
+            guard url.isMediaFile else { continue }
             if ext == "mov" {
                 movURLs.append(url)
             } else if url.isVideoFile {
@@ -74,88 +81,51 @@ enum FolderReader {
             movByBasename[base] = mov
         }
 
-        // Images (+ Live Photo companion detection).
-        // makeItem() reads EXIF/XMP per file and is the dominant cost when opening a
-        // folder (especially HEIC, whose property read triggers a ColorSync ICC MD5).
-        // Parallelise across cores; write into a preallocated array by index so there
-        // is no shared mutation during the concurrent loop.
-        var imageItems = [PhotoItem?](repeating: nil, count: imageURLs.count)
-        imageItems.withUnsafeMutableBufferPointer { buffer in
-            DispatchQueue.concurrentPerform(iterations: imageURLs.count) { i in
-                let url = imageURLs[i]
-                var item = makeItem(from: url, isVideo: false)
-                let base = url.deletingPathExtension().lastPathComponent.lowercased()
-                if let movURL = movByBasename[base] {
-                    item.livePhotoMovPath = movURL.path
-                }
-                buffer[i] = item
+        // Images (+ Live Photo companion detection)
+        var items: [PhotoItem] = imageURLs.map { url in
+            var item = makeItem(from: url, isVideo: false, sidecarPaths: sidecarPaths)
+            let base = url.deletingPathExtension().lastPathComponent.lowercased()
+            if let movURL = movByBasename[base] {
+                item.livePhotoMovPath = movURL.path
             }
+            return item
         }
-
-        var items: [PhotoItem] = imageItems.compactMap { $0 }
 
         // .mov files paired as Live Photo companions are folded into their image above.
         let companionMovPaths = Set(items.compactMap { $0.livePhotoMovPath })
 
         // Standalone .mov files (not Live Photo companions)
         for url in movURLs where !companionMovPaths.contains(url.path) {
-            items.append(makeItem(from: url, isVideo: true))
+            items.append(makeItem(from: url, isVideo: true, sidecarPaths: sidecarPaths))
         }
 
         // All other video formats (.mp4, .m4v, .avi, .mkv, etc.)
         for url in otherVideoURLs {
-            items.append(makeItem(from: url, isVideo: true))
+            items.append(makeItem(from: url, isVideo: true, sidecarPaths: sidecarPaths))
         }
 
         return items
     }
 
-    private static func makeItem(from url: URL, isVideo: Bool) -> PhotoItem {
-        let fm = FileManager.default
-        let attrs = try? fm.attributesOfItem(atPath: url.path)
-        let fileSize = (attrs?[.size] as? Int64) ?? 0
-        let mtime = (attrs?[.modificationDate] as? Date) ?? Date.distantPast
+    private static func makeItem(from url: URL, isVideo: Bool, sidecarPaths: Set<String>) -> PhotoItem {
+        // Size + mtime were prefetched by contentsOfDirectory(includingPropertiesForKeys:) —
+        // no extra syscall per file.
+        let values = try? url.resourceValues(forKeys: [.fileSizeKey, .contentModificationDateKey])
+        let fileSize = Int64(values?.fileSize ?? 0)
+        let mtime = values?.contentModificationDate ?? Date.distantPast
 
-        // Quick EXIF date for images only
-        var dateTaken = mtime
-        if !isVideo, let exifDate = readExifDate(url: url) {
-            dateTaken = exifDate
-        }
-
-        // EditOps from XMP sidecar (orientation=1 default — acceptable for most landscape photos)
-        let editOps = readEditOps(imageURL: url)
+        // EditOps from XMP sidecar — only when the directory listing saw a sidecar
+        let sidecarPath = XMPSidecarService.sidecarURL(for: url).path
+        let editOps = sidecarPaths.contains(sidecarPath) ? readEditOps(imageURL: url) : []
 
         return PhotoItem(
             filePath: url.path,
             fileName: url.lastPathComponent,
-            dateTaken: dateTaken,
+            dateTaken: mtime,
             fileSize: fileSize,
             isVideo: isVideo,
             editOps: editOps
         )
-    }
-
-    // MARK: - EXIF date (quick read)
-
-    private static let exifDateFormatter: DateFormatter = {
-        let f = DateFormatter()
-        f.dateFormat = "yyyy:MM:dd HH:mm:ss"
-        f.locale = Locale(identifier: "en_US_POSIX")
-        return f
-    }()
-
-    private static func readExifDate(url: URL) -> Date? {
-        let options = [kCGImageSourceShouldCache: false] as CFDictionary
-        guard let src = CGImageSourceCreateWithURL(url as CFURL, options),
-              let props = CGImageSourceCopyPropertiesAtIndex(src, 0, nil) as? [CFString: Any]
-        else { return nil }
-
-        let exifDict = props[kCGImagePropertyExifDictionary] as? [CFString: Any]
-        let tiffDict = props[kCGImagePropertyTIFFDictionary] as? [CFString: Any]
-        let dateStr = exifDict?[kCGImagePropertyExifDateTimeOriginal] as? String
-            ?? tiffDict?[kCGImagePropertyTIFFDateTime] as? String
-        guard let dateStr else { return nil }
-        return exifDateFormatter.date(from: dateStr)
     }
 
     // MARK: - XMP edit ops

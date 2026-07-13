@@ -961,3 +961,70 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 - `Spectrum/SpectrumApp.swift`：init 時套用 CLI 參數
 - `Spectrum/Views/Sidebar/SidebarView.swift`：`--add-folder` 自動觸發
 - `debug-test.sh`（新增）：自動化建置→啟動→等待→分析 log 的 debug 腳本
+
+## 2026-07-02 — 垃圾桶 fallback 永久刪除修復 + 預載快取強化
+
+**類型：** Bug Fix
+
+**問題：** (1) 照片／資料夾「Move to Trash」在 `trashItem` 失敗時（常見於不支援垃圾桶的網路磁碟區）會靜默 fallback 到 `removeItem` 永久刪除，與確認對話框「移到垃圾桶」的承諾不符，資料夾情況更是遞迴刪除。(2) ImagePreloadCache 擴大到 13 張全解析度影像後，缺少記憶體壓力釋放與 in-flight 去重，快速翻頁時同一張圖會被重複解碼。
+
+**根因／做法：**
+
+1. **Trash fallback**：移除 `performTrash` / `performTrashSubfolder` 的靜默 `removeItem` fallback。`trashItem` 失敗的項目改為累積到 `permanentDeleteItems` / `permanentDeleteFolders`，跳出獨立的「Delete Permanently?」confirmationDialog，使用者明確確認後才由 `performPermanentDelete` 執行永久刪除（含 security scope 處理與錯誤回報）。多選刪除時失敗項目會累積成一次確認。
+
+2. **ImagePreloadCache**：
+   - 新增 `inFlight: [String: Task<CachedImageEntry, Never>]`——並發呼叫 `loadImageEntry` 同一路徑時，後到者 await 同一個 task，不重複解碼；`prefetch` 也檢查 in-flight。
+   - 新增 `DispatchSourceMemoryPressure`（warning/critical）→ `clearCache()`。全解析度快取（61MP 檔最壞單張 ~240MB × 13）在記憶體受壓時全數釋放，與 ThumbnailService 行為一致。
+   - `prefetchAdjacentImages` 的 ±5 預取順序改為由近到遠（1, -1, 2, -2, …），最近的鄰居優先取得解碼資源。
+
+3. **測試**：`ImagePreloadCacheTests` 的 LRU 測試原本把上限寫死為 5，改為引用 `ImagePreloadCache.maxCacheSize`（現為 13）；新增 `testClearCache_removesAllEntries` 與 `testLoadImageEntry_concurrentCallsShareSingleLoad`（用 `async let` 驗證並發載入共享同一個 NSImage 實例）。
+
+**修改的檔案：**
+- `Spectrum/Views/Grid/PhotoGridView.swift`：trash fallback 改為確認制永久刪除；新增 `performPermanentDelete` / `removeItemFromLocalState` / `clearSubfolderSelection`
+- `Spectrum/Services/ImagePreloadCache.swift`：in-flight 去重、memory pressure 釋放、`clearCache()`、`maxCacheSize` 改為 internal
+- `Spectrum/Views/Detail/PhotoDetailView.swift`：預取順序由近到遠
+- `SpectrumTests/ImagePreloadCacheTests.swift`：LRU 測試 size-agnostic + 2 個新測試
+
+## 2026-07-13 — 返回 grid view 慢：移除 grid 路徑的逐檔 EXIF 讀取
+
+**類型：** Bug Fix / Performance
+
+**問題：** 從 detail view 返回 grid view 要等十幾秒（Instruments trace 顯示 t=25–37s 全在 `FolderReader.readExifDate` / `makeItem`，I/O bound）。
+
+**根因／做法：** `detailPhoto != nil` 時 PhotoGridView 被移出 hierarchy，返回時重建並重跑 `loadCurrentLevel()` → `FolderReader.listLevel` 對每個檔案：開 CGImageSource 讀 EXIF 日期 + `attributesOfItem` syscall + XMP sidecar `fileExists` stat。數千檔案在 NAS 上逐檔 I/O 即十餘秒。
+
+分析後發現 EXIF 日期在 grid 只用於排序，而相機直寫檔案的 mtime 即拍攝時間（SearchResultsView 已是 mtime-only 先例；Inspector 的 Date Taken 由 detail view 按需讀完整 EXIF，不受影響）。修法：
+
+1. **移除 grid 路徑的 `readExifDate`**——`dateTaken` 直接用 mtime。
+2. **改用 `contentsOfDirectory` 預取的 `resourceValues`**（size/mtime），移除逐檔 `attributesOfItem` syscall。
+3. **XMP sidecar 改由目錄列舉建 `Set` 查 membership**，移除逐檔 `fileExists` stat，只對真的有 sidecar 的檔案讀取。
+4. 移除 `concurrentPerform` 平行化——`makeItem` 已無 I/O，平行化反成開銷。
+
+`listLevel` 從「每檔 3 次 I/O」降為「一次 `contentsOfDirectory`」，返回 grid 即時完成。
+
+**修改的檔案：**
+- `Spectrum/Services/FolderReader.swift`：移除 `readExifDate` / `exifDateFormatter`；`makeItem` 改吃預取 resourceValues + sidecarPaths Set
+
+## 2026-07-13 — Rename box 輸入法選字被方向鍵導航攔截
+
+**類型：** Bug Fix
+
+**問題：** 在 rename 對話框用輸入法打字時，按上下鍵選字會觸發 grid view 的選取移動——按鍵被吃掉，選字功能失效。
+
+**根因／做法：** `PhotoNavigationCommands` 把無修飾鍵的方向鍵／Return 綁成選單 key equivalent。選單 equivalent 的比對發生在事件送達 text field／IME **之前**，只要命令 enabled（rename alert 開啟時 grid 的 `focusedSceneValue` 仍存在）就會攔走按鍵。同類過度綁定還有：裸 Delete 鍵（文字框按 backspace 可能觸發 Move to Trash）、搜尋框輸入時的 Cmd+C/X/V（複製選取的檔案而非文字）、全域 Escape monitor（rename box 按 Esc 被攔走觸發返回導航）。
+
+修法演進（前兩版 reactive 方案都失敗，最終用確定性 NSEvent monitor）：
+
+1. **第一版（失敗）**：Commands body 直接讀 `@Observable` 做 `.disabled`——`Commands` 不是 `View`，Observation 變更不會觸發 Commands 重算，disabled 停留在舊值。
+2. **第二版（失敗）**：改在發佈 `focusedSceneValue` 的 View 端 gating（View body 的 Observation 追蹤可靠）。E2E 診斷證實偵測正確（rename alert 的 responder 是 `_SystemTextFieldFieldEditor`，NSTextView），但 **alert panel 成為 key window 期間，scene 的 focused values 更新到不了 Commands**——選單照樣攔鍵。
+3. **第三版（成功）**：`TextInputFocusMonitor` init 時安裝 `NSEvent.addLocalMonitorForEvents(.keyDown)`——local monitor 在選單 key equivalent 比對**之前**收到事件。`routeToTextInputIfNeeded()`：first responder 是 NSTextView 時，(a) 裸方向鍵／PageUp/Down／Delete 直接 `textView.keyDown(with:)` 轉發並吃掉事件（IME 選字、游標移動恢復正常）；(b) Return 只在 `hasMarkedText()`（IME 組字中）時轉發，否則放行給 alert 預設按鈕；(c) Cmd+A/C/X/V 直接呼叫 `textView.selectAll/copy/cut/paste`（否則被 FolderEditCommands 攔走變成檔案操作）。
+
+發佈端 gating（第二版）保留作為搜尋框情境的防護（主視窗內 responder 切換時該鏈有效）。`EscapeKeyMonitor` 對文字輸入放行。
+
+**驗證**：新增 E2E 迴歸測試 `testRenameFieldArrowKeysStayInTextField`——用游標移動斷言（打 `abc` → ←← → 打 `X` → 必須是 `aXbc`）作為 IME 無關的代理，加上 backspace 編輯與 Cmd+A 全選文字的斷言。修正前此測試重現 bug（`abcX`、全選被攔），修正後通過；全套 280 測試無回歸。
+
+**修改的檔案：**
+- `Spectrum/SpectrumApp.swift`：`TextInputFocusMonitor` + `routeToTextInputIfNeeded()` key guard
+- `Spectrum/Views/Grid/PhotoGridView.swift`、`Spectrum/Views/ContentView.swift`：focusedSceneValue gating + `EscapeKeyMonitor` 放行
+- `SpectrumUITests/GridInteractionUITests.swift`：新增 E2E 迴歸測試
+- `SpectrumTests/CoreServicesUnitTests.swift`：`TextInputFocusMonitorTests`

@@ -37,10 +37,17 @@ struct PhotoGridView: View {
     @State private var itemsToDelete: [PhotoItem] = []
     @State private var foldersToDelete: [SubfolderInfo] = []
     @State private var subfolderToDelete: SubfolderInfo? = nil
+    // Items whose trashItem failed (e.g. network volumes without Trash support) —
+    // queued here for an explicit permanent-delete confirmation, never deleted silently.
+    @State private var permanentDeleteItems: [PhotoItem] = []
+    @State private var permanentDeleteFolders: [SubfolderInfo] = []
 
     // Clipboard, rename, error
     private let clipboard = FolderClipboard.shared
     private let importModel = ImportPanelModel.shared
+    // 文字輸入（rename box、搜尋框）作用中時，發佈 nil focusedSceneValue，
+    // 讓裸鍵選單 equivalent（方向鍵/Return/Delete）disabled、不攔截 IME 按鍵。
+    private let textFocus = TextInputFocusMonitor.shared
     @State private var renamingInfo: SubfolderInfo? = nil
     @State private var renameText = ""
     @State private var errorMessage: String? = nil
@@ -58,7 +65,8 @@ struct PhotoGridView: View {
     }
 
     private var currentFolderEditAction: FolderEditAction {
-        guard renamingInfo == nil else { return FolderEditAction() }
+        // 文字輸入中一律讓出 Cmd+C/X/V 給 field editor（複製文字而非檔案）
+        guard renamingInfo == nil, !textFocus.isTextInputActive else { return FolderEditAction() }
         let bm = folder?.bookmarkData ?? Data()
         let sf = selectedSubfolder
         let sp = selectedPhoto
@@ -141,6 +149,23 @@ struct PhotoGridView: View {
                 Button("Cancel", role: .cancel) { itemsToDelete = []; foldersToDelete = [] }
             } message: {
                 Text("\(itemsToDelete.count + foldersToDelete.count) items will be moved to the Trash.")
+            }
+            .confirmationDialog("Delete Permanently?", isPresented: Binding(
+                get: { !permanentDeleteItems.isEmpty || !permanentDeleteFolders.isEmpty },
+                set: { if !$0 { permanentDeleteItems = []; permanentDeleteFolders = [] } }
+            )) {
+                let count = permanentDeleteItems.count + permanentDeleteFolders.count
+                Button(count == 1 ? "Delete Permanently" : "Delete \(count) Items Permanently",
+                       role: .destructive) {
+                    let items = permanentDeleteItems
+                    let folders = permanentDeleteFolders
+                    permanentDeleteItems = []
+                    permanentDeleteFolders = []
+                    Task { await performPermanentDelete(items: items, folders: folders) }
+                }
+                Button("Cancel", role: .cancel) { permanentDeleteItems = []; permanentDeleteFolders = [] }
+            } message: {
+                Text("These items could not be moved to the Trash (the volume may not support it). They will be deleted permanently. This cannot be undone.")
             }
     }
 
@@ -260,12 +285,15 @@ struct PhotoGridView: View {
                     }
                 }
             }
-            .focusedSceneValue(\.photoNavigation, navigationAction(
+            .focusedSceneValue(\.photoNavigation, textFocus.isTextInputActive ? nil : navigationAction(
                 flatItems: flatItems, columnCount: columnCount, viewHeight: geo.size.height
             ))
             .focusedSceneValue(\.folderEditAction, currentFolderEditAction)
-            .focusedSceneValue(\.deletePhotoAction, !selectedItemIds.isEmpty ? { triggerDeleteSelected() } : nil)
-            .focusedSceneValue(\.selectAllAction, { selectAll(flatItems: flatItems) })
+            .focusedSceneValue(\.deletePhotoAction,
+                               !selectedItemIds.isEmpty && !textFocus.isTextInputActive
+                               ? { triggerDeleteSelected() } : nil)
+            .focusedSceneValue(\.selectAllAction,
+                               textFocus.isTextInputActive ? nil : { selectAll(flatItems: flatItems) })
         }
     }
 
@@ -837,19 +865,13 @@ struct PhotoGridView: View {
         defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
         let url = URL(fileURLWithPath: info.path)
         do {
-            do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            } catch {
-                try FileManager.default.removeItem(at: url)
-            }
-            selectedItemIds.remove(info.path)
-            if lastSelectedId == info.path {
-                lastSelectedId = selectedItemIds.first
-                selectedPhoto = nil
-            }
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            clearSubfolderSelection(info)
             await loadCurrentLevel()
         } catch {
-            errorMessage = fileErrorMessage(error)
+            // trashItem fails on volumes without Trash support — queue for explicit
+            // permanent-delete confirmation instead of deleting silently.
+            permanentDeleteFolders.append(info)
         }
     }
 
@@ -870,21 +892,75 @@ struct PhotoGridView: View {
         }
         defer { if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() } }
         do {
-            do {
-                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
-            } catch {
-                try FileManager.default.removeItem(at: url)
-            }
-            // Remove from local state (no DB to update)
-            allItems.removeAll { $0.filePath == item.filePath }
-            displayPhotos.removeAll { $0.filePath == item.filePath }
-            viewModel.flatPhotos = displayPhotos
-            selectedItemIds.remove(item.filePath)
-            if lastSelectedId == item.filePath { lastSelectedId = selectedItemIds.first }
-            if selectedPhoto?.filePath == item.filePath { selectedPhoto = nil }
+            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            removeItemFromLocalState(item)
         } catch {
-            errorMessage = fileErrorMessage(error)
+            // trashItem fails on volumes without Trash support — queue for explicit
+            // permanent-delete confirmation instead of deleting silently.
+            permanentDeleteItems.append(item)
         }
+    }
+
+    /// Remove a trashed/deleted photo from local view state (no DB to update).
+    private func removeItemFromLocalState(_ item: PhotoItem) {
+        allItems.removeAll { $0.filePath == item.filePath }
+        displayPhotos.removeAll { $0.filePath == item.filePath }
+        viewModel.flatPhotos = displayPhotos
+        selectedItemIds.remove(item.filePath)
+        if lastSelectedId == item.filePath { lastSelectedId = selectedItemIds.first }
+        if selectedPhoto?.filePath == item.filePath { selectedPhoto = nil }
+    }
+
+    private func clearSubfolderSelection(_ info: SubfolderInfo) {
+        selectedItemIds.remove(info.path)
+        if lastSelectedId == info.path {
+            lastSelectedId = selectedItemIds.first
+            selectedPhoto = nil
+        }
+    }
+
+    /// User-confirmed permanent deletion for items that could not be moved to the Trash.
+    private func performPermanentDelete(items: [PhotoItem], folders foldersToRemove: [SubfolderInfo]) async {
+        var encounteredError: Error?
+
+        for item in items {
+            let url = URL(fileURLWithPath: item.filePath)
+            let bm = item.resolveBookmarkData(from: Array(allFolders)) ?? folder?.bookmarkData
+            var scopeURL: URL?
+            var didStart = false
+            if let bm, let resolved = try? BookmarkService.resolveBookmark(bm) {
+                scopeURL = resolved
+                didStart = resolved.startAccessingSecurityScopedResource()
+            }
+            do {
+                try FileManager.default.removeItem(at: url)
+                removeItemFromLocalState(item)
+            } catch {
+                encounteredError = error
+            }
+            if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
+        }
+
+        if !foldersToRemove.isEmpty {
+            if let bm = folder?.bookmarkData,
+               let rootURL = try? BookmarkService.resolveBookmark(bm) {
+                let started = rootURL.startAccessingSecurityScopedResource()
+                defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
+                for info in foldersToRemove {
+                    do {
+                        try FileManager.default.removeItem(at: URL(fileURLWithPath: info.path))
+                        clearSubfolderSelection(info)
+                    } catch {
+                        encounteredError = error
+                    }
+                }
+            } else {
+                errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
+            }
+            await loadCurrentLevel()
+        }
+
+        if let err = encounteredError { errorMessage = fileErrorMessage(err) }
     }
 
     private func subfoldersAreInOrder(_ a: SubfolderInfo, _ b: SubfolderInfo) -> Bool {

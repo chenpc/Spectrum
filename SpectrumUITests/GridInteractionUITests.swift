@@ -38,6 +38,7 @@ final class GridInteractionUITests: XCTestCase {
         app.launchArguments = [
             "--userdir", userDir.path,
             "--add-folder", workDir.path,
+            "--log-stdout",
         ]
         app.launch()
     }
@@ -293,6 +294,55 @@ final class GridInteractionUITests: XCTestCase {
 
         XCTAssertTrue(app.windows.count >= 1,
                       "App should survive Cut + Paste (paste menu present: \(pasted))")
+    }
+
+    // MARK: - Regression: bare nav keys must reach the rename TextField, not the menu
+
+    /// Arrow keys pressed while the rename TextField is focused must move the
+    /// insertion point (and drive IME candidate selection), NOT trigger the
+    /// Navigate menu's bare-key equivalents. Cursor-movement assertion is an
+    /// IME-independent proxy: if the menu steals arrows, the caret never moves.
+    func testRenameFieldArrowKeysStayInTextField() {
+        XCTAssertTrue(waitForGridWithThumbnails())
+
+        rightClickGridBackground()
+        guard clickMenuItem("New Folder") else {
+            dismissMenusAndDialogs()
+            XCTFail("Could not open New Folder rename alert")
+            return
+        }
+
+        let renameBtn = dialogButton("Rename")
+        XCTAssertTrue(renameBtn.waitForExistence(timeout: 6))
+        let field = app.textFields.firstMatch
+        XCTAssertTrue(field.waitForExistence(timeout: 3))
+        field.click()
+        app.typeKey("a", modifierFlags: .command)
+        app.typeText("abc")
+        Thread.sleep(forTimeInterval: 0.3)
+
+        // ← ← then X: caret moves only if the field (not the menu) got the arrows
+        app.typeKey(.leftArrow, modifierFlags: [])
+        app.typeKey(.leftArrow, modifierFlags: [])
+        app.typeText("X")
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(field.value as? String, "aXbc",
+                       "Arrow keys must move the caret inside the rename field — menu stole them")
+
+        // Backspace must delete a character, not trigger Move to Trash
+        app.typeKey(.delete, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertEqual(field.value as? String, "abc",
+                       "Delete must edit text inside the rename field — menu stole it")
+
+        // ↓ ↑ must not blow up / navigate the grid behind the alert
+        app.typeKey(.downArrow, modifierFlags: [])
+        app.typeKey(.upArrow, modifierFlags: [])
+        Thread.sleep(forTimeInterval: 0.3)
+        XCTAssertTrue(field.exists, "Rename alert must still be presented")
+
+        _ = clickButton("Cancel")
+        dismissMenusAndDialogs()
     }
 
     // MARK: - 10. Grid background: New Folder -> Rename alert -> commit OK
