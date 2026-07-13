@@ -57,7 +57,9 @@ struct GyroConfig: Codable {
 
 /// Common interface for gyro stabilization cores.
 /// Used by the GPU warp pipeline to render stabilized frames.
-protocol GyroCoreProvider: AnyObject {
+/// Sendable: instances are handed across renderQueue / gyroComputeQueue;
+/// GyroCore is internally synchronized (readyLock + coreLock).
+protocol GyroCoreProvider: AnyObject, Sendable {
     var isReady: Bool { get }
     var gyroVideoW: Float { get }
     var gyroVideoH: Float { get }

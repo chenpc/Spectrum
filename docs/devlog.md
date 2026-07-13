@@ -1028,3 +1028,27 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 - `Spectrum/Views/Grid/PhotoGridView.swift`、`Spectrum/Views/ContentView.swift`：focusedSceneValue gating + `EscapeKeyMonitor` 放行
 - `SpectrumUITests/GridInteractionUITests.swift`：新增 E2E 迴歸測試
 - `SpectrumTests/CoreServicesUnitTests.swift`：`TextInputFocusMonitorTests`
+
+## 2026-07-13 — 影片播放卡頓（二）：gyro 矩陣計算移出渲染路徑
+
+**類型：** Bug Fix / Performance
+
+**問題：** 10GbE 修正 NAS I/O 後影片仍卡頓。Trace 顯示穩定播放期間有 8 次 150–220ms 的 renderFrame 空窗，空窗內全是 gyroflow-core 的 rayon 執行緒（`quat_at_timestamp` × 2160 rolling-shutter rows）。
+
+**根因／做法：** `computeMatrixAtTime` 是同步 FFI，在 renderQueue 上逐幀執行；Sony RS 修正每幀要對 2160 個掃描列做 quaternion 取樣（rayon 平行化），偶發尖峰 150–220ms 期間 `renderSemaphore` 把後續 display link tick 全部丟棄——體感每隔幾秒頓一次。
+
+改為非同步 pipeline（`AVFMetalView`）：
+
+- **`gyroComputeQueue`（serial）**：渲染每一幀時排程預算下一幀（pts + 1/fps）矩陣；`performGyroCompute` 計算 → 上傳 matTex → 發佈 `GyroSnapshot`（pts + 紋理索引 + 烘焙好的 `WarpUniforms`）
+- **renderFrame 永不阻塞**：直接取最新 snapshot；計算尖峰時沿用上一幀矩陣（gyro 矩陣逐幀平滑，一幀延遲視覺上可忽略）
+- **同步 fallback 僅限首幀／seek**：snapshot 缺失或偏差 > max(0.3s, 4 幀) 時同步計算一次，避免呈現未穩定的畫面
+- **三重緩衝 matTex**：GPU 可能落後 CPU 1–2 幀，輪替上傳避免覆寫讀取中的紋理（舊實作單一紋理每幀覆寫本身就有撕裂風險）
+- **Generation counter**：切換影片／gyro toggle 時 `invalidateGyroSnapshot()` 遞增世代，in-flight 的舊計算結果被拒絕發佈
+- matsBuf 是 GyroCore 內部單一緩衝，所有 `computeMatrixAtTime` 呼叫（含同步 fallback 的 `gyroComputeQueue.sync`）都收斂到同一條 serial queue 上，避免跨執行緒覆寫
+- `GyroCoreProvider` 加上 `Sendable`（GyroCore 本已內部同步）
+
+**診斷過程備註：** 同一症狀先後有兩個獨立根因——(1) SMB 走了 WiFi 而非 10GbE，AVFoundation 小塊同步讀取有效吞吐 ~20Mbps 餵不飽 256Mbps XAVC HS（`ahead` 從 10.5s 匀速流失至 0、`rendered=5–9`）；(2) I/O 修復後才暴露的 gyro 同步 FFI 尖峰。per-second render stats（ticks/drops/noBuf/rendered/drawNil/gyroMs/ahead）是關鍵工具，保留於 codebase。
+
+**修改的檔案：**
+- `Spectrum/Views/Detail/AVFMetalView.swift`：async gyro pipeline + 三重緩衝 + per-second stats + DIAG 診斷 log
+- `Spectrum/Services/GyroConfig.swift`：`GyroCoreProvider: Sendable`

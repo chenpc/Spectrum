@@ -4,6 +4,7 @@ import AppKit
 @preconcurrency import CoreVideo
 import Metal
 import QuartzCore
+import VideoToolbox
 import os
 
 // Swift struct matching Metal WarpUniforms
@@ -40,6 +41,18 @@ struct AVFVideoInfo {
     var dvLevel: Int = 0
     /// Rotation from preferredTransform (0, 90, 180, 270)
     var rotation: Int = 0
+    /// Chroma subsampling from hvcC (1=4:2:0, 2=4:2:2, 3=4:4:4, -1=unknown)
+    var chromaFormat: Int = -1
+    /// HEVC general_profile_idc (1=Main, 2=Main10, 4=Range Extensions e.g. 4:2:2)
+    var hevcProfile: Int = -1
+
+    var chromaLabel: String {
+        switch chromaFormat {
+        case 0: return "4:0:0"; case 1: return "4:2:0"
+        case 2: return "4:2:2"; case 3: return "4:4:4"
+        default: return "?"
+        }
+    }
 
     /// Map analyzed flags to Spectrum's VideoHDRType.
     var hdrType: VideoHDRType? {
@@ -101,6 +114,15 @@ func analyzeVideo(asset: AVAsset) async -> AVFVideoInfo {
                 info.matrix = mx
             }
 
+            // HEVC decoder config: profile + chroma subsampling
+            // (ISO 14496-15 HEVCDecoderConfigurationRecord:
+            //  byte1 = profile_space/tier/profile_idc, byte12 low 2 bits = chroma_format_idc)
+            if let atoms = exts["SampleDescriptionExtensionAtoms"] as? [String: Any],
+               let hvcC = atoms["hvcC"] as? Data, hvcC.count >= 13 {
+                info.hevcProfile = Int(hvcC[1] & 0x1F)
+                info.chromaFormat = Int(hvcC[12] & 0x03)
+            }
+
             // Dolby Vision detection
             if let atoms = exts["SampleDescriptionExtensionAtoms"] as? [String: Any] {
                 if let dvcC = atoms["dvcC"] as? Data {
@@ -159,8 +181,28 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
     // Gyro stabilization
     nonisolated(unsafe) private var gyroCore: GyroCoreProvider?
-    nonisolated(unsafe) private var matTex: MTLTexture?
-    nonisolated(unsafe) private var matTexH: Int = 0
+
+    // ── Async gyro matrix pipeline ─────────────────────────────────────────
+    // Per-frame matrix computation (Sony RS: 2160 rows × quaternion sampling,
+    // rayon-parallelized in gyroflow-core) can spike to 150-220ms. Running it
+    // synchronously on renderQueue froze rendering for that long. Instead a
+    // dedicated serial queue computes the NEXT frame's matrices ahead of time
+    // and publishes a snapshot; renderFrame never blocks on the FFI.
+    //
+    // Triple-buffered matTex: the GPU may lag 1-2 frames behind the CPU, so
+    // uploads rotate across 3 textures to avoid overwriting one mid-read.
+    private struct GyroSnapshot {
+        var pts: Double
+        var texIndex: Int
+        var uniforms: WarpUniforms
+    }
+    private let gyroComputeQueue = DispatchQueue(label: "spectrum.gyro.compute", qos: .userInteractive)
+    private let gyroStateLock = NSLock()
+    nonisolated(unsafe) private var _gyroSnapshot: GyroSnapshot?
+    nonisolated(unsafe) private var gyroComputeInFlight = false
+    nonisolated(unsafe) private var gyroGeneration: UInt64 = 0
+    nonisolated(unsafe) private var matTexes: [MTLTexture?] = [nil, nil, nil]
+    nonisolated(unsafe) private var matTexesH: Int = 0
 
     // Gyro Stability Index — written on renderQueue
     nonisolated(unsafe) private var prevMidRow: (Float, Float, Float, Float, Float, Float, Float, Float, Float)?
@@ -193,6 +235,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private(set) var videoDuration: Double = 0
     nonisolated(unsafe) private(set) var isEOFReached: Bool = false
     nonisolated(unsafe) private var eofObserver: NSObjectProtocol?
+    nonisolated(unsafe) private var stallObserver: NSObjectProtocol?
     nonisolated(unsafe) private var readyObservation: NSKeyValueObservation?
     nonisolated(unsafe) private var timeControlObservation: NSKeyValueObservation?
     // T=0 reference for startup timing logs
@@ -205,6 +248,58 @@ class AVFMetalView: NSView, @unchecked Sendable {
     nonisolated(unsafe) private var frameIntervals: [Double] = []
     nonisolated(unsafe) private var lastFrameTime: CFTimeInterval = 0
     nonisolated(unsafe) private var frameCount: Int = 0
+
+    // Per-second stutter diagnostics — answers "where did the frames go":
+    // ticks:    CVDisplayLink callbacks received
+    // drops:    ticks discarded because the previous frame was still rendering
+    // noBuf:    ticks where AVPlayerItemVideoOutput had no new pixel buffer (decode starvation)
+    // rendered: frames actually drawn
+    // drawNil:  nextDrawable() returned nil (drawable-pool starvation / GPU backpressure)
+    // gyroMs:   wall-clock spent in the synchronous gyro matrix FFI this second
+    // Written on displaylink thread + renderQueue; racy reads are acceptable for diagnostics.
+    nonisolated(unsafe) private var statTicks = 0
+    nonisolated(unsafe) private var statSemDrops = 0
+    nonisolated(unsafe) private var statNoBuffer = 0
+    nonisolated(unsafe) private var statRendered = 0
+    nonisolated(unsafe) private var statDrawableNil = 0
+    nonisolated(unsafe) private var statGyroMs: Double = 0
+    nonisolated(unsafe) private var statRenderMs: Double = 0
+    nonisolated(unsafe) private var statLastLog: CFTimeInterval = 0
+
+    /// Called on every displaylink tick; emits one summary line per second while playing.
+    nonisolated fileprivate func tickStats(dropped: Bool) {
+        statTicks += 1
+        if dropped { statSemDrops += 1 }
+        let now = CACurrentMediaTime()
+        if statLastLog == 0 { statLastLog = now; return }
+        guard now - statLastLog >= 1.0 else { return }
+        let dt = now - statLastLog
+        statLastLog = now
+        let rate = player?.rate ?? 0
+        if rate != 0 || statRendered > 0 {
+            // Buffered-ahead seconds: how much decoded-ready media the item has
+            // loaded past the playhead. ~0 while noBuf is high → I/O-bound;
+            // large while noBuf is high → decode/conversion-bound.
+            var ahead = -1.0
+            var keepUp = false
+            if let item = playerItem {
+                keepUp = item.isPlaybackLikelyToKeepUp
+                let ct = CMTimeGetSeconds(item.currentTime())
+                for value in item.loadedTimeRanges {
+                    let range = value.timeRangeValue
+                    let start = CMTimeGetSeconds(range.start)
+                    let end = start + CMTimeGetSeconds(range.duration)
+                    if start <= ct && ct <= end { ahead = end - ct; break }
+                }
+            }
+            Log.info(Log.player, String(format:
+                "[render] stats/%.1fs: ticks=%d drops=%d noBuf=%d rendered=%d drawNil=%d gyro=%.1fms render=%.1fms rate=%.1f ahead=%.1fs keepUp=%d",
+                dt, statTicks, statSemDrops, statNoBuffer, statRendered, statDrawableNil,
+                statGyroMs, statRenderMs, rate, ahead, keepUp ? 1 : 0))
+        }
+        statTicks = 0; statSemDrops = 0; statNoBuffer = 0
+        statRendered = 0; statDrawableNil = 0; statGyroMs = 0; statRenderMs = 0
+    }
 
     nonisolated(unsafe) var diagnosticsEnabled: Bool = true
 
@@ -362,16 +457,98 @@ class AVFMetalView: NSView, @unchecked Sendable {
         offscreenW = width; offscreenH = height
     }
 
-    // MARK: - matTex (gyro matrix texture: 4 x vH, rgba32Float)
+    // MARK: - matTex (gyro matrix textures: 4 x vH, rgba32Float, triple-buffered)
 
-    nonisolated private func ensureMatTex(height: Int) {
-        guard height != matTexH else { return }
-        let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float,
-                                                             width: 4, height: height, mipmapped: false)
-        desc.usage = .shaderRead
-        desc.storageMode = .shared
-        matTex = device.makeTexture(descriptor: desc)
-        matTexH = height
+    nonisolated private func ensureMatTexes(height: Int) {
+        guard height != matTexesH else { return }
+        for i in 0..<matTexes.count {
+            let desc = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba32Float,
+                                                                 width: 4, height: height, mipmapped: false)
+            desc.usage = .shaderRead
+            desc.storageMode = .shared
+            matTexes[i] = device.makeTexture(descriptor: desc)
+        }
+        matTexesH = height
+    }
+
+    // MARK: - Async gyro matrix computation (gyroComputeQueue only)
+
+    nonisolated private func gyroLatestSnapshot() -> GyroSnapshot? {
+        gyroStateLock.lock(); defer { gyroStateLock.unlock() }
+        return _gyroSnapshot
+    }
+
+    /// Invalidate published matrices (video switch / gyro toggle). In-flight
+    /// computes for the previous core are rejected via the generation counter.
+    nonisolated private func invalidateGyroSnapshot() {
+        gyroStateLock.lock()
+        gyroGeneration &+= 1
+        _gyroSnapshot = nil
+        gyroStateLock.unlock()
+    }
+
+    /// Kick an async computation for `target` unless one is already running
+    /// or the published snapshot already covers it.
+    nonisolated private func scheduleGyroPrefetch(target: Double, core: GyroCoreProvider) {
+        gyroStateLock.lock()
+        if gyroComputeInFlight { gyroStateLock.unlock(); return }
+        if let s = _gyroSnapshot, abs(s.pts - target) < 0.001 { gyroStateLock.unlock(); return }
+        gyroComputeInFlight = true
+        gyroStateLock.unlock()
+        gyroComputeQueue.async { [weak self] in
+            guard let self else { return }
+            self.performGyroCompute(target: target, core: core)
+            self.gyroStateLock.lock(); self.gyroComputeInFlight = false; self.gyroStateLock.unlock()
+        }
+    }
+
+    /// Compute matrices for `target`, upload to the next matTex, publish snapshot.
+    /// MUST run on gyroComputeQueue (matsBuf in GyroCore is single-consumer).
+    nonisolated private func performGyroCompute(target: Double, core: GyroCoreProvider) {
+        gyroStateLock.lock()
+        let gen = gyroGeneration
+        gyroStateLock.unlock()
+
+        let vH = Int(core.gyroVideoH)
+        guard vH > 0, core.isReady,
+              let (buf, _) = core.computeMatrixAtTime(timeSec: target) else { return }
+        ensureMatTexes(height: vH)
+
+        gyroStateLock.lock()
+        let nextIndex = ((_gyroSnapshot?.texIndex ?? -1) + 1) % matTexes.count
+        gyroStateLock.unlock()
+        guard let tex = matTexes[nextIndex] else { return }
+
+        let region = MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
+                               size: MTLSize(width: 4, height: vH, depth: 1))
+        tex.replace(region: region, mipmapLevel: 0,
+                    withBytes: buf.baseAddress!,
+                    bytesPerRow: 4 * 4 * MemoryLayout<Float>.size)
+
+        // Bake per-frame uniforms while the core's frame params match this call
+        var u = WarpUniforms()
+        u.videoSize = SIMD2<Float>(core.gyroVideoW, core.gyroVideoH)
+        u.matCount = core.gyroVideoH
+        u.fIn = SIMD2<Float>(core.frameFx, core.frameFy)
+        u.cIn = SIMD2<Float>(core.frameCx, core.frameCy)
+        var mergedK = [Float](repeating: 0, count: 12)
+        for i in 0..<4 { mergedK[i] = core.frameK[i] }
+        for i in 4..<12 { mergedK[i] = core.distortionK[i] }
+        u.distK.0 = SIMD4<Float>(mergedK[0], mergedK[1], mergedK[2], mergedK[3])
+        u.distK.1 = SIMD4<Float>(mergedK[4], mergedK[5], mergedK[6], mergedK[7])
+        u.distK.2 = SIMD4<Float>(mergedK[8], mergedK[9], mergedK[10], mergedK[11])
+        u.distModel = core.distortionModel
+        u.rLimit = core.rLimit
+        u.frameFov = core.frameFov
+        u.lensCorr = core.lensCorrectionAmount
+
+        if diagnosticsEnabled { computeGyroSI(buf: buf, vH: vH) }
+
+        gyroStateLock.lock()
+        if gyroGeneration == gen {
+            _gyroSnapshot = GyroSnapshot(pts: target, texIndex: nextIndex, uniforms: u)
+        }
+        gyroStateLock.unlock()
     }
 
     // MARK: - HDR configuration
@@ -390,6 +567,11 @@ class AVFMetalView: NSView, @unchecked Sendable {
         // renderFrame() may be mid-flight using the old gyroCore when we nil it out.
         renderQueue.sync {
             self.gyroCore = core
+        }
+        // Reject in-flight computes for the old core and clear published matrices
+        invalidateGyroSnapshot()
+        // SI state is owned by gyroComputeQueue now
+        gyroComputeQueue.sync {
             self.prevMidRow = nil; self.siAngles.removeAll(); self.gyroSI = 0
         }
         waitingForGyro = false
@@ -433,7 +615,23 @@ class AVFMetalView: NSView, @unchecked Sendable {
             self.videoInfo = info
             self.videoDuration = info.duration
             self.videoRotation = UInt32(info.rotation)
-            Log.debug(Log.player, "[startup] analyzed \(url.lastPathComponent): \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps codec=\(info.codec) bitDepth=\(info.bitDepth) fullRange=\(info.fullRange) tf=\(info.transferFunction) hlg=\(info.isHLG) dv=\(info.isDolbyVision)")
+            Log.info(Log.player, "[startup] analyzed \(url.lastPathComponent): \(info.width)x\(info.height)@\(String(format:"%.2f",info.fps))fps codec=\(info.codec) chroma=\(info.chromaLabel) hevcProfile=\(info.hevcProfile) bitDepth=\(info.bitDepth) fullRange=\(info.fullRange) tf=\(info.transferFunction) hlg=\(info.isHLG) dv=\(info.isDolbyVision)")
+
+            // One-shot decode-chain diagnostics: file bitrate, volume type, HW decode support
+            do {
+                let fileSize = (try? FileManager.default.attributesOfItem(atPath: path)[.size] as? Int64) ?? 0
+                let mbps = info.duration > 0 ? Double(fileSize) * 8 / info.duration / 1_000_000 : 0
+                let isLocal = (try? url.resourceValues(forKeys: [.volumeIsLocalKey]).volumeIsLocal) ?? true
+                let fourCC: CMVideoCodecType = info.codec.utf8.count == 4
+                    ? info.codec.utf8.reduce(0) { ($0 << 8) | FourCharCode($1) }
+                    : kCMVideoCodecType_HEVC
+                let hwSupported = VTIsHardwareDecodeSupported(fourCC)
+                Log.info(Log.player, String(format:
+                    "[startup] DIAG file=%.0fMB bitrate=%.0fMbps volumeLocal=%@ hwDecodeSupported(%@)=%@",
+                    Double(fileSize) / 1_000_000, mbps,
+                    isLocal ? "yes" : "NO(network)",
+                    info.codec, hwSupported ? "yes" : "NO"))
+            }
 
             // Auto-select pixel format from file's bit depth + range
             let outputPixelFormat: OSType
@@ -496,6 +694,15 @@ class AVFMetalView: NSView, @unchecked Sendable {
                 forName: .AVPlayerItemDidPlayToEndTime, object: item, queue: .main
             ) { [weak self] _ in
                 self?.isEOFReached = true
+            }
+
+            // Stall detection (decode / file-I-O starvation — e.g. slow NAS reads)
+            self.stallObserver = NotificationCenter.default.addObserver(
+                forName: AVPlayerItem.playbackStalledNotification, object: item, queue: .main
+            ) { [weak item] _ in
+                let empty = item?.isPlaybackBufferEmpty ?? false
+                let keepUp = item?.isPlaybackLikelyToKeepUp ?? false
+                Log.player.warning("[render] PLAYBACK STALLED — bufferEmpty=\(empty) likelyToKeepUp=\(keepUp)")
             }
 
             // DV: auto-enable AVPlayerLayer (Apple applies RPU internally)
@@ -594,6 +801,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         stopDisplayLink()
         cleanupPlayer()
         gyroCore = nil
+        invalidateGyroSnapshot()
     }
 
     private func cleanupPlayer() {
@@ -602,6 +810,7 @@ class AVFMetalView: NSView, @unchecked Sendable {
         readyObservation?.invalidate(); readyObservation = nil
         timeControlObservation?.invalidate(); timeControlObservation = nil
         if let obs = eofObserver { NotificationCenter.default.removeObserver(obs); eofObserver = nil }
+        if let obs = stallObserver { NotificationCenter.default.removeObserver(obs); stallObserver = nil }
         player = nil
         playerItem = nil
         videoOutput = nil
@@ -670,7 +879,11 @@ class AVFMetalView: NSView, @unchecked Sendable {
             guard let userInfo else { return kCVReturnSuccess }
             let view = Unmanaged<AVFMetalView>.fromOpaque(userInfo).takeUnretainedValue()
             // 若前一幀還在渲染，直接丟棄此 tick，避免 queue 積壓造成跳幀
-            guard view.renderSemaphore.wait(timeout: .now()) == .success else { return kCVReturnSuccess }
+            guard view.renderSemaphore.wait(timeout: .now()) == .success else {
+                view.tickStats(dropped: true)
+                return kCVReturnSuccess
+            }
+            view.tickStats(dropped: false)
             view.renderQueue.async {
                 defer { view.renderSemaphore.signal() }
                 view.renderFrame()
@@ -698,12 +911,19 @@ class AVFMetalView: NSView, @unchecked Sendable {
         guard !avfLayerMode else { return }  // AVPlayerLayer handles rendering
         guard let output = videoOutput else { return }
 
-        let itemTime = output.itemTime(forHostTime: CACurrentMediaTime())
-        guard output.hasNewPixelBuffer(forItemTime: itemTime) else { return }
+        let renderStart = CACurrentMediaTime()
+        let itemTime = output.itemTime(forHostTime: renderStart)
+        guard output.hasNewPixelBuffer(forItemTime: itemTime) else {
+            statNoBuffer += 1
+            return
+        }
 
         var presentationTime = CMTime.zero
         guard let pixelBuffer = output.copyPixelBuffer(forItemTime: itemTime,
-                                                        itemTimeForDisplay: &presentationTime) else { return }
+                                                        itemTimeForDisplay: &presentationTime) else {
+            statNoBuffer += 1
+            return
+        }
         let pts = CMTimeGetSeconds(presentationTime)
         lastPTS = pts
         currentTime = pts
@@ -738,29 +958,37 @@ class AVFMetalView: NSView, @unchecked Sendable {
             }
         }
 
-        // Fetch gyro matrix for this exact PTS (synchronous on renderQueue)
-        var hasGyroWarp = false
+        // Gyro matrices come from the async pipeline — renderFrame never blocks
+        // on the FFI. Steady state: each frame renders with matrices computed
+        // one frame ahead; a compute spike just means reusing the previous
+        // frame's matrices (visually negligible — they change smoothly).
+        var gyroUniforms: WarpUniforms?
+        var gyroTex: MTLTexture?
         if let core = gyroCore, core.isReady {
-            let vH = Int(core.gyroVideoH)
-            ensureMatTex(height: vH)
-            if let (buf, changed) = core.computeMatrixAtTime(timeSec: pts) {
-                if changed, let matTex {
-                    let region = MTLRegion(origin: MTLOrigin(x: 0, y: 0, z: 0),
-                                           size: MTLSize(width: 4, height: vH, depth: 1))
-                    matTex.replace(region: region, mipmapLevel: 0,
-                                   withBytes: buf.baseAddress!,
-                                   bytesPerRow: 4 * 4 * MemoryLayout<Float>.size)
-                }
-                hasGyroWarp = true
-
-                // Gyro Stability Index (diagnostics)
-                if diagnosticsEnabled {
-                    computeGyroSI(buf: buf, vH: vH)
-                }
+            let fps = core.gyroFps > 0 ? core.gyroFps : (videoInfo.fps > 0 ? videoInfo.fps : 30)
+            let dt = 1.0 / fps
+            var snap = gyroLatestSnapshot()
+            let stale = snap.map { abs($0.pts - pts) > max(0.3, dt * 4) } ?? true
+            if stale {
+                // First frame after start/seek: compute synchronously so we
+                // never present an unstabilized or badly-warped frame.
+                let t0 = CACurrentMediaTime()
+                gyroComputeQueue.sync { self.performGyroCompute(target: pts, core: core) }
+                statGyroMs += (CACurrentMediaTime() - t0) * 1000
+                snap = gyroLatestSnapshot()
+            } else {
+                // Prefetch the next frame's matrices off the render path
+                scheduleGyroPrefetch(target: pts + dt, core: core)
+            }
+            if let s = snap {
+                gyroUniforms = s.uniforms
+                gyroTex = matTexes[s.texIndex]
             }
         }
+        let hasGyroWarp = gyroUniforms != nil && gyroTex != nil
 
         guard let drawable = metalLayer.nextDrawable() else {
+            statDrawableNil += 1
             Log.debug(Log.player, "[render] nextDrawable() returned nil — GPU resource pressure?")
             return
         }
@@ -805,31 +1033,15 @@ class AVFMetalView: NSView, @unchecked Sendable {
             pass2Desc.colorAttachments[0].storeAction = .store
 
             if let enc2 = cmdBuf.makeRenderCommandEncoder(descriptor: pass2Desc) {
-                let core = gyroCore!
                 let viewport = aspectFitViewport(videoW: width, videoH: height,
                                                   drawableW: Int(drawable.texture.width),
                                                   drawableH: Int(drawable.texture.height))
                 enc2.setViewport(viewport)
                 enc2.setRenderPipelineState(warpPipeline)
                 enc2.setFragmentTexture(offTex, index: 0)
-                enc2.setFragmentTexture(matTex, index: 1)
+                enc2.setFragmentTexture(gyroTex, index: 1)
 
-                var uniforms = WarpUniforms()
-                uniforms.videoSize = SIMD2<Float>(core.gyroVideoW, core.gyroVideoH)
-                uniforms.matCount = core.gyroVideoH
-                uniforms.fIn = SIMD2<Float>(core.frameFx, core.frameFy)
-                uniforms.cIn = SIMD2<Float>(core.frameCx, core.frameCy)
-                var mergedK = [Float](repeating: 0, count: 12)
-                for i in 0..<4 { mergedK[i] = core.frameK[i] }
-                for i in 4..<12 { mergedK[i] = core.distortionK[i] }
-                uniforms.distK.0 = SIMD4<Float>(mergedK[0], mergedK[1], mergedK[2], mergedK[3])
-                uniforms.distK.1 = SIMD4<Float>(mergedK[4], mergedK[5], mergedK[6], mergedK[7])
-                uniforms.distK.2 = SIMD4<Float>(mergedK[8], mergedK[9], mergedK[10], mergedK[11])
-                uniforms.distModel = core.distortionModel
-                uniforms.rLimit = core.rLimit
-                uniforms.frameFov = core.frameFov
-                uniforms.lensCorr = core.lensCorrectionAmount
-
+                var uniforms = gyroUniforms!
                 enc2.setFragmentBytes(&uniforms, length: MemoryLayout<WarpUniforms>.size, index: 0)
                 var rot2: UInt32 = 0
                 enc2.setVertexBytes(&rot2, length: MemoryLayout<UInt32>.size, index: 0)
@@ -881,6 +1093,8 @@ class AVFMetalView: NSView, @unchecked Sendable {
 
         cmdBuf.present(drawable)
         cmdBuf.commit()
+        statRendered += 1
+        statRenderMs += (CACurrentMediaTime() - renderStart) * 1000
 
         // Flush stale CVMetalTexture cache entries every frame so VideoToolbox
         // can reclaim pixel buffers. Without this the decoder pool fills up and
