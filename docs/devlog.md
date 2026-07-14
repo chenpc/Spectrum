@@ -1131,3 +1131,17 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 - `Spectrum/Services/ImagePreloadCache.swift`
 - `Spectrum/Views/Detail/PhotoDetailView.swift`
 - `SpectrumTests/ImagePreloadCacheTests.swift`（+3 測試）
+
+## 2026-07-15 — iPhone Dolby Vision 影片預覽過亮：影片縮圖改回 .automatic tone mapping
+
+**類型：** Bug Fix
+
+**問題：** iPhone 拍的 MOV（Dolby Vision）預覽縮圖比播放畫面亮。
+
+**根因／做法：** `dynamicRangePolicy = .matchSource` 之後影片預覽影格帶 HDR colorspace，被 `HDRThumbnailImageView` 一律套用 `toneMapMode = .never`。但 `.never` 只對 scene-referred 的 HLG **照片**正確；影片的播放路徑（AVFMetalView 的 CAMetalLayer）走系統預設 `.automatic` tone mapping，預覽必須與播放一致，否則預覽偏亮（DV/PQ 系內容尤其明顯）。
+
+`HDRThumbnailImageView` 加 `video` 參數：影片的 HDR 影格保持 EDR 但用 `.automatic`（與播放一致）；照片維持 `.never`。五個呼叫點依 `isVideo` 傳入。
+
+**修改的檔案：**
+- `Spectrum/Views/Grid/PhotoThumbnailView.swift`：`isVideoContent` + toneMapMode 分流
+- `PhotoGridView.swift` / `PhotoDetailView.swift` / `SearchResultsView.swift` / `ImportPanelView.swift`：傳入 `video:`

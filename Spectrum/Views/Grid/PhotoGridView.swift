@@ -1008,7 +1008,10 @@ private struct SubfolderTileView: View {
         ZStack(alignment: .bottom) {
             if let coverImage {
                 // HDR-aware：HLG 封面縮圖需要 EDR 路徑，SwiftUI Image 會壓暗
-                HDRThumbnailImageView(image: coverImage)
+                HDRThumbnailImageView(
+                    image: coverImage,
+                    video: coverPath.map { URL(fileURLWithPath: $0).isVideoFile } ?? false
+                )
                     .frame(height: 150)
                     .clipped()
             } else {

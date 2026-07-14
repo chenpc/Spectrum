@@ -151,7 +151,7 @@ private struct AsyncThumbnail: View {
         Group {
             if let image {
                 // HDR-aware：HLG 縮圖需要 EDR 路徑，SwiftUI Image 會壓暗
-                HDRThumbnailImageView(image: image)
+                HDRThumbnailImageView(image: image, video: item.isVideo)
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             } else {

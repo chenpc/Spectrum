@@ -10,16 +10,13 @@ class AspectFillImageView: NSView {
     }()
 
     /// HLG 縮圖的顯示路徑：直接把 CGImage 放上 layer（保留 itur_2100_HLG
-    /// colorspace）+ EDR，並關閉 .automatic tone mapping — 與 HLGNSView 同一
-    /// 套做法；NSImageView 路徑會被系統 tone map 壓暗。
+    /// colorspace）+ EDR — 與 HLGNSView 同一套做法；NSImageView 路徑會被
+    /// 系統 tone map 壓暗。toneMapMode 依內容型別在 setImage 決定。
     private let hlgView: NSView = {
         let v = NSView()
         v.wantsLayer = true
         v.layer?.contentsGravity = .resizeAspect
         v.layer?.contentsFormat = .RGBA16Float
-        if #available(macOS 15.0, *) {
-            v.layer?.toneMapMode = .never
-        }
         return v
     }()
 
@@ -27,6 +24,10 @@ class AspectFillImageView: NSView {
     private var imageSize: NSSize = .zero
     /// false = aspect-fill（裁切填滿，grid 用）；true = aspect-fit（完整顯示，detail 預覽用）
     var fit = false
+    /// 影片的 HDR 影格（Dolby Vision / HLG）：播放路徑（CAMetalLayer）走系統
+    /// 預設 .automatic tone mapping，預覽縮圖必須一致，否則會比播放亮。
+    /// .never 只適用於 scene-referred 的 HLG 照片。
+    var isVideoContent = false
 
     override init(frame: NSRect) {
         super.init(frame: frame)
@@ -43,6 +44,9 @@ class AspectFillImageView: NSView {
         if let cg, let cs = cg.colorSpace, CGColorSpaceUsesITUR_2100TF(cs) {
             usingHLG = true
             hlgView.layer?.contents = cg
+            if #available(macOS 15.0, *) {
+                hlgView.layer?.toneMapMode = isVideoContent ? .automatic : .never
+            }
             imageView.image = nil
             enableEDR()
         } else {
@@ -106,6 +110,8 @@ class AspectFillImageView: NSView {
 struct HDRThumbnailImageView: NSViewRepresentable {
     let image: NSImage
     var fit = false
+    /// true = 影片影格（tone mapping 需與播放路徑一致）
+    var video = false
 
     func makeNSView(context: Context) -> AspectFillImageView {
         AspectFillImageView()
@@ -113,6 +119,7 @@ struct HDRThumbnailImageView: NSViewRepresentable {
 
     func updateNSView(_ nsView: AspectFillImageView, context: Context) {
         nsView.fit = fit
+        nsView.isVideoContent = video
         nsView.setImage(image)
         nsView.needsLayout = true
     }
@@ -143,7 +150,7 @@ struct PhotoThumbnailView: View {
     var body: some View {
         ZStack(alignment: .bottomTrailing) {
             if let displayThumbnail {
-                HDRThumbnailImageView(image: displayThumbnail)
+                HDRThumbnailImageView(image: displayThumbnail, video: item.isVideo)
                     .frame(minWidth: 150, minHeight: 150)
                     .frame(height: 150)
                     .clipped()

@@ -341,7 +341,7 @@ struct ImportThumbnailView: View {
         ZStack(alignment: .bottomTrailing) {
             if let thumbnail {
                 // HDR-aware：HLG 縮圖需要 EDR 路徑，SwiftUI Image 會壓暗
-                HDRThumbnailImageView(image: thumbnail)
+                HDRThumbnailImageView(image: thumbnail, video: item.isVideo)
                     .frame(width: 60, height: 60)
                     .clipped()
             } else {

@@ -226,7 +226,7 @@ struct PhotoDetailView: View {
             } else if let previewThumbnail {
                 ZStack(alignment: .bottomTrailing) {
                     // HDR-aware：HLG 影片預覽格需要 EDR 路徑，SwiftUI Image 會壓暗
-                    HDRThumbnailImageView(image: previewThumbnail, fit: true)
+                    HDRThumbnailImageView(image: previewThumbnail, fit: true, video: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if let duration = previewDuration ?? photo.duration {
                         Text(formatDuration(duration))
