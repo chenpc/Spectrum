@@ -1007,14 +1007,10 @@ private struct SubfolderTileView: View {
     var body: some View {
         ZStack(alignment: .bottom) {
             if let coverImage {
-                GeometryReader { geo in
-                    Image(nsImage: coverImage)
-                        .resizable()
-                        .scaledToFill()
-                        .frame(width: geo.size.width, height: geo.size.height)
-                        .clipped()
-                }
-                .frame(height: 150)
+                // HDR-aware：HLG 封面縮圖需要 EDR 路徑，SwiftUI Image 會壓暗
+                HDRThumbnailImageView(image: coverImage)
+                    .frame(height: 150)
+                    .clipped()
             } else {
                 Image(systemName: "folder.fill")
                     .font(.system(size: 36))

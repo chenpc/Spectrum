@@ -1,6 +1,6 @@
 import SwiftUI
 
-private class AspectFillImageView: NSView {
+class AspectFillImageView: NSView {
     let imageView: NSImageView = {
         let iv = NSImageView()
         iv.imageScaling = .scaleProportionallyUpOrDown
@@ -9,14 +9,69 @@ private class AspectFillImageView: NSView {
         return iv
     }()
 
+    /// HLG 縮圖的顯示路徑：直接把 CGImage 放上 layer（保留 itur_2100_HLG
+    /// colorspace）+ EDR，並關閉 .automatic tone mapping — 與 HLGNSView 同一
+    /// 套做法；NSImageView 路徑會被系統 tone map 壓暗。
+    private let hlgView: NSView = {
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.contentsGravity = .resizeAspect
+        v.layer?.contentsFormat = .RGBA16Float
+        if #available(macOS 15.0, *) {
+            v.layer?.toneMapMode = .never
+        }
+        return v
+    }()
+
+    private var usingHLG = false
+    private var imageSize: NSSize = .zero
+    /// false = aspect-fill（裁切填滿，grid 用）；true = aspect-fit（完整顯示，detail 預覽用）
+    var fit = false
+
     override init(frame: NSRect) {
         super.init(frame: frame)
         wantsLayer = true
         layer?.masksToBounds = true
         addSubview(imageView)
+        addSubview(hlgView)
     }
 
     required init?(coder: NSCoder) { fatalError() }
+
+    func setImage(_ image: NSImage) {
+        let cg = image.cgImage(forProposedRect: nil, context: nil, hints: nil)
+        if let cg, let cs = cg.colorSpace, CGColorSpaceUsesITUR_2100TF(cs) {
+            usingHLG = true
+            hlgView.layer?.contents = cg
+            imageView.image = nil
+            enableEDR()
+        } else {
+            usingHLG = false
+            imageView.image = image
+            hlgView.layer?.contents = nil
+        }
+        imageView.isHidden = usingHLG
+        hlgView.isHidden = !usingHLG
+        imageSize = image.size
+        needsLayout = true
+    }
+
+    override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        if usingHLG { enableEDR() }
+    }
+
+    private func enableEDR() {
+        var current: CALayer? = hlgView.layer
+        while let l = current {
+            if #available(macOS 26.0, *) {
+                l.preferredDynamicRange = .high
+            } else {
+                l.wantsExtendedDynamicRangeContent = true
+            }
+            current = l.superlayer
+        }
+    }
 
     override var intrinsicContentSize: NSSize {
         NSSize(width: NSView.noIntrinsicMetric, height: NSView.noIntrinsicMetric)
@@ -24,17 +79,20 @@ private class AspectFillImageView: NSView {
 
     override func layout() {
         super.layout()
-        guard let image = imageView.image,
-              image.size.width > 0, image.size.height > 0,
+        let active = usingHLG ? hlgView : imageView
+        guard !fit,
+              imageSize.width > 0, imageSize.height > 0,
               bounds.width > 0, bounds.height > 0
         else {
-            imageView.frame = bounds
+            // fit：兩條路徑（NSImageView proportional / layer resizeAspect）
+            // 都會自行 letterbox，把 frame 撐滿即可
+            active.frame = bounds
             return
         }
-        let scale = max(bounds.width / image.size.width, bounds.height / image.size.height)
-        let w = image.size.width * scale
-        let h = image.size.height * scale
-        imageView.frame = NSRect(
+        let scale = max(bounds.width / imageSize.width, bounds.height / imageSize.height)
+        let w = imageSize.width * scale
+        let h = imageSize.height * scale
+        active.frame = NSRect(
             x: (bounds.width - w) / 2,
             y: (bounds.height - h) / 2,
             width: w,
@@ -43,15 +101,19 @@ private class AspectFillImageView: NSView {
     }
 }
 
-private struct HDRThumbnailImageView: NSViewRepresentable {
+/// HDR-aware 縮圖顯示（aspect-fill）：HLG 縮圖走 CALayer+EDR+toneMapMode=.never，
+/// 其餘走 NSImageView。SwiftUI `Image(nsImage:)` 沒有 EDR 路徑，HLG 會被壓暗。
+struct HDRThumbnailImageView: NSViewRepresentable {
     let image: NSImage
+    var fit = false
 
     func makeNSView(context: Context) -> AspectFillImageView {
         AspectFillImageView()
     }
 
     func updateNSView(_ nsView: AspectFillImageView, context: Context) {
-        nsView.imageView.image = image
+        nsView.fit = fit
+        nsView.setImage(image)
         nsView.needsLayout = true
     }
 }

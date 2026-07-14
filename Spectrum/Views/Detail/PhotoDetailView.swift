@@ -86,6 +86,10 @@ struct PhotoDetailView: View {
             if playing && !playbackStarted {
                 playbackStarted = true
             }
+            // 播放期間暫停鄰圖 prefetch — 預載全解析度影像會與高碼率影片
+            // 搶 NAS 頻寬造成播放卡頓；暫停（或停止）後恢復並補跑
+            ImagePreloadCache.setPrefetchSuspended(playing)
+            if !playing { prefetchAdjacentImages() }
         }
         .onChange(of: videoController.gyroStabEnabled) { _, enabled in
             if enabled { flashStatusBadge() }
@@ -102,6 +106,9 @@ struct PhotoDetailView: View {
         .onDisappear {
             removeSpaceMonitor()
             showCursor()
+            // 離開 detail view 時 isPlaying 的 onChange 不一定會再觸發，
+            // 這裡確保 prefetch 恢復
+            ImagePreloadCache.setPrefetchSuspended(false)
         }
         .onChange(of: photo.filePath) { _, _ in
             // Immediately clear stale gyro state to prevent badge flash
@@ -218,9 +225,8 @@ struct PhotoDetailView: View {
                               showEDR: showEDR)
             } else if let previewThumbnail {
                 ZStack(alignment: .bottomTrailing) {
-                    Image(nsImage: previewThumbnail)
-                        .resizable()
-                        .aspectRatio(contentMode: .fit)
+                    // HDR-aware：HLG 影片預覽格需要 EDR 路徑，SwiftUI Image 會壓暗
+                    HDRThumbnailImageView(image: previewThumbnail, fit: true)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                     if let duration = previewDuration ?? photo.duration {
                         Text(formatDuration(duration))

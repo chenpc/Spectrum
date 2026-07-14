@@ -61,9 +61,27 @@ enum ImagePreloadCache {
         cache[path]
     }
 
+    /// 影片播放期間暫停 prefetch：全解析度影像的預載會佔用 NAS 頻寬，
+    /// 與高碼率影片的串流讀取競爭造成播放卡頓。
+    @MainActor private static var prefetchSuspended = false
+    /// 由 prefetch 發起的 in-flight 載入（inFlight 的子集），暫停時取消
+    @MainActor private static var prefetchTasks: [String: Task<CachedImageEntry, Never>] = [:]
+
+    @MainActor static func setPrefetchSuspended(_ suspended: Bool) {
+        guard prefetchSuspended != suspended else { return }
+        prefetchSuspended = suspended
+        guard suspended else { return }
+        if !prefetchTasks.isEmpty {
+            Log.video.info("[preload] suspending prefetch — cancelling \(prefetchTasks.count) in-flight loads")
+        }
+        for task in prefetchTasks.values { task.cancel() }
+        prefetchTasks.removeAll()
+    }
+
     @MainActor static func prefetch(path: String, bookmarkData: Data?) {
+        guard !prefetchSuspended else { return }
         guard cache[path] == nil, inFlight[path] == nil else { return }
-        Task { _ = await loadImageEntry(path: path, bookmarkData: bookmarkData) }
+        Task { _ = await loadImageEntry(path: path, bookmarkData: bookmarkData, isPrefetch: true) }
     }
 
     @MainActor static func clearCache() {
@@ -153,7 +171,8 @@ enum ImagePreloadCache {
 
     @MainActor static func loadImageEntry(
         path: String,
-        bookmarkData: Data?
+        bookmarkData: Data?,
+        isPrefetch: Bool = false
     ) async -> CachedImageEntry {
         if let cached = cache[path] {
             // Move to end of LRU order
@@ -164,10 +183,15 @@ enum ImagePreloadCache {
             return cached
         }
         // Join an in-progress load instead of decoding the same image again
-        if let pending = inFlight[path] {
+        // （已取消的 prefetch task 不加入 — 直接載入的呼叫者需要完整結果）
+        if let pending = inFlight[path], !pending.isCancelled {
             return await pending.value
         }
         let task = Task.detached { () -> CachedImageEntry in
+            // 取消（prefetch 暫停）時盡早退出，不再讀檔
+            guard !Task.isCancelled else {
+                return CachedImageEntry(image: nil, hlgCGImage: nil, hdrFormat: nil)
+            }
             // Skip if the source file no longer exists — avoids IIOImageSource errors
             guard FileManager.default.fileExists(atPath: path) else {
                 Log.debug(Log.video, "[preload] file missing: \(URL(fileURLWithPath: path).lastPathComponent)")
@@ -189,6 +213,9 @@ enum ImagePreloadCache {
             }
             defer { if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() } }
 
+            guard !Task.isCancelled else {
+                return CachedImageEntry(image: nil, hlgCGImage: nil, hdrFormat: nil)
+            }
             guard let source = CGImageSourceCreateWithURL(url as CFURL, nil) else {
                 let img = NSImage(contentsOfFile: path)
                 return CachedImageEntry(image: img, hlgCGImage: nil, hdrFormat: nil)
@@ -213,8 +240,15 @@ enum ImagePreloadCache {
             return CachedImageEntry(image: img, hlgCGImage: hlgCGImage, hdrFormat: hdrFormat)
         }
         inFlight[path] = task
+        if isPrefetch { prefetchTasks[path] = task }
         let entry = await task.value
-        inFlight[path] = nil
+        // 只清掉仍指向本 task 的登錄——它可能已被後續的載入取代
+        if prefetchTasks[path] == task { prefetchTasks[path] = nil }
+        if inFlight[path] == task { inFlight[path] = nil }
+        if task.isCancelled {
+            // 取消的載入結果不完整，不能存 cache
+            return entry
+        }
         storeInCache(path: path, entry: entry)
         return entry
     }

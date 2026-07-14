@@ -150,9 +150,8 @@ private struct AsyncThumbnail: View {
     var body: some View {
         Group {
             if let image {
-                Image(nsImage: image)
-                    .resizable()
-                    .aspectRatio(contentMode: .fill)
+                // HDR-aware：HLG 縮圖需要 EDR 路徑，SwiftUI Image 會壓暗
+                HDRThumbnailImageView(image: image)
                     .frame(width: size, height: size)
                     .clipShape(RoundedRectangle(cornerRadius: 4))
             } else {

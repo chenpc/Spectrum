@@ -42,11 +42,14 @@ actor ThumbnailService {
         let gb = UserDefaults.standard.object(forKey: "thumbnailCacheSizeGB") as? Double ?? 1.0
         memoryCache.totalCostLimit = Int(gb * 1_073_741_824)  // 1 GB = 1024^3 bytes
 
+        // 只在 critical 才清：warning 級別由 ImagePreloadCache 釋放大宗
+        // （全解析度影像，單張可達數百 MB）；縮圖總量受 totalCostLimit 管制，
+        // 但重生成成本高（回到 grid 會整頁空白重載）
         let pressureSource = DispatchSource.makeMemoryPressureSource(
-            eventMask: [.warning, .critical], queue: .global()
+            eventMask: [.critical], queue: .global()
         )
         pressureSource.setEventHandler { [weak memoryCache] in
-            Log.thumbnail.info("[thumb] memory pressure — clearing memory cache")
+            Log.thumbnail.info("[thumb] critical memory pressure — clearing memory cache")
             memoryCache?.removeAllObjects()
         }
         pressureSource.resume()
@@ -135,7 +138,40 @@ actor ThumbnailService {
     private func generateThumbnail(from url: URL) async -> NSImage? {
         if url.isVideoFile { return await generateVideoThumbnail(from: url) }
         if url.pathExtension.lowercased() == "svg" { return generateSVGThumbnail(from: url) }
+        // HLG 照片不能走 QuickLook：它輸出 SDR 縮圖，HLG→SDR tone mapping 會壓暗。
+        // 改用 ImageIO 產生保留 HLG colorspace 的縮圖，顯示端以 EDR 呈現。
+        if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+           ImagePreloadCache.detectHDR(source: source) == .hlg,
+           let img = generateHLGThumbnail(source: source, url: url) {
+            return img
+        }
         return await generateViaQL(from: url)
+    }
+
+    private nonisolated func generateHLGThumbnail(source: CGImageSource, url: URL) -> NSImage? {
+        let t0 = ContinuousClock.now
+        // 先用內嵌縮圖：Sony HIF 的內嵌縮圖本身就是 HLG（實測 8bpc
+        // itur_2100_HLG），成本遠低於解碼 4K 主圖
+        let embeddedOpts: [CFString: Any] = [
+            kCGImageSourceCreateThumbnailFromImageIfAbsent: true,
+            kCGImageSourceCreateThumbnailWithTransform: true,
+            kCGImageSourceThumbnailMaxPixelSize: thumbnailSize
+        ]
+        var cg = CGImageSourceCreateThumbnailAtIndex(source, 0, embeddedOpts as CFDictionary)
+        var how = "embedded"
+        // 內嵌縮圖若是 SDR（其他相機可能如此），退回從主圖重新縮放
+        if cg == nil || !(cg!.colorSpace.map(CGColorSpaceUsesITUR_2100TF) ?? false) {
+            let fullOpts: [CFString: Any] = [
+                kCGImageSourceCreateThumbnailFromImageAlways: true,
+                kCGImageSourceCreateThumbnailWithTransform: true,
+                kCGImageSourceThumbnailMaxPixelSize: thumbnailSize
+            ]
+            cg = CGImageSourceCreateThumbnailAtIndex(source, 0, fullOpts as CFDictionary)
+            how = "fullimage"
+        }
+        guard let cg else { return nil }
+        Log.info(Log.thumbnail, "[thumb] HLG \(how)=\(fmtDur(ContinuousClock.now - t0)) \(url.lastPathComponent)")
+        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
     }
 
     private func generateSVGThumbnail(from url: URL) -> NSImage? {
@@ -175,6 +211,11 @@ actor ThumbnailService {
         let generator = AVAssetImageGenerator(asset: asset)
         generator.maximumSize = CGSize(width: thumbnailSize, height: thumbnailSize)
         generator.appliesPreferredTrackTransform = true
+        // 預設 .forceSDR 會把 HLG 影格 tone map 壓暗；.matchSource 保留來源
+        // colorspace，HDR 影格由顯示端（HDRThumbnailImageView）以 EDR 呈現
+        if #available(macOS 15.0, *) {
+            generator.dynamicRangePolicy = .matchSource
+        }
 
         do {
             let result = try await generator.image(at: .zero)

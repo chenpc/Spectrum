@@ -1052,3 +1052,82 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 **修改的檔案：**
 - `Spectrum/Views/Detail/AVFMetalView.swift`：async gyro pipeline + 三重緩衝 + per-second stats + DIAG 診斷 log
 - `Spectrum/Services/GyroConfig.swift`：`GyroCoreProvider: Sendable`
+
+## 2026-07-14 — HLG 照片亮度不正確：關閉 CALayer 自動 tone mapping
+
+**類型：** Bug Fix
+
+**問題：** Sony HLG 照片（HIF/HEIC，BT.2100 HLG）在 detail view 顯示亮度不對。
+
+**根因／做法：** macOS 15 起 CALayer 有 `toneMapMode` 屬性，預設 `.automatic`——系統會依 CGImage 的 `contentHeadroom`（HLG 名義值 4.93 = 1000/203 nits）對顯示器目前的 EDR headroom 做亮度重新對映，把 HLG 內容整體壓暗。但 HLG 是 scene-referred、本身就設計成隨顯示器亮度縮放的編碼，Spectrum 已明確給定 `itur_2100_HLG` colorspace + EDR，多做一層 tone mapping 反而錯。`HLGNSView` 設 `toneMapMode = .never` 修正。
+
+驗證工具：`tools/hdr-lab/`（獨立 CLI app，載入同一張照片後以按鍵即時切換 8 種渲染管線 A/B 比較：CALayer 三種 toneMapMode、ImageIO decodeToHDR、NSImageView .high/.constrainedHigh、CIImage expandToHDR+EV 可調、SDR 對照組）。實測 `.never` 亮度最正確。
+
+**修改的檔案：**
+- `Spectrum/Views/Detail/HDRImageViews.swift`：`HLGNSView` 設 `toneMapMode = .never`
+- `tools/hdr-lab/`（新增）：HDR 渲染管線實驗工具
+
+## 2026-07-14 — HLG 照片縮圖偏暗：跳過 QuickLook 改走 ImageIO + EDR
+
+**類型：** Bug Fix
+
+**問題：** HLG 照片的 grid 縮圖亮度偏暗（detail view 修正後，縮圖與之不一致）。
+
+**根因／做法：** 縮圖由 `QLThumbnailGenerator` 產生，QuickLook 一律輸出 SDR 縮圖，其 HLG→SDR tone mapping 把亮度壓暗——SDR 像素產出後顯示端無從救回（`NSImageView .high` 也沒用）。修法分兩端：
+
+- **產生端**（`ThumbnailService`）：HLG 照片（以 `ImagePreloadCache.detectHDR` 判定）改用 `CGImageSourceCreateThumbnailAtIndex` 產生縮圖，`kCGImageSourceCreateThumbnailFromImageAlways`（內嵌預覽圖是 SDR 不能用）+ `WithTransform`；縮放會保留 itur_2100_HLG colorspace
+- **顯示端**（`PhotoThumbnailView.AspectFillImageView`）：偵測到縮圖 colorspace 為 ITU-R 2100 TF 時，改走 CALayer contents + EDR + `toneMapMode = .never`（與 detail view 的 HLGNSView 同一套、經 hdr-lab 驗證的路徑）；其餘照片維持 NSImageView
+
+**已知未處理：** HLG 影片的縮圖走 `AVAssetImageGenerator`，仍是 SDR 偏暗，待後續處理。
+
+**修改的檔案：**
+- `Spectrum/Services/ThumbnailService.swift`：HLG 分支 `generateHLGThumbnail`
+- `Spectrum/Views/Grid/PhotoThumbnailView.swift`：HLG layer 顯示路徑
+
+## 2026-07-14 — Folder 封面與 HLG 影片預覽偏暗：補齊所有縮圖顯示點的 EDR 路徑
+
+**類型：** Bug Fix
+
+**問題：** HLG 照片縮圖修正後，folder 封面、影片預覽格（detail view 按播放前）、搜尋結果、Import 面板的 HLG 內容仍偏暗。
+
+**根因／做法：** 兩個獨立缺口：
+
+- **影片縮圖產生端**：`AVAssetImageGenerator.dynamicRangePolicy` 預設 `.forceSDR`（macOS 15+），HLG 影格被強制 tone map 成 SDR——產出後顯示端無從救回。改設 `.matchSource` 保留來源 colorspace。
+- **顯示端**：SwiftUI `Image(nsImage:)` 沒有 EDR 路徑，HDR 縮圖一律被 SDR 合成壓暗。把 `HDRThumbnailImageView`（HLG → CALayer+EDR+`toneMapMode=.never`、其餘 → NSImageView）改為 internal 共用，替換四處：SubfolderTileView（folder 封面）、PhotoDetailView 影片預覽格（新增 `fit` aspect-fit 模式）、SearchResultsView、ImportPanelView。
+
+**修改的檔案：**
+- `Spectrum/Services/ThumbnailService.swift`：`dynamicRangePolicy = .matchSource`
+- `Spectrum/Views/Grid/PhotoThumbnailView.swift`：`HDRThumbnailImageView` internal + `fit` 參數
+- `Spectrum/Views/Grid/PhotoGridView.swift`、`Spectrum/Views/Detail/PhotoDetailView.swift`、`Spectrum/Views/SearchResultsView.swift`、`Spectrum/Views/Import/ImportPanelView.swift`：換用 HDRThumbnailImageView
+
+## 2026-07-14 — Detail view 返回後縮圖長時間空白：內嵌 HLG 縮圖 + 分級記憶體壓力清除
+
+**類型：** Bug Fix
+
+**問題：** 進 detail view 看圖後退回 grid，縮圖要很久才重新出現。
+
+**根因／做法：** 因果鏈：detail view prefetch ±5 張全解析度影像（HLG 為 4K CGImage，單張解碼後可達數百 MB）→ 記憶體壓力 warning → ThumbnailService 與 ImagePreloadCache 的 cache 同時全清 → 回 grid 所有縮圖重生成，而 HLG 縮圖走 `FromImageAlways` 每張都要解碼 4K 主圖。兩處修正：
+
+- **HLG 縮圖改用內嵌縮圖**（`FromImageIfAbsent`）：實測 Sony HIF 的內嵌縮圖本身就是 HLG（8bpc itur_2100_HLG），不需解碼主圖；若其他相機的內嵌縮圖是 SDR（colorspace 檢查失敗）才退回從主圖生成
+- **縮圖 cache 只在 critical 壓力清空**：warning 級別由 ImagePreloadCache（大戶）釋放；縮圖總量已受 NSCache totalCostLimit 管制，重生成成本高不該在 warning 就陪葬
+
+**修改的檔案：**
+- `Spectrum/Services/ThumbnailService.swift`
+
+## 2026-07-14 — 影片播放期間暫停鄰圖 prefetch
+
+**類型：** Feature
+
+**問題：** Detail view 的鄰圖 prefetch（±5 張全解析度影像）在影片播放時與高碼率串流搶 NAS 頻寬，可能造成播放卡頓。
+
+**根因／做法：** `ImagePreloadCache` 新增 `setPrefetchSuspended(_:)`：
+
+- 暫停時 `prefetch()` 直接 no-op，並取消所有由 prefetch 發起的 in-flight 載入（`prefetchTasks` 追蹤，為 `inFlight` 的子集）；task 內部在讀檔前有兩處 `Task.isCancelled` 檢查提早退出
+- 取消的載入結果不存 cache；已取消的 pending task 不會被後續直接載入 join（避免拿到不完整結果）；完成時只清掉仍指向自身的 inFlight/prefetchTasks 登錄，避免清錯後續載入
+- 直接載入（目前顯示的照片）不受影響
+- `PhotoDetailView`：`videoController.isPlaying` onChange → 播放暫停/停止時恢復並補跑 prefetch；`onDisappear` 保險恢復
+
+**修改的檔案：**
+- `Spectrum/Services/ImagePreloadCache.swift`
+- `Spectrum/Views/Detail/PhotoDetailView.swift`
+- `SpectrumTests/ImagePreloadCacheTests.swift`（+3 測試）

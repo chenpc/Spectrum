@@ -136,6 +136,46 @@ final class ImagePreloadCacheTests: XCTestCase {
         XCTAssert(cached?.image === entry1.image)
     }
 
+    // MARK: - prefetch suspension (影片播放時暫停預載)
+
+    func testPrefetch_suspendedIsNoOp() async {
+        ImagePreloadCache.clearCache()
+        let url = fixtureURL("sdr_photo.jpg")
+
+        ImagePreloadCache.setPrefetchSuspended(true)
+        defer { ImagePreloadCache.setPrefetchSuspended(false) }
+        ImagePreloadCache.prefetch(path: url.path, bookmarkData: nil)
+
+        // 給 fire-and-forget Task 一點時間；suspended 時 prefetch 應直接 return
+        try? await Task.sleep(for: .milliseconds(300))
+        XCTAssertNil(ImagePreloadCache.cachedEntry(for: url.path),
+                     "Suspended prefetch must not populate the cache")
+    }
+
+    func testPrefetch_resumeAllowsLoadingAgain() async {
+        ImagePreloadCache.clearCache()
+        let url = fixtureURL("sdr_photo.jpg")
+
+        ImagePreloadCache.setPrefetchSuspended(true)
+        ImagePreloadCache.setPrefetchSuspended(false)
+
+        // 恢復後直接載入必須完整可用
+        let entry = await ImagePreloadCache.loadImageEntry(path: url.path, bookmarkData: nil)
+        XCTAssertNotNil(entry.image, "Direct load after resume must return a full entry")
+    }
+
+    func testDirectLoad_worksWhileSuspended() async {
+        ImagePreloadCache.clearCache()
+        let url = fixtureURL("sdr_photo.jpg")
+
+        ImagePreloadCache.setPrefetchSuspended(true)
+        defer { ImagePreloadCache.setPrefetchSuspended(false) }
+
+        // 暫停只影響 prefetch；目前顯示中的照片仍要能直接載入
+        let entry = await ImagePreloadCache.loadImageEntry(path: url.path, bookmarkData: nil)
+        XCTAssertNotNil(entry.image, "Direct (non-prefetch) load must not be affected by suspension")
+    }
+
     // MARK: - SDR detection
 
     func testLoadImageEntry_sdrPhoto_noHDRFormat() async {

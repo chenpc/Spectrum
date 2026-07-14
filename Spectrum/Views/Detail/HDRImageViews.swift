@@ -36,6 +36,12 @@ class HLGNSView: NSView {
         wantsLayer = true
         layer?.contentsGravity = .resizeAspect
         layer?.contentsFormat = .RGBA16Float
+        // 預設的 .automatic tone mapping 會把 HLG 內容壓暗（依 contentHeadroom
+        // 重新對映亮度）；HLG 本身就是相容 EDR 的 scene-referred 編碼，
+        // 直接交給顯示器呈現才是正確亮度 — 經 tools/hdr-lab A/B 比較確認。
+        if #available(macOS 15.0, *) {
+            layer?.toneMapMode = .never
+        }
     }
     required init?(coder: NSCoder) { fatalError() }
 
