@@ -52,19 +52,19 @@ actor FolderScanner {
         let scanTarget = subPath ?? folder.path
         Log.scanner.info("[scanner] start scan \(scanTarget, privacy: .public)")
 
-        let rootURL: URL
-        do {
-            rootURL = try BookmarkService.resolveBookmark(bookmarkData)
-        } catch {
-            Log.bookmark.warning("Failed to resolve bookmark for folder \(folder.path, privacy: .public): \(error.localizedDescription, privacy: .public)")
-            return
+        // bookmark 失效時退回直接路徑掃描（app 未沙盒化）——原本 return
+        // 會讓整個資料夾掃不出東西
+        let resolvedRoot = try? BookmarkService.resolveBookmark(bookmarkData)
+        if resolvedRoot == nil {
+            Log.bookmark.warning("Failed to resolve bookmark for folder \(folder.path, privacy: .public) — scanning by direct path")
         }
+        let rootURL = resolvedRoot ?? URL(fileURLWithPath: folder.path)
 
         let rootPath = rootURL.path
         let targetURL = subPath.map { childURL(rootURL: rootURL, rootPath: rootPath, childPath: $0) } ?? rootURL
 
-        let didStart = rootURL.startAccessingSecurityScopedResource()
-        defer { if didStart { rootURL.stopAccessingSecurityScopedResource() } }
+        let didStart = resolvedRoot?.startAccessingSecurityScopedResource() ?? false
+        defer { if didStart { resolvedRoot?.stopAccessingSecurityScopedResource() } }
 
         try Task.checkCancellation()
 
@@ -251,15 +251,14 @@ actor FolderScanner {
         let folderPath = folder.path
 
         // D: resolve bookmark + open scope ONCE for entire scan
-        let rootURL: URL
-        do {
-            rootURL = try BookmarkService.resolveBookmark(bookmarkData)
-        } catch {
-            Log.bookmark.warning("Failed to resolve bookmark: \(error.localizedDescription, privacy: .public)")
-            return
+        // bookmark 失效時退回直接路徑掃描（app 未沙盒化）
+        let resolvedRoot = try? BookmarkService.resolveBookmark(bookmarkData)
+        if resolvedRoot == nil {
+            Log.bookmark.warning("Failed to resolve bookmark for \(folderPath, privacy: .public) — deep scanning by direct path")
         }
-        let didStart = rootURL.startAccessingSecurityScopedResource()
-        defer { if didStart { rootURL.stopAccessingSecurityScopedResource() } }
+        let rootURL = resolvedRoot ?? URL(fileURLWithPath: folderPath)
+        let didStart = resolvedRoot?.startAccessingSecurityScopedResource() ?? false
+        defer { if didStart { resolvedRoot?.stopAccessingSecurityScopedResource() } }
 
         let t0 = ContinuousClock.now
         Log.info(Log.scanner, "[scanner] scanning: \(rootURL.lastPathComponent)")
@@ -440,9 +439,10 @@ actor FolderScanner {
     /// Back-fill `duration` for any video records that were scanned before metadata was available.
     /// Runs in the background; writes directly to the model context.
     func fillMissingDurations(id: PersistentIdentifier) async {
-        guard let folder = fetchFolder(id),
-              let bookmarkData = folder.bookmarkData,
-              let rootURL = try? BookmarkService.resolveBookmark(bookmarkData) else { return }
+        guard let folder = fetchFolder(id) else { return }
+        // bookmark 失效時退回直接路徑讀取（app 未沙盒化）
+        let rootURL = (folder.bookmarkData.flatMap { try? BookmarkService.resolveBookmark($0) })
+            ?? URL(fileURLWithPath: folder.path)
 
         let allPhotos = (try? modelContext.fetch(FetchDescriptor<Photo>())) ?? []
         let missing = allPhotos.filter {

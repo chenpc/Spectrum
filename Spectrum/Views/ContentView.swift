@@ -195,7 +195,13 @@ struct ContentView: View {
 
     var body: some View {
         normalContent
-        .onAppear { escapeMonitor.start() }
+        .onAppear {
+            escapeMonitor.start()
+            // --import-source CLI 參數（e2e 測試）：直接開啟 import 來源
+            if let src = AppLaunchArgs.shared.importSource {
+                importModel.openFolder(url: src)
+            }
+        }
         .onChange(of: escapeMonitor.escaped) { _, _ in handleEscape() }
         .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
             guard !isFullScreen else { return }
@@ -276,7 +282,8 @@ struct ContentView: View {
     private var normalContent: some View {
         HStack(spacing: 0) {
             NavigationSplitView(columnVisibility: $columnVisibility) {
-                SidebarView(selection: $selectedSidebarItem)
+                SidebarView(selection: $selectedSidebarItem,
+                            onImport: { showImportPanel.toggle() })
             } detail: {
                 Group {
                     if !searchText.isEmpty {
@@ -311,9 +318,6 @@ struct ContentView: View {
                                     }
                                 }
                                 ToolbarItem {
-                                    importToolbarButton
-                                }
-                                ToolbarItem {
                                     Button {
                                         enterFullScreen()
                                     } label: {
@@ -334,17 +338,9 @@ struct ContentView: View {
                                         Label("Back", systemImage: "chevron.left")
                                     }
                                 }
-                                ToolbarItem {
-                                    importToolbarButton
-                                }
                             }
                     } else {
                         gridContent
-                            .toolbar {
-                                ToolbarItem {
-                                    importToolbarButton
-                                }
-                            }
                     }
                 }
             }
@@ -366,16 +362,6 @@ struct ContentView: View {
         .safeAreaInset(edge: .bottom, spacing: 0) {
             TaskProgressBar()
         }
-    }
-
-    private var importToolbarButton: some View {
-        Button {
-            showImportPanel.toggle()
-        } label: {
-            Image(systemName: "square.and.arrow.down")
-        }
-        .help("Import")
-        .accessibilityIdentifier(AccessibilityID.importButton)
     }
 
     private func handleEscape() {

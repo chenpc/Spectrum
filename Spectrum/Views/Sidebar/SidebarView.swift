@@ -50,6 +50,8 @@ private struct SubfolderSidebarRow: View {
 
 struct SidebarView: View {
     @Binding var selection: SidebarItem?
+    /// 底部 Import 按鈕的動作（開關 import panel）。
+    var onImport: () -> Void = {}
     @Query private var folders: [ScannedFolder]
     @Environment(\.modelContext) private var modelContext
 
@@ -105,7 +107,11 @@ struct SidebarView: View {
             return true
         }
         .safeAreaInset(edge: .bottom, spacing: 0) {
-            SidebarProgressBar()
+            VStack(spacing: 0) {
+                SidebarProgressBar()
+                Divider()
+                importButton
+            }
         }
         .focusedSceneValue(\.addFolderAction, addFolder)
         .task(priority: .userInitiated) {
@@ -132,6 +138,33 @@ struct SidebarView: View {
                 Text("「\(name)」正在刪除中，請等待完成後再加入。")
             }
         }
+    }
+
+    /// Sidebar 底部的全寬 Import 按鈕（比照設計稿：微框線＋微底色、圓角 9）。
+    private var importButton: some View {
+        Button(action: onImport) {
+            HStack(spacing: 8) {
+                Image(systemName: "arrow.down.to.line")
+                    .font(.system(size: 12, weight: .semibold))
+                Text("Import")
+                    .font(.system(size: 13, weight: .semibold))
+            }
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 9)
+            .background(
+                RoundedRectangle(cornerRadius: 9)
+                    .fill(.primary.opacity(0.04))
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: 9)
+                    .stroke(.primary.opacity(0.12), lineWidth: 1)
+            )
+            .contentShape(RoundedRectangle(cornerRadius: 9))
+        }
+        .buttonStyle(.plain)
+        .help("Import")
+        .accessibilityIdentifier(AccessibilityID.importButton)
+        .padding(12)
     }
 
     private func loadAllFolderChildren() {

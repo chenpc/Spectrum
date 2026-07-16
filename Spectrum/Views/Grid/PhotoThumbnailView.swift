@@ -131,6 +131,7 @@ struct PhotoThumbnailView: View {
     var folderBookmarkData: Data? = nil
 
     @State private var thumbnail: NSImage?
+    @State private var isHDR = false
     @Environment(\.thumbnailCacheState) private var cacheState
 
     private var displayThumbnail: NSImage? {
@@ -177,16 +178,32 @@ struct PhotoThumbnailView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(6)
                 }
-            } else if item.livePhotoMovPath != nil {
-                Image(systemName: "livephoto")
-                    .font(.body)
-                    .foregroundStyle(.white)
-                    .shadow(color: .black.opacity(0.8), radius: 3)
-                    .padding(4)
-                    .background(.black.opacity(0.4), in: Circle())
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                    .padding(6)
             }
+
+            HStack(spacing: 4) {
+                if isHDR {
+                    Text("HDR")
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(.white)
+                        .padding(.horizontal, 4)
+                        .padding(.vertical, 2)
+                        .background(.black.opacity(0.55), in: RoundedRectangle(cornerRadius: 3))
+                        .overlay(
+                            RoundedRectangle(cornerRadius: 3)
+                                .stroke(.white.opacity(0.8), lineWidth: 1)
+                        )
+                }
+                if !item.isVideo, item.livePhotoMovPath != nil {
+                    Image(systemName: "livephoto")
+                        .font(.body)
+                        .foregroundStyle(.white)
+                        .shadow(color: .black.opacity(0.8), radius: 3)
+                        .padding(4)
+                        .background(.black.opacity(0.4), in: Circle())
+                }
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            .padding(6)
 
             let ext = URL(fileURLWithPath: item.filePath).pathExtension.uppercased()
             if !ext.isEmpty {
@@ -214,6 +231,7 @@ struct PhotoThumbnailView: View {
             } else {
                 thumbnail = await ThumbnailService.shared.thumbnail(for: item.filePath, bookmarkData: folderBookmarkData)
             }
+            isHDR = ThumbnailService.shared.isHDR(for: item.filePath)
         }
     }
 }

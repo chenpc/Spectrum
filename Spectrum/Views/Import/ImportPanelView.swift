@@ -93,6 +93,35 @@ final class ImportPanelModel {
         }
     }
 
+    /// 偵測已掛載的 SD 卡：可移除／可退出的磁碟且根目錄有 DCIM 資料夾。
+    /// 回傳磁碟根目錄（整卡掃描才涵蓋 Sony 的 PRIVATE/M4ROOT/CLIP 影片）。
+    static func detectSDCardVolume() -> URL? {
+        let keys: Set<URLResourceKey> = [.volumeIsRemovableKey, .volumeIsEjectableKey]
+        guard let volumes = FileManager.default.mountedVolumeURLs(
+            includingResourceValuesForKeys: Array(keys),
+            options: [.skipHiddenVolumes]
+        ) else { return nil }
+        for volume in volumes {
+            guard let values = try? volume.resourceValues(forKeys: keys),
+                  (values.volumeIsRemovable ?? false) || (values.volumeIsEjectable ?? false),
+                  FileManager.default.fileExists(atPath: volume.appendingPathComponent("DCIM").path)
+            else { continue }
+            return volume
+        }
+        return nil
+    }
+
+    /// 開啟 import panel 時的預設行為：自動掃描 SD 卡。
+    /// 已有來源或找不到卡片時不做事；回傳是否有找到。
+    @discardableResult
+    func autoDetectSDCard() -> Bool {
+        // 測試隔離環境（--userdir）不自動掃卡，避免測試機插著 SD 卡時行為不定
+        guard AppLaunchArgs.shared.userDir == nil else { return false }
+        guard sourceURL == nil, let volume = Self.detectSDCardVolume() else { return false }
+        openFolder(url: volume)
+        return true
+    }
+
     func selectFolder() {
         let panel = NSOpenPanel()
         panel.canChooseFiles = false
@@ -199,6 +228,10 @@ struct ImportPanelView: View {
             ImportPanelFooter(model: model)
         }
         .frame(minWidth: 250, idealWidth: 300, maxWidth: 400)
+        .onAppear {
+            // 預設來源：自動掃描 SD 卡；找不到才留在空狀態讓使用者自選資料夾
+            model.autoDetectSDCard()
+        }
     }
 
     private var header: some View {
@@ -235,12 +268,18 @@ struct ImportPanelView: View {
     private var emptyState: some View {
         VStack(spacing: 12) {
             Spacer()
-            Image(systemName: "square.and.arrow.down")
+            Image(systemName: "sdcard")
                 .font(.largeTitle)
                 .foregroundStyle(.secondary)
-            Text("Select a folder to import photos and videos")
-                .multilineTextAlignment(.center)
+            Text("No SD card detected")
                 .foregroundStyle(.secondary)
+            Text("Insert a camera SD card, or choose a folder to import from")
+                .font(.caption)
+                .multilineTextAlignment(.center)
+                .foregroundStyle(.tertiary)
+            Button("Scan for SD Card") {
+                model.autoDetectSDCard()
+            }
             Button("Select Folder…") {
                 model.selectFolder()
             }
@@ -305,6 +344,8 @@ struct ImportDateGroupView: View {
                 ImportPanelModel.shared.draggedGroupIsCut = false
                 return NSItemProvider(object: "import-group:\(group.folderName)" as NSString)
             }
+            .accessibilityElement(children: .contain)
+            .accessibilityIdentifier("import.group.\(group.folderName)")
             .contextMenu {
                 Button("Copy") {
                     ImportPanelModel.shared.draggedGroup = group
@@ -401,6 +442,8 @@ private struct ImportPanelFooter: View {
                                 .foregroundStyle(.secondary)
                                 .fixedSize()
                         }
+                        .accessibilityElement(children: .contain)
+                        .accessibilityIdentifier("import.progress")
                     }
                     if model.isScanning {
                         HStack(spacing: 8) {

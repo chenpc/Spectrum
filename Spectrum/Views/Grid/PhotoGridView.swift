@@ -235,7 +235,8 @@ struct PhotoGridView: View {
                 let isCut = importModel.draggedGroupIsCut
                 importModel.draggedGroup = nil
                 importModel.draggedGroupIsCut = false
-                if let bm = folder?.bookmarkData, let destPath = effectivePath {
+                if let destPath = effectivePath {
+                    let bm = folder?.bookmarkData
                     Task {
                         await performGroupDrop(group: group, isCut: isCut,
                                                destinationPath: destPath, bookmarkData: bm)
@@ -581,15 +582,14 @@ struct PhotoGridView: View {
     // MARK: - Folder operations
 
     private func createNewFolder() async {
-        guard let destPath = effectivePath,
-              let bm = folder?.bookmarkData,
-              let rootURL = try? BookmarkService.resolveBookmark(bm) else { return }
+        guard let destPath = effectivePath else { return }
         let base = URL(fileURLWithPath: destPath)
         var name = "untitled folder"
         var dst = base.appendingPathComponent(name)
         var counter = 2
-        let started = rootURL.startAccessingSecurityScopedResource()
-        defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
+        let rootURL = (folder?.bookmarkData).flatMap { try? BookmarkService.resolveBookmark($0) }
+        let started = rootURL?.startAccessingSecurityScopedResource() ?? false
+        defer { if started { rootURL?.stopAccessingSecurityScopedResource() } }
         while FileManager.default.fileExists(atPath: dst.path) {
             name = "untitled folder \(counter)"
             dst = base.appendingPathComponent(name)
@@ -611,13 +611,11 @@ struct PhotoGridView: View {
     }
 
     private func performRename(info: SubfolderInfo, newName: String) async {
-        guard let bm = folder?.bookmarkData,
-              let rootURL = try? BookmarkService.resolveBookmark(bm),
-              !newName.isEmpty, newName != info.name else { return }
+        guard !newName.isEmpty, newName != info.name else { return }
         let src = URL(fileURLWithPath: info.path)
         let dst = src.deletingLastPathComponent().appendingPathComponent(newName)
         do {
-            try BookmarkService.withSecurityScope(rootURL) {
+            try BookmarkService.withScopeIfAvailable(folder?.bookmarkData) {
                 try FileManager.default.moveItem(at: src, to: dst)
             }
             await loadCurrentLevel()
@@ -628,12 +626,12 @@ struct PhotoGridView: View {
 
     private func performPasteAny() async {
         if let group = importModel.draggedGroup,
-           let destPath = effectivePath,
-           let bm = folder?.bookmarkData {
+           let destPath = effectivePath {
             let isCut = importModel.draggedGroupIsCut
             importModel.draggedGroup = nil
             importModel.draggedGroupIsCut = false
-            await performGroupDrop(group: group, isCut: isCut, destinationPath: destPath, bookmarkData: bm)
+            await performGroupDrop(group: group, isCut: isCut, destinationPath: destPath,
+                                   bookmarkData: folder?.bookmarkData)
             return
         }
         await performPaste()
@@ -641,24 +639,21 @@ struct PhotoGridView: View {
 
     private func performPaste() async {
         guard let item = clipboard.content,
-              let destPath = effectivePath,
-              let dstBM = folder?.bookmarkData else { return }
+              let destPath = effectivePath else { return }
 
-        guard let srcRootURL = try? BookmarkService.resolveBookmark(item.bookmarkData),
-              let dstRootURL = try? BookmarkService.resolveBookmark(dstBM) else {
-            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
-            return
-        }
+        // bookmark 失效／缺失時退回直接路徑存取（app 未沙盒化）
+        let srcRootURL = try? BookmarkService.resolveBookmark(item.bookmarkData)
+        let dstRootURL = (folder?.bookmarkData).flatMap { try? BookmarkService.resolveBookmark($0) }
 
         let src = URL(fileURLWithPath: item.sourcePath)
         let dst = URL(fileURLWithPath: destPath).appendingPathComponent(src.lastPathComponent)
-        let crossScope = srcRootURL.standardizedFileURL != dstRootURL.standardizedFileURL
+        let crossScope = srcRootURL?.standardizedFileURL != dstRootURL?.standardizedFileURL
 
-        let srcStarted = srcRootURL.startAccessingSecurityScopedResource()
-        let dstStarted = crossScope ? dstRootURL.startAccessingSecurityScopedResource() : false
+        let srcStarted = srcRootURL?.startAccessingSecurityScopedResource() ?? false
+        let dstStarted = crossScope ? (dstRootURL?.startAccessingSecurityScopedResource() ?? false) : false
         defer {
-            if srcStarted { srcRootURL.stopAccessingSecurityScopedResource() }
-            if dstStarted { dstRootURL.stopAccessingSecurityScopedResource() }
+            if srcStarted { srcRootURL?.stopAccessingSecurityScopedResource() }
+            if dstStarted { dstRootURL?.stopAccessingSecurityScopedResource() }
         }
 
         guard !FileManager.default.fileExists(atPath: dst.path) else {
@@ -691,21 +686,18 @@ struct PhotoGridView: View {
 
     private func performPasteFiles() async {
         guard let item = clipboard.files,
-              let destPath = effectivePath,
-              let dstBM = folder?.bookmarkData else { return }
+              let destPath = effectivePath else { return }
 
-        guard let srcRootURL = try? BookmarkService.resolveBookmark(item.bookmarkData),
-              let dstRootURL = try? BookmarkService.resolveBookmark(dstBM) else {
-            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
-            return
-        }
+        // bookmark 失效／缺失時退回直接路徑存取（app 未沙盒化）
+        let srcRootURL = try? BookmarkService.resolveBookmark(item.bookmarkData)
+        let dstRootURL = (folder?.bookmarkData).flatMap { try? BookmarkService.resolveBookmark($0) }
 
-        let crossScope = srcRootURL.standardizedFileURL != dstRootURL.standardizedFileURL
-        let srcStarted = srcRootURL.startAccessingSecurityScopedResource()
-        let dstStarted = crossScope ? dstRootURL.startAccessingSecurityScopedResource() : false
+        let crossScope = srcRootURL?.standardizedFileURL != dstRootURL?.standardizedFileURL
+        let srcStarted = srcRootURL?.startAccessingSecurityScopedResource() ?? false
+        let dstStarted = crossScope ? (dstRootURL?.startAccessingSecurityScopedResource() ?? false) : false
         defer {
-            if srcStarted { srcRootURL.stopAccessingSecurityScopedResource() }
-            if dstStarted { dstRootURL.stopAccessingSecurityScopedResource() }
+            if srcStarted { srcRootURL?.stopAccessingSecurityScopedResource() }
+            if dstStarted { dstRootURL?.stopAccessingSecurityScopedResource() }
         }
 
         var encounteredError: Error?
@@ -738,7 +730,10 @@ struct PhotoGridView: View {
     }
 
     private func handleDrop(_ providers: [NSItemProvider], destinationPath: String) {
-        guard let bm = folder?.bookmarkData else { return }
+        // bookmark 可能為 nil 或已失效——不在此擋下，讓 perform* 以直接
+        // 路徑存取退路處理（app 未沙盒化）；原本靜默 return 會讓拖放
+        // 看起來完全沒反應
+        let bm = folder?.bookmarkData
 
         let isGroupDrop = providers.contains {
             $0.hasItemConformingToTypeIdentifier(UTType.plainText.identifier)
@@ -747,9 +742,13 @@ struct PhotoGridView: View {
             let isCut = importModel.draggedGroupIsCut
             importModel.draggedGroup = nil
             importModel.draggedGroupIsCut = false
+            // Import group 一律進目前瀏覽中的資料夾，忽略 drop 落在哪個
+            // subfolder tile 上 — 與 drop 到空白處行為一致（畫面被 tile
+            // 填滿時才有辦法操作）
+            let dest = effectivePath ?? destinationPath
             Task {
                 await performGroupDrop(group: group, isCut: isCut,
-                                       destinationPath: destinationPath, bookmarkData: bm)
+                                       destinationPath: dest, bookmarkData: bm)
             }
             return
         }
@@ -767,45 +766,72 @@ struct PhotoGridView: View {
     }
 
     private func performGroupDrop(group: ImportDateGroup, isCut: Bool,
-                                   destinationPath: String, bookmarkData: Data) async {
-        guard let dstRootURL = try? BookmarkService.resolveBookmark(bookmarkData) else {
-            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
-            return
+                                   destinationPath: String, bookmarkData: Data?) async {
+        // Bookmark 能解析就帶 security scope；失效／缺失時退回直接路徑
+        // 存取（app 未沙盒化，直接寫入即可）——書籤過期不該讓匯入整個
+        // 卡死在 "Cannot access folder"
+        let dstRootURL = bookmarkData.flatMap { try? BookmarkService.resolveBookmark($0) }
+        if dstRootURL == nil {
+            guard FileManager.default.isWritableFile(atPath: destinationPath) else {
+                errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
+                return
+            }
+            Log.bookmark.warning("[import] destination bookmark unavailable — using direct path \(destinationPath, privacy: .public)")
         }
         let srcURL = importModel.sourceURL
         let srcScopeStarted = srcURL?.startAccessingSecurityScopedResource() ?? false
-        let dstStarted = dstRootURL.startAccessingSecurityScopedResource()
+        let dstStarted = dstRootURL?.startAccessingSecurityScopedResource() ?? false
 
         let folderURL = URL(fileURLWithPath: destinationPath).appendingPathComponent(group.folderName)
-        var processedURLs = Set<URL>()
-        var encounteredError: Error?
 
         let taskLabel = "\(isCut ? "Moving" : "Copying") \(group.folderName)"
         let taskId = importModel.beginImportTask(label: taskLabel, total: group.items.count)
 
-        for item in group.items {
-            let dst = folderURL.appendingPathComponent(item.url.lastPathComponent)
-            do {
-                try await Task.detached {
-                    let fm = FileManager.default
+        // 整批在單一背景 task 內複製：原本逐檔 await Task.detached 會讓每個
+        // 檔案都等 MainActor 一輪 runloop（實測僅 ~12 檔/秒），大量檔案時
+        // 匯入慢到像沒有動作。進度以 ~100ms 節流回報。
+        let itemURLs = group.items.map(\.url)
+        let throttleMs = AppLaunchArgs.shared.importThrottleMs
+        let (processedURLs, encounteredError): (Set<URL>, Error?) = await Task.detached {
+            let fm = FileManager.default
+            var processed = Set<URL>()
+            var firstError: Error?
+            var lastReport = ContinuousClock.now
+            for (index, url) in itemURLs.enumerated() {
+                do {
                     if !fm.fileExists(atPath: folderURL.path) {
                         try fm.createDirectory(at: folderURL, withIntermediateDirectories: true)
                     }
-                    guard !fm.fileExists(atPath: dst.path) else { return }
-                    if isCut {
-                        try fm.moveItem(at: item.url, to: dst)
-                    } else {
-                        try fm.copyItem(at: item.url, to: dst)
+                    let dst = folderURL.appendingPathComponent(url.lastPathComponent)
+                    // 目的地已存在的檔案跳過，且不視為已處理（cut 時不移除來源）
+                    if !fm.fileExists(atPath: dst.path) {
+                        if isCut {
+                            try fm.moveItem(at: url, to: dst)
+                        } else {
+                            try fm.copyItem(at: url, to: dst)
+                        }
+                        processed.insert(url)
                     }
-                }.value
-                processedURLs.insert(item.url)
-            } catch {
-                encounteredError = error
+                } catch {
+                    firstError = firstError ?? error
+                }
+                // 每 10 檔睡一次（10×ms）：短 sleep 會被 timer coalescing
+                // 放大數十倍，逐檔睡會讓測試的節流時間完全失準
+                if let throttleMs, index % 10 == 9 {
+                    try? await Task.sleep(for: .milliseconds(throttleMs * 10))
+                }
+                if ContinuousClock.now - lastReport > .milliseconds(100) {
+                    lastReport = .now
+                    let done = processed.count
+                    Task { @MainActor in
+                        ImportPanelModel.shared.updateImportTask(taskId, done: done)
+                    }
+                }
             }
-            importModel.updateImportTask(taskId, done: processedURLs.count)
-        }
+            return (processed, firstError)
+        }.value
         if srcScopeStarted { srcURL?.stopAccessingSecurityScopedResource() }
-        if dstStarted { dstRootURL.stopAccessingSecurityScopedResource() }
+        if dstStarted { dstRootURL?.stopAccessingSecurityScopedResource() }
 
         importModel.finishImportTask(taskId)
 
@@ -817,13 +843,18 @@ struct PhotoGridView: View {
         }
     }
 
-    private func performDropCopy(srcURL: URL, destinationPath: String, bookmarkData: Data) async {
+    private func performDropCopy(srcURL: URL, destinationPath: String, bookmarkData: Data?) async {
         let dst = URL(fileURLWithPath: destinationPath).appendingPathComponent(srcURL.lastPathComponent)
-        guard let dstRootURL = try? BookmarkService.resolveBookmark(bookmarkData) else {
-            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
-            return
+        // 同 performGroupDrop：bookmark 失效／缺失時退回直接路徑存取
+        let dstRootURL = bookmarkData.flatMap { try? BookmarkService.resolveBookmark($0) }
+        if dstRootURL == nil {
+            guard FileManager.default.isWritableFile(atPath: destinationPath) else {
+                errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
+                return
+            }
+            Log.bookmark.warning("[drop] destination bookmark unavailable — using direct path \(destinationPath, privacy: .public)")
         }
-        let dstStarted = dstRootURL.startAccessingSecurityScopedResource()
+        let dstStarted = dstRootURL?.startAccessingSecurityScopedResource() ?? false
         let srcStarted = srcURL.startAccessingSecurityScopedResource()
         let srcName = srcURL.lastPathComponent
 
@@ -840,7 +871,7 @@ struct PhotoGridView: View {
             }
         }.value
 
-        if dstStarted { dstRootURL.stopAccessingSecurityScopedResource() }
+        if dstStarted { dstRootURL?.stopAccessingSecurityScopedResource() }
         if srcStarted { srcURL.stopAccessingSecurityScopedResource() }
 
         switch copyResult {
@@ -856,16 +887,11 @@ struct PhotoGridView: View {
     }
 
     private func performTrashSubfolder(info: SubfolderInfo) async {
-        guard let bm = folder?.bookmarkData,
-              let rootURL = try? BookmarkService.resolveBookmark(bm) else {
-            errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
-            return
-        }
-        let started = rootURL.startAccessingSecurityScopedResource()
-        defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
         let url = URL(fileURLWithPath: info.path)
         do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            try BookmarkService.withScopeIfAvailable(folder?.bookmarkData) {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            }
             clearSubfolderSelection(info)
             await loadCurrentLevel()
         } catch {
@@ -878,21 +904,10 @@ struct PhotoGridView: View {
     private func performTrash(item: PhotoItem) {
         let url = URL(fileURLWithPath: item.filePath)
         let bm = item.resolveBookmarkData(from: Array(allFolders)) ?? folder?.bookmarkData
-        var scopeURL: URL?
-        var didStart = false
-        if let bm {
-            do {
-                let resolved = try BookmarkService.resolveBookmark(bm)
-                scopeURL = resolved
-                didStart = resolved.startAccessingSecurityScopedResource()
-            } catch {
-                errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
-                return
-            }
-        }
-        defer { if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() } }
         do {
-            try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            try BookmarkService.withScopeIfAvailable(bm) {
+                try FileManager.default.trashItem(at: url, resultingItemURL: nil)
+            }
             removeItemFromLocalState(item)
         } catch {
             // trashItem fails on volumes without Trash support — queue for explicit
@@ -926,26 +941,18 @@ struct PhotoGridView: View {
         for item in items {
             let url = URL(fileURLWithPath: item.filePath)
             let bm = item.resolveBookmarkData(from: Array(allFolders)) ?? folder?.bookmarkData
-            var scopeURL: URL?
-            var didStart = false
-            if let bm, let resolved = try? BookmarkService.resolveBookmark(bm) {
-                scopeURL = resolved
-                didStart = resolved.startAccessingSecurityScopedResource()
-            }
             do {
-                try FileManager.default.removeItem(at: url)
+                try BookmarkService.withScopeIfAvailable(bm) {
+                    try FileManager.default.removeItem(at: url)
+                }
                 removeItemFromLocalState(item)
             } catch {
                 encounteredError = error
             }
-            if didStart, let scopeURL { scopeURL.stopAccessingSecurityScopedResource() }
         }
 
         if !foldersToRemove.isEmpty {
-            if let bm = folder?.bookmarkData,
-               let rootURL = try? BookmarkService.resolveBookmark(bm) {
-                let started = rootURL.startAccessingSecurityScopedResource()
-                defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
+            BookmarkService.withScopeIfAvailable(folder?.bookmarkData) {
                 for info in foldersToRemove {
                     do {
                         try FileManager.default.removeItem(at: URL(fileURLWithPath: info.path))
@@ -954,8 +961,6 @@ struct PhotoGridView: View {
                         encounteredError = error
                     }
                 }
-            } else {
-                errorMessage = String(localized: "Cannot access folder. Remove and re-add it in the sidebar.")
             }
             await loadCurrentLevel()
         }

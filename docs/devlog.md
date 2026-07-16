@@ -1145,3 +1145,83 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 **修改的檔案：**
 - `Spectrum/Views/Grid/PhotoThumbnailView.swift`：`isVideoContent` + toneMapMode 分流
 - `PhotoGridView.swift` / `PhotoDetailView.swift` / `SearchResultsView.swift` / `ImportPanelView.swift`：傳入 `video:`
+
+## 2026-07-15 — Grid 縮圖左上角 HDR 徽章
+
+**類型：** Feature
+
+**問題：** HDR 照片/影片在 grid 預覽時無法辨識，希望左上角顯示 HDR 標記。
+
+**根因／做法：** ThumbnailService 產生縮圖時本來就會偵測 HDR（照片走 `ImagePreloadCache.detectHDR`，含 gain map 與 HLG；影片縮圖以 `.matchSource` 保留來源 colorspace，檢查 `CGColorSpaceUsesITUR_2100TF` 涵蓋 HLG/PQ/Dolby Vision），順手把結果記進 `OSAllocatedUnfairLock` 保護的 path→Bool 旗標表，透過 `isHDR(for:)` 查詢。PhotoThumbnailView 取得縮圖後查旗標，於左上角顯示白框 HDR 徽章（與 Live Photo 圖示同列）。
+
+**修改的檔案：** Spectrum/Services/ThumbnailService.swift、Spectrum/Views/Grid/PhotoThumbnailView.swift
+
+## 2026-07-15 — List folder 變慢：detectHDR 隱性全圖解碼 + 封面搜尋排序
+
+**類型：** Bug Fix（效能）
+
+**問題：** 進入資料夾後 grid 顯示很慢。Time Profiler（41s trace）顯示 `detectHDR` 佔 2.4s CPU（全程 25%），`firstImageFile` 佔 0.9s。
+
+**根因／做法：** (1) `detectHDR` 第三步用 8×8 縮圖 + `kCGImageSourceCreateThumbnailFromImageAlways` 判斷 HLG colorspace——這會強制解碼整張主圖（JPEG 全圖 huffman decode、ARW 走 RawCamera 全幅解 RAW），實測每張 ~120ms；且每張 grid 縮圖生成都會呼叫。改為讀 header 的 `kCGImagePropertyProfileName`（如「Rec. ITU-R BT.2100 HLG」，實測 5ms 且與 CustomRendered 檢查共用同一份 props），無 profile 名稱才退回縮圖解碼。 (2) `firstImageFile` 為找封面把整個目錄 `sorted`，比較器每次呼叫 `URL.lastPathComponent`（CFURL→String bridge，佔 0.54s）。改為 O(n) 單趟掃描找字典序最小者，`lastPathComponent` 每個 URL 只算一次。
+
+**修改的檔案：** Spectrum/Services/ImagePreloadCache.swift、Spectrum/Services/FolderReader.swift
+
+## 2026-07-15 — Detail view filmstrip + Import 預設 SD 卡來源
+
+**類型：** Feature
+
+**問題：** 參考設計稿：(1) 非全螢幕的 detail view 底部要有相鄰照片預覽列；(2) import 應預設從 SD 卡匯入，沒有卡片才讓使用者自選資料夾。
+
+**根因／做法：** (1) `FilmstripView`（`safeAreaInset(edge: .bottom)`）：`viewModel.flatPhotos` 的 60×44 縮圖橫列，目前項目 accent 框線＋置中（ScrollViewReader），其餘 0.6 透明度，點擊即跳轉（同鍵盤導航的 binding 寫入）；全螢幕（NSWindow notifications 追蹤）與裁切模式時隱藏。縮圖走 `HDRThumbnailImageView` 保持 HLG 亮度正確。 (2) `ImportPanelModel.detectSDCardVolume()`：列舉 mounted volumes 找可移除／可退出且含 `DCIM` 的磁碟，回傳磁碟根目錄（整卡掃描才涵蓋 Sony `PRIVATE/M4ROOT/CLIP` 影片）；panel `onAppear` 自動偵測，空狀態改為 sdcard 圖示＋「Scan for SD Card」與「Select Folder…」。
+
+**修改的檔案：** Spectrum/Views/Detail/PhotoDetailView.swift、Spectrum/Views/Import/ImportPanelView.swift
+
+## 2026-07-15 — Import 按鈕移至 sidebar 底部 + filmstrip 置中
+
+**類型：** Feature（UI 調整）
+
+**問題：** 比照設計稿：Import 按鈕應為 sidebar 底部的全寬按鈕（微框線＋微底色）；filmstrip 項目不滿一排時應置中。
+
+**根因／做法：** SidebarView 新增 `onImport` callback 與底部 `importButton`（`safeAreaInset`，arrow.down.to.line 圖示＋Import 文字，圓角 9、`.primary.opacity` 微框線底色以適應深淺色主題），accessibility ID 沿用 `toolbar.import`（UI test 不變）；移除 ContentView 三處 toolbar icon 按鈕。FilmstripView 以 GeometryReader 對內容 `frame(minWidth:)` 讓不滿排時置中，初始 scrollTo 延到下一個 runloop 確保 LazyHStack 佈局完成。
+
+**修改的檔案：** Spectrum/Views/Sidebar/SidebarView.swift、Spectrum/Views/ContentView.swift、Spectrum/Views/Detail/PhotoDetailView.swift
+
+## 2026-07-16 — Import group drop 一律進目前資料夾
+
+**類型：** Bug Fix（UX）
+
+**問題：** 從 import panel 拖曳日期群組到 library view 時，若落在 subfolder tile 上會匯入該子資料夾；畫面被 tile 填滿、沒有空白處時很難匯入到目前資料夾。
+
+**根因／做法：** `PhotoGridView.handleDrop` 的 group-drop 分支改用 `effectivePath`（目前瀏覽層）作為目的地，忽略 drop 落點的 subfolder tile — 與 drop 到空白處行為一致。一般檔案（fileURL）拖放到 subfolder 的行為維持不變。
+
+**修改的檔案：** Spectrum/Views/Grid/PhotoGridView.swift
+
+## 2026-07-16 — Import 拖放 e2e 測試 + 批次複製效能修正
+
+**類型：** Bug Fix + Test
+
+**問題：** 使用者回報拖曳 import group 到 grid 沒反應／看不到進度條、拖到 subfolder 出錯。需要 e2e 測試驗證拖放匯入的正確性與進度條顯示。
+
+**根因／做法：** (1) `performGroupDrop` 原本逐檔 `await Task.detached`，每個檔案都等 MainActor 一輪 runloop，實測僅 ~12 檔/秒——大量檔案時匯入慢到像沒有動作。改為整批在單一背景 task 複製、進度以 ~100ms 節流回報，速度回到磁碟複製速度。 (2) e2e：`ImportFlowUITests` 新增 test04（拖到空白）與 test05（拖到 subfolder tile），驗證 1500 個檔案全數複製到目前資料夾、`Sub` 不被寫入、進度條（`import.progress`）有顯示、無錯誤 alert。測試基礎建設：`--import-source`（繞過 NSOpenPanel）、`--import-throttle-ms`（讓進度條可觀測；每 10 檔批次 sleep，避免 timer coalescing 失準）、`--userdir` 下停用 SD 卡自動偵測、footer 進度列與 date-group header 的 accessibility ID。測試坑：拖曳前必須等掃描完成（掃描是串流式的，太早拖只會匯入部分項目）；SwiftUI `Text("\(Int)")` 會套千分位（"1,500"）且在 value 屬性。首次在此機器跑 UI test 需 `automationmodetool enable-automationmode-without-authentication`。
+
+**修改的檔案：** Spectrum/Views/Grid/PhotoGridView.swift、Spectrum/Views/Import/ImportPanelView.swift、Spectrum/Services/AppLaunchArgs.swift、Spectrum/Views/ContentView.swift、SpectrumUITests/ImportFlowUITests.swift
+
+## 2026-07-16 — 匯入目的地 bookmark 失效的直接路徑退路
+
+**類型：** Bug Fix
+
+**問題：** 拖曳匯入時顯示「Cannot access folder. Remove and re-add it in the sidebar.」——目的資料夾的 security-scoped bookmark 已失效（瀏覽不受影響因為 FolderReader 直接用路徑讀），一到寫入操作就整個卡死。另外 `handleDrop` 在 bookmark 為 nil 時靜默 return，拖放看起來完全沒反應。
+
+**根因／做法：** App 未沙盒化，security scope 並非硬需求。`performGroupDrop` / `performDropCopy` 改為：bookmark 能解析就照舊帶 scope；解析失敗或缺失時，若目的路徑 `isWritableFile` 就直接寫入（記 warning log），否則才顯示原錯誤。`handleDrop` 與各 call site 的 bookmark 改為 optional 傳遞，移除靜默 return。
+
+**修改的檔案：** Spectrum/Views/Grid/PhotoGridView.swift
+
+## 2026-07-16 — 全面盤點 bookmark 失效行為：所有檔案操作改為直接路徑退路
+
+**類型：** Bug Fix
+
+**問題：** 刪除資料夾也出現「沒有權限」錯誤。逐一盤點全專案 `resolveBookmark` 的 28 個使用點，發現多處在 bookmark 失效時會中止操作或無聲失敗，而瀏覽不受影響（FolderReader 直接用路徑讀），導致「看得到卻動不了」。
+
+**根因／做法：** App 未沙盒化，security scope 非硬需求。新增 `BookmarkService.withScopeIfAvailable(_:body:)`（sync + async）：bookmark 能解析就帶 scope 執行，失效／缺失時直接執行。修正的中止點：PhotoGridView 的 trash（單檔＋子資料夾）、permanent delete、rename、createNewFolder、paste（檔案＋資料夾，src/dst scope 各自獨立容錯）；SearchResultsView（失效資料夾完全搜不到）；PhotoDetailView 的 writeXMPSidecar（旋轉／裁切／gyro 無聲存不進 sidecar）與 readGyroConfigFromXMP；FolderScanner 的 shallow scan、deep scan、fillMissingDurations（失效時整個資料夾掃不出東西）。原本已容錯的（ThumbnailService、ImagePreloadCache、FolderReader.withScope、影片／LivePhoto 播放、SidebarView 直接路徑 fallback、shareFile）維持不變。
+
+**修改的檔案：** Spectrum/Services/BookmarkService.swift、Spectrum/Views/Grid/PhotoGridView.swift、Spectrum/Views/SearchResultsView.swift、Spectrum/Views/Detail/PhotoDetailView.swift、Spectrum/Services/FolderScanner.swift

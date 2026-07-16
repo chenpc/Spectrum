@@ -59,6 +59,25 @@ enum BookmarkService {
         }
     }
 
+    /// 盡力而為的 security scope：bookmark 解析成功就在 scope 內執行 body，
+    /// 解析失敗或無 bookmark 時直接執行——app 未沙盒化，直接路徑存取即可。
+    /// 書籤過期不該讓檔案操作（刪除／改名／匯入）整個卡死。
+    @discardableResult
+    static func withScopeIfAvailable<T>(_ data: Data?, body: () throws -> T) rethrows -> T {
+        if let data, let url = try? resolveBookmark(data) {
+            return try withSecurityScope(url, body: body)
+        }
+        return try body()
+    }
+
+    @discardableResult
+    static func withScopeIfAvailable<T>(_ data: Data?, body: () async throws -> T) async rethrows -> T {
+        if let data, let url = try? resolveBookmark(data) {
+            return try await withSecurityScope(url, body: body)
+        }
+        return try await body()
+    }
+
     @discardableResult
     static func withSecurityScope<T>(_ url: URL, body: () throws -> T) rethrows -> T {
         let didStart = url.startAccessingSecurityScopedResource()

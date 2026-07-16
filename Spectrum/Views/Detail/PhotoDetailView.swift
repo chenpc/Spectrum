@@ -35,6 +35,7 @@ struct PhotoDetailView: View {
     // Gyro config (stored in XMP sidecar, not DB)
     @State private var gyroConfigJson: String?
     // Shared
+    @State private var fullscreenActive = false
     @State private var spaceKeyMonitor: Any?
     @State private var cursorHidden = false
     @State private var statusBadgeVisible = false
@@ -75,7 +76,25 @@ struct PhotoDetailView: View {
                 imageContent
             }
         }
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            // 非全螢幕時在底部顯示相鄰照片 filmstrip（裁切模式中隱藏以保留空間）
+            if let viewModel, !fullscreenActive, !isCropMode, viewModel.flatPhotos.count > 1 {
+                FilmstripView(
+                    items: viewModel.flatPhotos,
+                    currentPath: photo.filePath,
+                    folders: Array(folders),
+                    onSelect: { photo = $0 }
+                )
+            }
+        }
         .background(.black)
+        .onAppear { fullscreenActive = isFullScreen }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willEnterFullScreenNotification)) { _ in
+            fullscreenActive = true
+        }
+        .onReceive(NotificationCenter.default.publisher(for: NSWindow.willExitFullScreenNotification)) { _ in
+            fullscreenActive = false
+        }
         .focusedSceneValue(\.videoPlayPause, startPlayback)
         .focusedSceneValue(\.gyroConfigBinding, $gyroConfigJson)
         .focusedSceneValue(\.videoController, videoController)
@@ -492,14 +511,15 @@ struct PhotoDetailView: View {
     // MARK: - XMP Sidecar
 
     private func writeXMPSidecar() {
-        guard let data = bookmarkData else { return }
+        let data = bookmarkData
         let edit = photo.compositeEdit
         let ori = photo.orientation ?? 1
         let gyro = gyroConfigJson
         let filePath = photo.filePath
         Task.detached {
-            guard let folderURL = try? BookmarkService.resolveBookmark(data) else { return }
-            BookmarkService.withSecurityScope(folderURL) {
+            // bookmark 失效時退回直接路徑寫入——原本 guard return 會讓
+            // 旋轉／裁切／gyro 設定無聲地存不進 sidecar
+            BookmarkService.withScopeIfAvailable(data) {
                 let imageURL = URL(fileURLWithPath: filePath)
                 let hasEdits = edit.rotation != 0 || edit.flipH || edit.crop != nil
                 if !hasEdits && gyro == nil {
@@ -796,9 +816,7 @@ struct PhotoDetailView: View {
 
     /// Read gyroConfig JSON from XMP sidecar (security-scoped).
     private func readGyroConfigFromXMP() -> String? {
-        guard let data = bookmarkData,
-              let folderURL = try? BookmarkService.resolveBookmark(data) else { return nil }
-        return BookmarkService.withSecurityScope(folderURL) {
+        BookmarkService.withScopeIfAvailable(bookmarkData) {
             let imageURL = URL(fileURLWithPath: photo.filePath)
             let xmp = XMPSidecarService.read(for: imageURL, originalOrientation: photo.orientation ?? 1)
             return xmp?.gyroConfig
@@ -980,6 +998,87 @@ struct PhotoDetailView: View {
             guard !adj.isVideo else { continue }
             let bm = adj.resolveBookmarkData(from: Array(folders))
             ImagePreloadCache.prefetch(path: adj.filePath, bookmarkData: bm)
+        }
+    }
+}
+
+// MARK: - Filmstrip
+
+/// Detail view 底部的相鄰照片預覽列（非全螢幕時顯示）：
+/// 目前項目高亮置中，其餘半透明，點擊跳轉。
+private struct FilmstripView: View {
+    let items: [PhotoItem]
+    let currentPath: String
+    let folders: [ScannedFolder]
+    var onSelect: (PhotoItem) -> Void
+
+    var body: some View {
+        GeometryReader { geo in
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: 8) {
+                        ForEach(items) { item in
+                            FilmstripThumb(
+                                item: item,
+                                isCurrent: item.filePath == currentPath,
+                                bookmarkData: item.resolveBookmarkData(from: folders)
+                            )
+                            .id(item.filePath)
+                            .onTapGesture { onSelect(item) }
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                    .padding(.vertical, 8)
+                    // 項目不滿一排時整列置中
+                    .frame(minWidth: geo.size.width)
+                }
+                .onAppear {
+                    // 延到下一個 runloop：LazyHStack 需先完成佈局 scrollTo 才可靠
+                    DispatchQueue.main.async {
+                        proxy.scrollTo(currentPath, anchor: .center)
+                    }
+                }
+                .onChange(of: currentPath) { _, path in
+                    withAnimation(.easeInOut(duration: 0.2)) {
+                        proxy.scrollTo(path, anchor: .center)
+                    }
+                }
+            }
+        }
+        .frame(height: 60)
+        .background(.black.opacity(0.9))
+    }
+}
+
+private struct FilmstripThumb: View {
+    let item: PhotoItem
+    let isCurrent: Bool
+    let bookmarkData: Data?
+    @State private var thumbnail: NSImage?
+
+    var body: some View {
+        Group {
+            if let thumbnail {
+                // HDR-aware：HLG 縮圖需要 EDR 路徑，SwiftUI Image 會壓暗
+                HDRThumbnailImageView(image: thumbnail, video: item.isVideo)
+            } else {
+                Rectangle().fill(.quaternary)
+            }
+        }
+        .frame(width: 60, height: 44)
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay(
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(isCurrent ? Color.accentColor : .clear, lineWidth: 2)
+        )
+        .opacity(isCurrent ? 1.0 : 0.6)
+        .contentShape(RoundedRectangle(cornerRadius: 6))
+        .task(id: item.filePath) {
+            if let cached = ThumbnailService.shared.cachedThumbnail(for: item.filePath) {
+                thumbnail = cached
+            } else {
+                thumbnail = await ThumbnailService.shared.thumbnail(for: item.filePath, bookmarkData: bookmarkData)
+            }
         }
     }
 }

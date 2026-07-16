@@ -260,14 +260,20 @@ enum ImagePreloadCache {
         if CGImageSourceCopyAuxiliaryDataInfoAtIndex(source, 0, kCGImageAuxiliaryDataTypeHDRGainMap) != nil {
             return .gainMap
         }
+        let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
         // 2. Gain Map via EXIF CustomRendered = 3 (older iPhone)
-        if let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
-           let exif = props[kCGImagePropertyExifDictionary] as? [CFString: Any],
+        if let exif = props?[kCGImagePropertyExifDictionary] as? [CFString: Any],
            exif[kCGImagePropertyExifCustomRendered] as? Int == 3 {
             return .gainMap
         }
-        // 3. HLG: color space uses ITU-R 2100 transfer function
-        // 用 8×8 縮圖取代完整解析度圖像（colorspace 會被保留，記憶體從 ~200MB 降為幾百 bytes）
+        // 3. HLG/PQ: ICC profile 名稱含 BT.2100（如「Rec. ITU-R BT.2100 HLG」）。
+        // 只讀 header，免解碼像素；之前用 8×8 縮圖 + FromImageAlways 判斷會
+        // 強制解碼整張主圖（JPEG/HEIC/RAW 每張 ~120ms），grid 大量縮圖時
+        // 是最大的 CPU 熱點（Time Profiler 實測佔 25%）
+        if let profile = props?[kCGImagePropertyProfileName] as? String {
+            return (profile.contains("2100") || profile.contains("HLG")) ? .hlg : nil
+        }
+        // 4. 沒有 profile 名稱才退回縮圖解碼，從 colorspace 判斷
         let tinyOpts: [CFString: Any] = [
             kCGImageSourceThumbnailMaxPixelSize: 8,
             kCGImageSourceCreateThumbnailFromImageAlways: true,

@@ -83,16 +83,15 @@ struct SearchResultsView: View {
             var seenFolderPaths = Set<String>()
 
             for folderInfo in folderInfos {
-                guard let bm = folderInfo.bookmarkData,
-                      let rootURL = try? BookmarkService.resolveBookmark(bm) else { continue }
-                let started = rootURL.startAccessingSecurityScopedResource()
-                defer { if started { rootURL.stopAccessingSecurityScopedResource() } }
-
-                walkDirectory(url: URL(fileURLWithPath: folderInfo.path),
-                              lower: lower,
-                              photos: &photos,
-                              folderMatches: &folderMatches,
-                              seenFolderPaths: &seenFolderPaths)
+                // bookmark 失效時退回直接路徑走訪（app 未沙盒化）——
+                // 原本 guard continue 會讓該資料夾完全搜不到
+                BookmarkService.withScopeIfAvailable(folderInfo.bookmarkData) {
+                    walkDirectory(url: URL(fileURLWithPath: folderInfo.path),
+                                  lower: lower,
+                                  photos: &photos,
+                                  folderMatches: &folderMatches,
+                                  seenFolderPaths: &seenFolderPaths)
+                }
             }
             photos = Array(photos.prefix(200)).sorted { $0.dateTaken > $1.dateTaken }
             return (photos, folderMatches)

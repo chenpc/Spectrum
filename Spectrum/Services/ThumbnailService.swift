@@ -35,6 +35,19 @@ actor ThumbnailService {
     private nonisolated(unsafe) let memoryCache = NSCache<NSString, NSImage>()
     nonisolated let thumbnailSize: Int = 400
 
+    /// 縮圖生成時順便記錄的 HDR 旗標（path → isHDR），供 grid 顯示 HDR 徽章。
+    /// 只存 Bool，體積極小，不隨縮圖 cache 清除。
+    private nonisolated let hdrFlags = OSAllocatedUnfairLock<[String: Bool]>(initialState: [:])
+
+    /// 該檔案是否為 HDR 內容。只有生成過縮圖的檔案才有答案；未知回傳 false。
+    nonisolated func isHDR(for filePath: String) -> Bool {
+        hdrFlags.withLock { $0[filePath] ?? false }
+    }
+
+    private nonisolated func setHDRFlag(_ isHDR: Bool, for url: URL) {
+        hdrFlags.withLock { $0[url.path] = isHDR }
+    }
+
     // 影片縮圖：AVURLAsset + CoreMedia，限制 2 個並行
     private let videoSemaphore = ThumbnailSemaphore(count: 2)
 
@@ -140,10 +153,12 @@ actor ThumbnailService {
         if url.pathExtension.lowercased() == "svg" { return generateSVGThumbnail(from: url) }
         // HLG 照片不能走 QuickLook：它輸出 SDR 縮圖，HLG→SDR tone mapping 會壓暗。
         // 改用 ImageIO 產生保留 HLG colorspace 的縮圖，顯示端以 EDR 呈現。
-        if let source = CGImageSourceCreateWithURL(url as CFURL, nil),
-           ImagePreloadCache.detectHDR(source: source) == .hlg,
-           let img = generateHLGThumbnail(source: source, url: url) {
-            return img
+        if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
+            let hdrFormat = ImagePreloadCache.detectHDR(source: source)
+            setHDRFlag(hdrFormat != nil, for: url)
+            if hdrFormat == .hlg, let img = generateHLGThumbnail(source: source, url: url) {
+                return img
+            }
         }
         return await generateViaQL(from: url)
     }
@@ -220,6 +235,9 @@ actor ThumbnailService {
         do {
             let result = try await generator.image(at: .zero)
             let cgImage = result.image
+            // .matchSource 保留來源 colorspace：ITU-R 2100 傳輸函數（HLG/PQ，
+            // 含 Dolby Vision）即為 HDR 影片
+            setHDRFlag(cgImage.colorSpace.map(CGColorSpaceUsesITUR_2100TF) ?? false, for: url)
             Log.debug(Log.thumbnail, "[thumb] video \(url.lastPathComponent): \(fmtDur(ContinuousClock.now - t0))")
             return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
         } catch {

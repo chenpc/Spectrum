@@ -20,6 +20,13 @@ final class AppLaunchArgs: Sendable {
     /// Folder to add automatically after the app finishes initialising.
     let addFolder: URL?
 
+    /// Import source folder to open in the import panel automatically
+    /// (e2e 測試用，繞過 NSOpenPanel)。
+    let importSource: URL?
+
+    /// 每複製一個檔案的人工延遲（毫秒）— e2e 測試用，讓進度條可觀測。
+    let importThrottleMs: Int?
+
     /// When true, `Log.info/debug` also writes to stdout for easy shell capture.
     let logToStdout: Bool
 
@@ -27,6 +34,8 @@ final class AppLaunchArgs: Sendable {
         let args = CommandLine.arguments
         var userDir: URL? = nil
         var folder: URL? = nil
+        var importSource: URL? = nil
+        var importThrottleMs: Int? = nil
         var stdout = false
 
         var i = 1
@@ -49,6 +58,15 @@ final class AppLaunchArgs: Sendable {
                     folder = URL(fileURLWithPath: (args[i] as NSString).expandingTildeInPath,
                                  isDirectory: true)
                 }
+            } else if arg == "--import-source" {
+                i += 1
+                if i < args.count {
+                    importSource = URL(fileURLWithPath: (args[i] as NSString).expandingTildeInPath,
+                                       isDirectory: true)
+                }
+            } else if arg == "--import-throttle-ms" {
+                i += 1
+                if i < args.count { importThrottleMs = Int(args[i]) }
             } else if arg == "--log-stdout" {
                 stdout = true
             }
@@ -57,6 +75,8 @@ final class AppLaunchArgs: Sendable {
 
         self.userDir = userDir
         self.addFolder = folder
+        self.importSource = importSource
+        self.importThrottleMs = importThrottleMs
         self.logToStdout = stdout
     }
 }

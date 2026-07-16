@@ -185,4 +185,149 @@ final class ImportFlowUITests: XCTestCase {
         }
         XCTAssertTrue(app.windows.count >= 1, "App should still be running at end of test")
     }
+
+    // MARK: - 4/5. 拖曳日期群組到 grid（e2e：檔案落地 + 進度條）
+
+    /// Import 拖放測試環境：
+    /// - Library：一個可寫的暫存資料夾，內含子資料夾 `Sub`（有一張照片 → 會渲染 subfolder tile）
+    /// - Import 來源：`Card` 內含 `fileCount` 份同日期照片（同一個 date group）
+    private func setupDragEnvironment(fileCount: Int) throws -> (lib: URL, src: URL) {
+        let fm = FileManager.default
+        let base = fm.temporaryDirectory
+            .appendingPathComponent("spectrum-dragdrop-\(UUID().uuidString)")
+        let lib = base.appendingPathComponent("Library")
+        let sub = lib.appendingPathComponent("Sub")
+        try fm.createDirectory(at: sub, withIntermediateDirectories: true)
+        let photo = fixturesDir.appendingPathComponent("photo_01.jpg")
+        try fm.copyItem(at: photo, to: sub.appendingPathComponent("cover.jpg"))
+
+        let src = base.appendingPathComponent("Card")
+        try fm.createDirectory(at: src, withIntermediateDirectories: true)
+        // Dummy 內容即可（匯入只做檔案複製）：檔案數量要多，匯入才會慢到
+        // 足以觀測進度條——APFS clone 複製單檔近乎瞬間，靠的是每檔的排程開銷
+        let data = Data(repeating: 0xAB, count: 1024)
+        for i in 0..<fileCount {
+            try data.write(to: src.appendingPathComponent(String(format: "IMG_%04d.jpg", i)))
+        }
+        return (lib, src)
+    }
+
+    /// 以 --import-source 重新啟動 app（import panel 自動開啟並掃描來源）。
+    private func relaunchForDrag(lib: URL, src: URL) {
+        app.terminate()
+        app = XCUIApplication()
+        let userDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("spectrum-import-\(UUID().uuidString)")
+        try? FileManager.default.createDirectory(at: userDir, withIntermediateDirectories: true)
+        app.launchArguments = [
+            "--userdir", userDir.path,
+            "--add-folder", lib.path,
+            "--import-source", src.path,
+            // 每檔 2ms 人工延遲：1500 檔 → 匯入至少 3 秒，進度條可觀測
+            "--import-throttle-ms", "2",
+        ]
+        app.launch()
+    }
+
+    /// Import panel 裡的日期群組 header（identifier: import.group.<yyyyMMdd>）。
+    private var dateGroupHeader: XCUIElement {
+        app.descendants(matching: .any).matching(
+            NSPredicate(format: "identifier BEGINSWITH 'import.group.'")
+        ).firstMatch
+    }
+
+    /// 執行拖放後驗證：進度條出現過、fileCount 個檔案複製到 lib/<group>/、無錯誤 alert。
+    private func assertGroupImported(into lib: URL, fileCount: Int,
+                                     sawProgress: Bool, file: StaticString = #filePath,
+                                     line: UInt = #line) {
+        let fm = FileManager.default
+        var copied = 0
+        var groupDir: URL?
+        let deadline = Date().addingTimeInterval(60)
+        while Date() < deadline {
+            let subdirs = (try? fm.contentsOfDirectory(
+                at: lib, includingPropertiesForKeys: [.isDirectoryKey],
+                options: [.skipsHiddenFiles]
+            )) ?? []
+            groupDir = subdirs.first {
+                $0.hasDirectoryPath && $0.lastPathComponent != "Sub"
+            }
+            if let groupDir {
+                copied = ((try? fm.contentsOfDirectory(atPath: groupDir.path)) ?? []).count
+                if copied == fileCount { break }
+            }
+            Thread.sleep(forTimeInterval: 0.2)
+        }
+        XCTAssertNotNil(groupDir, "date-group 資料夾應建立在目前瀏覽的資料夾下", file: file, line: line)
+        XCTAssertEqual(copied, fileCount, "所有檔案都應複製到 \(groupDir?.lastPathComponent ?? "?")/",
+                       file: file, line: line)
+        XCTAssertTrue(sawProgress, "匯入期間應顯示進度條（import.progress）", file: file, line: line)
+        // 不應出現錯誤 alert
+        XCTAssertFalse(app.dialogs.firstMatch.exists, "匯入不應出現錯誤 alert", file: file, line: line)
+        // Sub 子資料夾不應被寫入（只有原本的 cover.jpg）
+        let subContents = (try? fm.contentsOfDirectory(atPath: lib.appendingPathComponent("Sub").path)) ?? []
+        XCTAssertEqual(subContents.sorted(), ["cover.jpg"], "Sub 子資料夾內容不應改變", file: file, line: line)
+    }
+
+    /// 從 group header 拖到指定目標後，輪詢進度條是否出現過。
+    /// 拖曳前先等掃描完成（群組數量到達 expectedCount）——掃描是串流式的，
+    /// 太早拖曳只會匯入當下已掃到的部分項目。
+    private func dragGroupAndWatchProgress(to target: XCUICoordinate,
+                                           expectedCount: Int) -> Bool {
+        let header = dateGroupHeader
+        XCTAssertTrue(header.waitForExistence(timeout: 15), "Import panel 應出現日期群組")
+        // SwiftUI Text("\(Int)") 會套用千分位（"1,500"），且值在 value 而非 label
+        let formatted = NumberFormatter.localizedString(
+            from: NSNumber(value: expectedCount), number: .decimal)
+        let candidates = [String(expectedCount), formatted]
+        let countText = app.staticTexts.matching(NSPredicate(
+            format: "label IN %@ OR value IN %@", candidates, candidates
+        )).firstMatch
+        XCTAssertTrue(countText.waitForExistence(timeout: 60),
+                      "掃描應完成（群組數量 \(expectedCount)）")
+        let from = header.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        from.click(forDuration: 0.7, thenDragTo: target)
+
+        // 複製在背景進行；緊接著輪詢進度列（footer row 或其中的 Copying 文字）
+        let progressRow = app.descendants(matching: .any)
+            .matching(identifier: "import.progress").firstMatch
+        let copyingText = app.staticTexts.matching(
+            NSPredicate(format: "label CONTAINS 'Copying'")
+        ).firstMatch
+        let deadline = Date().addingTimeInterval(15)
+        while Date() < deadline {
+            if progressRow.exists || copyingText.exists { return true }
+            Thread.sleep(forTimeInterval: 0.1)
+        }
+        return false
+    }
+
+    /// 拖到 grid 空白處 → 匯入目前瀏覽中的資料夾。
+    func test04_DragGroupToGridBlankImportsIntoCurrentFolder() throws {
+        let fileCount = 1500
+        let (lib, src) = try setupDragEnvironment(fileCount: fileCount)
+        relaunchForDrag(lib: lib, src: src)
+        waitForGrid()
+
+        // grid 下緣（tile 之外的空白區域）
+        let target = grid.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.9))
+        let sawProgress = dragGroupAndWatchProgress(to: target, expectedCount: fileCount)
+        assertGroupImported(into: lib, fileCount: fileCount, sawProgress: sawProgress)
+    }
+
+    /// 拖到 subfolder tile 上 → 仍應匯入目前瀏覽中的資料夾（與空白處一致），
+    /// 不應匯入該子資料夾、不應出錯。
+    func test05_DragGroupOntoSubfolderTileImportsIntoCurrentFolder() throws {
+        let fileCount = 1500
+        let (lib, src) = try setupDragEnvironment(fileCount: fileCount)
+        relaunchForDrag(lib: lib, src: src)
+        waitForGrid()
+
+        // Subfolder tile 以名稱文字定位
+        let subTile = grid.staticTexts["Sub"]
+        XCTAssertTrue(subTile.waitForExistence(timeout: 15), "Subfolder tile 應出現")
+        let target = subTile.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5))
+        let sawProgress = dragGroupAndWatchProgress(to: target, expectedCount: fileCount)
+        assertGroupImported(into: lib, fileCount: fileCount, sawProgress: sawProgress)
+    }
 }

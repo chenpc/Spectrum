@@ -170,15 +170,22 @@ enum FolderReader {
             options: [.skipsHiddenFiles]
         ) else { return (nil, nil) }
 
-        let sorted = contents.sorted { $0.lastPathComponent < $1.lastPathComponent }
-        for url in sorted where url.isImageFile {
-            let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            return (url.path, date)
+        // O(n) 找字典序最小者，取代整份排序：排序比較器每次呼叫
+        // URL.lastPathComponent 都要 CFURL→String bridge，大目錄下成本顯著
+        var bestImage: (name: String, url: URL)?
+        var bestMedia: (name: String, url: URL)?
+        for url in contents {
+            let name = url.lastPathComponent
+            if url.isImageFile {
+                if bestImage == nil || name < bestImage!.name { bestImage = (name, url) }
+            } else if url.isMediaFile {
+                if bestMedia == nil || name < bestMedia!.name { bestMedia = (name, url) }
+            }
         }
         // Fallback: any media file
-        for url in sorted where url.isMediaFile {
-            let date = try? url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
-            return (url.path, date)
+        if let pick = bestImage ?? bestMedia {
+            let date = try? pick.url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+            return (pick.url.path, date)
         }
         return (nil, nil)
     }
