@@ -156,6 +156,10 @@ actor ThumbnailService {
         if let source = CGImageSourceCreateWithURL(url as CFURL, nil) {
             let hdrFormat = ImagePreloadCache.detectHDR(source: source)
             setHDRFlag(hdrFormat != nil, for: url)
+            // 只有 HLG 走 HDR 縮圖：Sony HIF 內建 HLG 內嵌縮圖，成本低。
+            // Gain map（iPhone HEIC）刻意不走：DecodeToHDR 需解碼原圖套用
+            // gain map（實測內嵌路徑也要 ~125ms 且在 actor 上串行），grid
+            // 縮圖退回 QuickLook SDR，detail view 仍是完整 HDR
             if hdrFormat == .hlg, let img = generateHLGThumbnail(source: source, url: url) {
                 return img
             }

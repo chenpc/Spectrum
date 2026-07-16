@@ -1225,3 +1225,23 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 **根因／做法：** App 未沙盒化，security scope 非硬需求。新增 `BookmarkService.withScopeIfAvailable(_:body:)`（sync + async）：bookmark 能解析就帶 scope 執行，失效／缺失時直接執行。修正的中止點：PhotoGridView 的 trash（單檔＋子資料夾）、permanent delete、rename、createNewFolder、paste（檔案＋資料夾，src/dst scope 各自獨立容錯）；SearchResultsView（失效資料夾完全搜不到）；PhotoDetailView 的 writeXMPSidecar（旋轉／裁切／gyro 無聲存不進 sidecar）與 readGyroConfigFromXMP；FolderScanner 的 shallow scan、deep scan、fillMissingDurations（失效時整個資料夾掃不出東西）。原本已容錯的（ThumbnailService、ImagePreloadCache、FolderReader.withScope、影片／LivePhoto 播放、SidebarView 直接路徑 fallback、shareFile）維持不變。
 
 **修改的檔案：** Spectrum/Services/BookmarkService.swift、Spectrum/Views/Grid/PhotoGridView.swift、Spectrum/Views/SearchResultsView.swift、Spectrum/Views/Detail/PhotoDetailView.swift、Spectrum/Services/FolderScanner.swift
+
+## 2026-07-16 — iPhone gain-map HEIC 縮圖亮度不足：DecodeToHDR 縮圖
+
+**類型：** Bug Fix
+
+**問題：** iPhone 拍的 HEIC（gain map HDR）在 grid 縮圖／preview 階段亮度不足——縮圖走 QuickLook 只輸出 SDR base image，gain map 資訊不可逆地丟失。
+
+**根因／做法：** `CGImageSourceCreateThumbnailAtIndex` 支援 `kCGImageSourceDecodeRequest = kCGImageSourceDecodeToHDR`（實測 IMG_5002.HEIC：輸出 Display P3 + PQ「Adaptive Gain Curve」colorspace、contentHeadroom 4.95 保留、內嵌縮圖路徑 125ms）。`generateHLGThumbnail` 泛化為 `generateHDRThumbnail(format:)`，gain map 時加 DecodeToHDR。顯示端 `AspectFillImageView` 的 toneMapMode 改為三分法：影片 `.automatic`（匹配播放）、HLG 照片 `.never`（scene-referred，colorspace 名稱含 HLG）、PQ 輸出（gain map）`.automatic`（display-referred，依 contentHeadroom 對映）。
+
+**修改的檔案：** Spectrum/Services/ThumbnailService.swift、Spectrum/Views/Grid/PhotoThumbnailView.swift
+
+## 2026-07-17 — 撤回 gain-map HDR 縮圖（速度過慢）
+
+**類型：** Revert（設計決策）
+
+**問題：** 前一日的 gain-map DecodeToHDR 縮圖讓取縮圖明顯變慢。
+
+**根因／做法：** 實測 `kCGImageSourceDecodeToHDR` 即使走內嵌縮圖路徑也要 ~125ms（與全圖解碼同量級——ImageIO 需解碼原圖套用 gain map），且 ImageIO 縮圖在 ThumbnailService actor 上串行執行，不像 QuickLook 有 daemon 平行處理。與 HLG 本質不同：Sony HIF 內建的內嵌縮圖「本身就是 HLG」，直接可用；gain map 沒有 HDR 版內嵌縮圖。決策：gain-map 照片 grid 縮圖退回 QuickLook SDR（detail view 仍是完整 HDR、HDR 徽章仍顯示），顯示端的三分法 toneMapMode（影片 .automatic／HLG .never／PQ .automatic）保留。
+
+**修改的檔案：** Spectrum/Services/ThumbnailService.swift

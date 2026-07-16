@@ -45,7 +45,12 @@ class AspectFillImageView: NSView {
             usingHLG = true
             hlgView.layer?.contents = cg
             if #available(macOS 15.0, *) {
-                hlgView.layer?.toneMapMode = isVideoContent ? .automatic : .never
+                // 三分法：影片影格與播放路徑一致用 .automatic；HLG 照片是
+                // scene-referred 用 .never（.automatic 會壓暗）；gain map 照片
+                // 經 DecodeToHDR 輸出 PQ（display-referred，colorspace 無 HLG
+                // 名稱），需要 .automatic 依 contentHeadroom 對映
+                let isHLGSpace = (cs.name as String?)?.contains("HLG") ?? false
+                hlgView.layer?.toneMapMode = (isVideoContent || !isHLGSpace) ? .automatic : .never
             }
             imageView.image = nil
             enableEDR()
