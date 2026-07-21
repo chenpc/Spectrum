@@ -308,9 +308,10 @@ struct PhotoDetailView: View {
     private var isTransposed: Bool { activeRotation == 90 || activeRotation == 270 }
 
     /// EXIF orientation number → display rotation degrees.
-    /// For HLG images the raw CGImage is in landscape sensor orientation;
-    /// these rotations bring portrait images to the correct visual orientation.
+    /// Only applies to HLG images where the raw CGImage is in landscape
+    /// sensor orientation; non-HLG images have EXIF already applied by NSImage.
     private var exifRotationDegrees: Double {
+        guard hlgCGImage != nil && showEDR && hdrFormat == .hlg else { return 0 }
         switch photo.orientation {
         case 6:  return 90     // 90° CW
         case 8:  return -90    // 90° CCW
@@ -324,7 +325,8 @@ struct PhotoDetailView: View {
         GeometryReader { geometry in
             if let image {
                 let totalRotation = activeRotation + Int(exifRotationDegrees)
-                let isTransposedTotal = totalRotation == 90 || totalRotation == 270
+                let normalizedRotation = ((totalRotation % 360) + 360) % 360
+                let isTransposedTotal = normalizedRotation == 90 || normalizedRotation == 270
                 // HLG images: use raw CGImage dimensions for frame (not NSImage size
                 // which has EXIF-oriented dimensions). The raw landscape CGImage fills
                 // the landscape frame completely; SwiftUI .rotationEffect handles the
@@ -375,6 +377,7 @@ struct PhotoDetailView: View {
                         )
                     }
                     .scrollDisabled(isCropMode)
+                    .scrollIndicators(.hidden)
                     .overlay {
                         if livePhotoPlaying, let movPath = photo.livePhotoMovPath {
                             LivePhotoPlayerView(
@@ -394,12 +397,13 @@ struct PhotoDetailView: View {
                     if isCropMode {
                         CropOverlayView(
                             cropRect: $editingCropRect,
-                            imagePixelWidth: isTransposed ? photo.pixelHeight : photo.pixelWidth,
-                            imagePixelHeight: isTransposed ? photo.pixelWidth : photo.pixelHeight,
+                            imagePixelWidth: isTransposedTotal ? photo.pixelHeight : photo.pixelWidth,
+                            imagePixelHeight: isTransposedTotal ? photo.pixelWidth : photo.pixelHeight,
                             onApply: applyCrop,
                             onCancel: cancelCrop
                         )
                         .frame(width: fullW, height: fullH)
+                        .animation(nil, value: isCropMode)
                         .transition(.opacity)
                     }
                 }
@@ -464,7 +468,6 @@ struct PhotoDetailView: View {
     }
 
     // MARK: - Crop actions
-
     private func enterCropMode() {
         if let existing = photo.compositeEdit.crop {
             editingCropRect = CGRect(
