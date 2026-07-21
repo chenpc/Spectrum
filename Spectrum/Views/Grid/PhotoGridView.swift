@@ -179,7 +179,7 @@ struct PhotoGridView: View {
             }
             .contextMenu { gridContextMenu }
             .overlay { loadingOverlay }
-            .task(id: "\(effectivePath ?? "")_\(folderChangeToken)") {
+            .task(id: "\(effectivePath ?? "")_\(folderChangeToken)_\(viewModel.editGeneration)") {
                 await loadCurrentLevel()
             }
             .onAppear {
@@ -442,7 +442,17 @@ struct PhotoGridView: View {
         guard !Task.isCancelled else { return }
 
         allItems = items
-        displayPhotos = items.filter { !$0.isLivePhotoMov }
+        var merged = items.filter { !$0.isLivePhotoMov }
+        // writeXMPSidecar is async (Task.detached); the grid may reload before
+        // the file is written.  Merge any in-memory edits still held by flatPhotos
+        // so rotate / crop / flip / restore are reflected immediately in thumbnails.
+        for (index, item) in merged.enumerated() {
+            if let flatIdx = viewModel.flatPhotos.firstIndex(where: { $0.filePath == item.filePath }),
+               viewModel.flatPhotos[flatIdx].editOps != item.editOps {
+                merged[index] = viewModel.flatPhotos[flatIdx]
+            }
+        }
+        displayPhotos = merged
         scannedSubfolders = subs
             .map { SubfolderInfo(name: $0.name, path: $0.path, coverPath: $0.coverPath, coverDate: $0.coverDate) }
             .sorted { subfoldersAreInOrder($0, $1) }

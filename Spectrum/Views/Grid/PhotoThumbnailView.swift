@@ -142,15 +142,21 @@ struct PhotoThumbnailView: View {
     private var displayThumbnail: NSImage? {
         guard let thumbnail else { return nil }
         let composite = item.compositeEdit
-        guard composite.rotation != 0 || composite.flipH || composite.crop != nil else { return thumbnail }
-        guard var cg = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return thumbnail }
-        if composite.flipH, let flipped = flipCGImage(cg, horizontal: true) { cg = flipped }
-        if composite.rotation != 0, let rotated = rotateCGImage(cg, degrees: composite.rotation) { cg = rotated }
+        guard composite.crop != nil else { return thumbnail }
+        guard let cg = thumbnail.cgImage(forProposedRect: nil, context: nil, hints: nil) else { return thumbnail }
         if let crop = composite.crop {
             let pixelRect = crop.pixelRect(imageWidth: cg.width, imageHeight: cg.height)
-            if let cropped = cg.cropping(to: pixelRect) { cg = cropped }
+            if let cropped = cg.cropping(to: pixelRect) { return NSImage(cgImage: cropped, size: NSSize(width: cropped.width, height: cropped.height)) }
         }
-        return NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height))
+        return thumbnail
+    }
+
+    private var thumbnailRotation: Double {
+        Double(item.compositeEdit.rotation)
+    }
+
+    private var thumbnailFlipH: Bool {
+        item.compositeEdit.flipH
     }
 
     var body: some View {
@@ -159,6 +165,8 @@ struct PhotoThumbnailView: View {
                 HDRThumbnailImageView(image: displayThumbnail, video: item.isVideo)
                     .frame(minWidth: 150, minHeight: 150)
                     .frame(height: 150)
+                    .scaleEffect(x: thumbnailFlipH ? -1 : 1, y: 1)
+                    .rotationEffect(.degrees(thumbnailRotation))
                     .clipped()
             } else {
                 Rectangle()

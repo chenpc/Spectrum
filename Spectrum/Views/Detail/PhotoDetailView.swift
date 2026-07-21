@@ -307,24 +307,45 @@ struct PhotoDetailView: View {
 
     private var isTransposed: Bool { activeRotation == 90 || activeRotation == 270 }
 
+    /// EXIF orientation number → display rotation degrees.
+    /// For HLG images the raw CGImage is in landscape sensor orientation;
+    /// these rotations bring portrait images to the correct visual orientation.
+    private var exifRotationDegrees: Double {
+        switch photo.orientation {
+        case 6:  return 90     // 90° CW
+        case 8:  return -90    // 90° CCW
+        case 3:  return 180    // 180°
+        default: return 0
+        }
+    }
+
     @ViewBuilder
     private var imageContent: some View {
         GeometryReader { geometry in
             if let image {
-                let imageSize = image.size
-                // Rotated dimensions
-                let rotatedW = isTransposed ? imageSize.height : imageSize.width
-                let rotatedH = isTransposed ? imageSize.width : imageSize.height
-                let cropW = rotatedW * activeCrop.width
-                let cropH = rotatedH * activeCrop.height
+                let totalRotation = activeRotation + Int(exifRotationDegrees)
+                let isTransposedTotal = totalRotation == 90 || totalRotation == 270
+                // HLG images: use raw CGImage dimensions for frame (not NSImage size
+                // which has EXIF-oriented dimensions). The raw landscape CGImage fills
+                // the landscape frame completely; SwiftUI .rotationEffect handles the
+                // visual orientation without losing screen real estate.
+                let isHLG = hlgCGImage != nil && showEDR && hdrFormat == .hlg
+                let rawImageSize: CGSize = isHLG
+                    ? CGSize(width: hlgCGImage!.width, height: hlgCGImage!.height)
+                    : image.size
+                let orientedImageSize = isTransposedTotal
+                    ? CGSize(width: rawImageSize.height, height: rawImageSize.width)
+                    : rawImageSize
+                let cropW = orientedImageSize.width * activeCrop.width
+                let cropH = orientedImageSize.height * activeCrop.height
                 let fitScale = min(geometry.size.width / cropW, geometry.size.height / cropH)
                 let displayZoom: CGFloat = isCropMode ? 1.0 : zoomLevel
-                // Original (pre-rotation) dimensions at fitScale
-                let origW = imageSize.width * fitScale * displayZoom
-                let origH = imageSize.height * fitScale * displayZoom
-                // Rotated dimensions at fitScale
-                let fullW = rotatedW * fitScale * displayZoom
-                let fullH = rotatedH * fitScale * displayZoom
+                // Pre-rotation dimensions (raw CGImage aspect)
+                let origW = rawImageSize.width * fitScale * displayZoom
+                let origH = rawImageSize.height * fitScale * displayZoom
+                // Post-rotation dimensions (oriented aspect)
+                let fullW = orientedImageSize.width * fitScale * displayZoom
+                let fullH = orientedImageSize.height * fitScale * displayZoom
                 let cropDisplayW = cropW * fitScale * displayZoom
                 let cropDisplayH = cropH * fitScale * displayZoom
 
@@ -339,7 +360,7 @@ struct PhotoDetailView: View {
                         }
                         .frame(width: origW, height: origH)
                         .scaleEffect(x: activeFlipH ? -1 : 1, y: 1)
-                        .rotationEffect(.degrees(Double(activeRotation)))
+                        .rotationEffect(.degrees(Double(activeRotation) + exifRotationDegrees))
                         .frame(width: fullW, height: fullH)
                         .offset(
                             x: -activeCrop.minX * fullW,
@@ -956,9 +977,9 @@ struct PhotoDetailView: View {
     private func loadFullImage() async {
         zoomLevel = 1.0
         showEDR = true
-        isHDR = false
-        hdrFormat = nil
-        hlgCGImage = nil
+        // Don't clear hdrFormat/hlgCGImage — keep the previous image visible
+        // (including correct HLG rendering) until the new image loads.
+        // Clearing hdrFormat causes fallback to NSImageView which renders HLG as black.
 
         let c = photo.compositeEdit
         activeRotation = c.rotation
@@ -983,6 +1004,11 @@ struct PhotoDetailView: View {
         hlgCGImage = entry.hlgCGImage
         hdrFormat = entry.hdrFormat
         isHDR = entry.hdrFormat != nil
+
+        // Populate EXIF metadata (pixelWidth/pixelHeight, camera info, etc.)
+        // that FolderReader.makeItem() skips for performance.
+        let exif = EXIFService.readEXIF(from: URL(fileURLWithPath: path))
+        photo.applyEXIF(exif)
 
         prefetchAdjacentImages()
     }

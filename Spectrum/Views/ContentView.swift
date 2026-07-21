@@ -404,15 +404,21 @@ struct ContentView: View {
 
     private func photoDetail(showInspector: Binding<Bool>) -> some View {
         PhotoDetailView(
-            photo: Binding(
-                // Fallback to lastDetailPhoto when detailPhoto briefly becomes nil
-                // (user exited detail view while an async Task is still in flight).
-                get: { detailPhoto ?? lastDetailPhoto! },
-                set: {
-                    detailPhoto = $0
-                    lastDetailPhoto = $0
+        photo: Binding(
+            // Fallback to lastDetailPhoto when detailPhoto briefly becomes nil
+            // (user exited detail view while an async Task is still in flight).
+            get: { detailPhoto ?? lastDetailPhoto! },
+            set: { newValue in
+                detailPhoto = newValue
+                lastDetailPhoto = newValue
+                // Sync edits back to flatPhotos so navigatePhoto() returns the
+                // latest state when the user switches to another photo and back.
+                if let idx = viewModel.flatPhotos.firstIndex(where: { $0.filePath == newValue.filePath }) {
+                    viewModel.flatPhotos[idx] = newValue
                 }
-            ),
+                viewModel.editGeneration += 1
+            }
+        ),
             showInspector: showInspector,
             isHDR: $isPhotoHDR,
             viewModel: viewModel

@@ -229,10 +229,24 @@ enum ImagePreloadCache {
             if url.isCameraRawFile {
                 img = loadCameraRaw(source: source, path: path)
             } else if hdrFormat == .hlg {
-                // Load raw CGImage for direct CALayer rendering (mpv-style explicit colorspace)
-                let cgImg = CGImageSourceCreateImageAtIndex(source, 0, nil)
-                hlgCGImage = cgImg
-                img = cgImg.map { NSImage(cgImage: $0, size: NSSize(width: $0.width, height: $0.height)) }
+                // HLG images: keep the raw CGImage as-is (preserve bpc=10 + HLG color space).
+                // Orientation is handled at the CALayer level in HLGNSView to avoid
+                // pixel-level rotation which drops bit depth via CIContext/CGContext.
+                hlgCGImage = CGImageSourceCreateImageAtIndex(source, 0, nil)
+                // Use oriented pixel dimensions for the NSImage size so the SwiftUI
+                // frame calculation gets the correct aspect ratio. Orientation 6/8
+                // swaps width↔height; others keep raw dimensions.
+                let rawW = hlgCGImage.map { CGFloat($0.width) } ?? 0
+                let rawH = hlgCGImage.map { CGFloat($0.height) } ?? 0
+                let orientedW: CGFloat
+                let orientedH: CGFloat
+                if let oriInt = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])?[kCGImagePropertyOrientation] as? Int,
+                   oriInt == 6 || oriInt == 8 {
+                    orientedW = rawH; orientedH = rawW
+                } else {
+                    orientedW = rawW; orientedH = rawH
+                }
+                img = hlgCGImage.map { NSImage(cgImage: $0, size: NSSize(width: orientedW, height: orientedH)) }
             } else {
                 img = NSImage(contentsOf: url)
             }
