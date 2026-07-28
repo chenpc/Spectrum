@@ -392,6 +392,31 @@ struct PhotoDetailView: View {
                         Button("Show in Finder") {
                             NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: photo.filePath)])
                         }
+                        if hdrFormat == .hlg, let hlgImage = hlgCGImage {
+                            Divider()
+                            Button("Export HLG as SDR JPEG…") {
+                                let save = NSSavePanel()
+                                save.title = "Export HLG as SDR JPEG"
+                                save.nameFieldStringValue = URL(fileURLWithPath: photo.filePath)
+                                    .deletingPathExtension().lastPathComponent + " (SDR).jpg"
+                                save.allowedContentTypes = [.jpeg]
+                                save.canCreateDirectories = true
+                                guard save.runModal() == .OK, let url = save.url else { return }
+                                Task.detached {
+                                    let ok = HLGExportService.exportAsJPEG(hlgCGImage: hlgImage, to: url)
+                                    await MainActor.run {
+                                        if ok {
+                                            NSWorkspace.shared.activateFileViewerSelecting([url])
+                                        } else {
+                                            let alert = NSAlert()
+                                            alert.messageText = "Export failed"
+                                            alert.informativeText = "Could not export to \(url.lastPathComponent)"
+                                            alert.runModal()
+                                        }
+                                    }
+                                }
+                            }
+                        }
                     }
 
                     if isCropMode {

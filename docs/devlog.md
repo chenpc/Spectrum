@@ -1245,3 +1245,18 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 **根因／做法：** 實測 `kCGImageSourceDecodeToHDR` 即使走內嵌縮圖路徑也要 ~125ms（與全圖解碼同量級——ImageIO 需解碼原圖套用 gain map），且 ImageIO 縮圖在 ThumbnailService actor 上串行執行，不像 QuickLook 有 daemon 平行處理。與 HLG 本質不同：Sony HIF 內建的內嵌縮圖「本身就是 HLG」，直接可用；gain map 沒有 HDR 版內嵌縮圖。決策：gain-map 照片 grid 縮圖退回 QuickLook SDR（detail view 仍是完整 HDR、HDR 徽章仍顯示），顯示端的三分法 toneMapMode（影片 .automatic／HLG .never／PQ .automatic）保留。
 
 **修改的檔案：** Spectrum/Services/ThumbnailService.swift
+
+## 2026-07-29 — HLG→SDR JPG Export 功能（CGContext + Sony LUT）
+
+**類型：** Feature
+
+**問題：** HLG 照片無法從 Spectrum 匯出為 SDR JPG。之前色調映射品質不佳（MAE 27+ vs Sony Image Edge）。
+
+**根因／做法：** 透過 pixel-level 比對 CGContext perceptual intent 輸出與 Sony Image Edge Edit 參考圖，校正出 per-channel 256-entry 1D LUT（平滑化 window=5）。LUT 在兩張不同 ZV-E1 照片上驗證：calibration MAE=3.88，cross-validation MAE=4.26（無 LUT 時 MAE 21.43）。實作 `HLGExportService`：CGContext perceptual + LUT → 8-bit sRGB → JPEG。在 PhotoDetailView context menu 加入「Export HLG as SDR JPEG…」，僅 HLG 照片顯示。
+
+**修改的檔案：**
+- Spectrum/Services/HLGExportService.swift（新增）
+- Spectrum/Views/Detail/PhotoDetailView.swift（context menu 加入匯出選項）
+- Spectrum.xcodeproj/project.pbxproj（新增檔案至 target）
+- SpectrumTests/HLGExportTests.swift（LUT 泛化驗證測試）
+
