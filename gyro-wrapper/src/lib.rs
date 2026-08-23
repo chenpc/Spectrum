@@ -421,7 +421,6 @@ pub extern "C" fn gyrocore_load(
             if cfg.smoothness_yaw   > 0.0 { stab.set_smoothing_param("smoothness_yaw",   cfg.smoothness_yaw); }
             if cfg.smoothness_roll  > 0.0 { stab.set_smoothing_param("smoothness_roll",  cfg.smoothness_roll); }
         }
-
         // ── Stabilization ────────────────────────────────────────────────────
         stab.set_fov(cfg.fov);
         stab.set_stab_enabled(true);
@@ -449,10 +448,10 @@ pub extern "C" fn gyrocore_load(
         stab.set_video_speed(cfg.video_speed, true, true, true);
 
         // ── Horizon lock ────────────────────────────────────────────────────
-        // set_horizon_lock(lock_percent, roll, lock_pitch, pitch)
+        // set_horizon_lock(lock_percent, roll, lock_pitch, pitch, automatic_lock, turn_threshold, turn_smoothing_ms, turn_multiplier, tilt_accel_limit)
         // lock_percent is 0–100 (not 0–1); lock_enabled is set internally when > 1e-6
         if cfg.horizon_lock_enabled {
-            stab.set_horizon_lock(cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll, false, 0.0);
+            stab.set_horizon_lock(cfg.horizon_lock_amount * 100.0, cfg.horizon_lock_roll, false, 0.0, false, 1.0, 0.0, 1.0, 0.0);
         }
 
         // ── Rolling shutter ──────────────────────────────────────────────────
@@ -577,7 +576,7 @@ pub extern "C" fn gyrocore_load(
             }
         }
 
-        let compute_params = ComputeParams::from_manager(&stab);
+        let mut compute_params = ComputeParams::from_manager(&stab);
         let scaled_fps = {
             let p = stab.params.read();
             p.fps * p.fps_scale.unwrap_or(1.0)
@@ -722,10 +721,11 @@ pub unsafe extern "C" fn gyrocore_get_frame(
     output:    *mut f32,
 ) -> c_int {
     if handle.is_null() || output.is_null() { return -1; }
-    let s  = &*handle;
+    let s  = &mut *(handle as *mut State);
     let fi = (frame_idx as usize).min(s.frame_count.saturating_sub(1));
 
     let ts_ms   = timestamp_at_frame(fi as i32, s.scaled_fps);
+
     let ft      = FrameTransform::at_timestamp(&s.compute_params, ts_ms, fi);
     let mat_len = ft.matrices.len();
     let total   = s.row_count * 14 + 9;
@@ -802,7 +802,7 @@ pub unsafe extern "C" fn gyrocore_get_frame_at_ts(
     output: *mut f32,
 ) -> c_int {
     if handle.is_null() || output.is_null() { return -1; }
-    let s = &*handle;
+    let s = &mut *(handle as *mut State);
 
     let ts_ms = ts_sec * 1000.0;
     let fi = ((ts_ms * s.scaled_fps / 1000.0).round() as i64)
@@ -1074,8 +1074,8 @@ pub extern "C" fn gyroflow_set_param(
         "adaptive_zoom" => { stab.set_adaptive_zoom(value); }
         "max_zoom" => { stab.params.write().max_zoom = Some(value); }
         "zooming_method" => { stab.set_zooming_method(value as i32); }
-        "horizon_lock_amount" => { stab.set_horizon_lock(value * 100.0, 0.0, false, 0.0); }
-        "horizon_lock_roll" => { stab.set_horizon_lock(0.0, value, false, 0.0); }
+        "horizon_lock_amount" => { stab.set_horizon_lock(value * 100.0, 0.0, false, 0.0, false, 1.0, 0.0, 1.0, 0.0); }
+        "horizon_lock_roll" => { stab.set_horizon_lock(0.0, value, false, 0.0, false, 1.0, 0.0, 1.0, 0.0); }
         "use_gravity_vectors" => { if value > 0.5 { stab.set_use_gravity_vectors(true); } }
         "frame_readout_time" => { stab.params.write().frame_readout_time = value; }
         "video_speed" => { stab.params.write().video_speed = value; }

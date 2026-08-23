@@ -1260,3 +1260,21 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 - Spectrum.xcodeproj/project.pbxproj（新增檔案至 target）
 - SpectrumTests/HLGExportTests.swift（LUT 泛化驗證測試）
 
+## 2026-08-23 — 修復影片播放卡頓：gyroflow-core 逐行 RS 矩陣改用封閉解求逆
+
+**類型：** Bug Fix
+
+**問題：** 播放帶 gyro 穩定的 Sony 影片會明顯卡頓。用 Instruments Time Profiler 匯出 trace 分析，發現從 t=6.8s 到 t=39.3s 有 10 個 worker thread 同時滿載，全在跑 nalgebra 的 SVD 分解相關符號（`symmetric_eigen`／`householder`／`symmetric_tridiagonal`）。
+
+**根因／做法：** 追到 gyroflow-core 的 `FrameTransform::at_timestamp`（`frame_transform.rs`）裡，逐行 rolling-shutter 校正迴圈（4K Sony 約 2160 行 × 每幀）對每一行都呼叫 `.pseudo_inverse()`——這是給「可能不可逆／非方陣」設計的通用迭代 SVD 演算法。但 `new_k * r`（相機內參 × 旋轉矩陣）幾乎必然是可逆的 3×3 方陣，改用 `.try_inverse()`（O(1) 封閉解，adjugate/行列式法）數學結果相同，速度快非常多個量級；`pseudo_inverse` 保留作極端情況（矩陣接近奇異）的 fallback。
+
+因為不想直接修改本機 `~/git/gyroflow` checkout（會弄髒既有工作目錄，且該目錄另外還有一份未 commit 的 streaming/causal 實驗性修改，過程中確認那組實驗因為 Dynamic Zoom 平滑機制需要整段時間軸的資料、與逐幀計算的 streaming 模式架構性衝突而放棄採用），改為 fork `gyroflow/gyroflow` 到 `github.com/chenpc/gyroflow`：`master` 分支只保留 try_inverse 這個修正（cherry-pick 自實驗分支），完整的 streaming/causal 實驗改動留在 `stream` 分支供之後參考。`gyro-wrapper/Cargo.toml` 的 `gyroflow-core` 依賴改成從這個 fork 的 GitHub URL 抓（`git = "...", branch = "master"`），不再指向本機路徑，任何人 clone Spectrum 後都能直接 build。
+
+過程中也試過用 rayon 全域執行緒池上限（`ThreadPoolBuilder::num_threads`）緩解排擠問題，但那只是治標（不減少總運算量），try_inverse 才是真正治本；確認後移除了執行緒池上限，回到 rayon 預設行為。
+
+**修改的檔案：**
+- gyro-wrapper/Cargo.toml（gyroflow-core 依賴改為 GitHub git dependency）
+- gyro-wrapper/Cargo.lock
+- gyro-wrapper/src/lib.rs（移除實驗性 rayon 執行緒池上限程式碼）
+- （外部）github.com/chenpc/gyroflow `master` 分支：`src/core/stabilization/frame_transform.rs` 的 `pseudo_inverse` → `try_inverse`
+
