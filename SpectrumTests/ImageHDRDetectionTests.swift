@@ -22,32 +22,47 @@ final class ImageHDRDetectionTests: XCTestCase {
         return source
     }
 
+    /// 「應為 nil」的斷言在檔案無法解碼時也會通過——先確認 fixture 本身有效。
+    private func assertDecodable(_ source: CGImageSource, depth: Int? = nil,
+                                 file: StaticString = #filePath, line: UInt = #line) {
+        XCTAssertNotNil(CGImageSourceCreateImageAtIndex(source, 0, nil),
+                        "fixture should decode", file: file, line: line)
+        if let depth {
+            let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+            XCTAssertEqual(props?[kCGImagePropertyDepth] as? Int, depth,
+                           "fixture bit depth", file: file, line: line)
+        }
+    }
+
     // MARK: - HLG Detection
 
     func testDetectHDR_correctlyTaggedHLG() {
-        // DSC00227.HIF — PP=45, BT.2020/HLG correctly tagged in NCLX
-        let source = makeSource("hlg_correctly_tagged.HIF")
+        // 合成 10-bit HEIF，標記為 BT.2100 HLG（make_hlg_synthetic_fixture.swift hlg-patches）
+        let source = makeSource("hlg_synthetic_patches.heic")
         let result = ImagePreloadCache.detectHDR(source: source)
         XCTAssertEqual(result, .hlg, "Correctly-tagged HLG HEIF should be detected as .hlg")
     }
 
     func testDetectHDR_mislabeledHLG() {
-        // HLG.HIF — HLG content but mislabeled as sRGB in NCLX
-        let source = makeSource("hlg_mislabeled.HIF")
+        // 合成 10-bit HEIF：HLG 訊號值但標記為 sRGB——重現部分 Sony 相機把 HLG 寫成 sRGB NCLX
+        let source = makeSource("hlg_mislabeled_srgb.heic")
+        assertDecodable(source, depth: 10)
         let result = ImagePreloadCache.detectHDR(source: source)
-        // CGColorSpaceUsesITUR_2100TF returns false for sRGB-tagged → nil
+        // 標記為 sRGB 時無法從 metadata 得知內容是 HLG → nil
         XCTAssertNil(result, "Mislabeled HLG (sRGB NCLX) should not be detected as HDR")
     }
 
     func testDetectHDR_slog3() {
-        // SLOG3.HIF — S-Log3 content, also mislabeled as sRGB
-        let source = makeSource("slog3_mislabeled.HIF")
+        // 合成 10-bit HEIF：S-Log3 編碼值，同樣標記為 sRGB
+        let source = makeSource("slog3_mislabeled_srgb.heic")
+        assertDecodable(source, depth: 10)
         let result = ImagePreloadCache.detectHDR(source: source)
         XCTAssertNil(result, "S-Log3 mislabeled HEIF should not be detected as HDR")
     }
 
     func testDetectHDR_sdrJPEG() {
         let source = makeSource("sdr_photo.jpg")
+        assertDecodable(source)
         let result = ImagePreloadCache.detectHDR(source: source)
         XCTAssertNil(result, "SDR JPEG should return nil")
     }

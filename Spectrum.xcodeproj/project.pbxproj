@@ -77,10 +77,9 @@
 		AA100005 /* ImagePreloadCacheTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100005 /* ImagePreloadCacheTests.swift */; };
 		AA100006 /* EditOpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100006 /* EditOpTests.swift */; };
 		AA100007 /* PhotoEditOpsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100007 /* PhotoEditOpsTests.swift */; };
-		AA100010 /* hlg_correctly_tagged.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100010 /* hlg_correctly_tagged.HIF */; };
 		AA100016 /* hlg_synthetic_patches.heic in Resources */ = {isa = PBXBuildFile; fileRef = AB100016 /* hlg_synthetic_patches.heic */; };
-		AA100011 /* hlg_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100011 /* hlg_mislabeled.HIF */; };
-		AA100012 /* slog3_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100012 /* slog3_mislabeled.HIF */; };
+		AA100011 /* hlg_mislabeled_srgb.heic in Resources */ = {isa = PBXBuildFile; fileRef = AB100011 /* hlg_mislabeled_srgb.heic */; };
+		AA100012 /* slog3_mislabeled_srgb.heic in Resources */ = {isa = PBXBuildFile; fileRef = AB100012 /* slog3_mislabeled_srgb.heic */; };
 		AA100013 /* hlg_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100013 /* hlg_video.mp4 */; };
 		AA100014 /* sdr_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100014 /* sdr_video.mp4 */; };
 		AA100015 /* sdr_photo.jpg in Resources */ = {isa = PBXBuildFile; fileRef = AB100015 /* sdr_photo.jpg */; };
@@ -193,10 +192,9 @@
 		AB100005 /* ImagePreloadCacheTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ImagePreloadCacheTests.swift; sourceTree = "<group>"; };
 		AB100006 /* EditOpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOpTests.swift; sourceTree = "<group>"; };
 		AB100007 /* PhotoEditOpsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditOpsTests.swift; sourceTree = "<group>"; };
-		AB100010 /* hlg_correctly_tagged.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_correctly_tagged.HIF; sourceTree = "<group>"; };
 		AB100016 /* hlg_synthetic_patches.heic */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_synthetic_patches.heic; sourceTree = "<group>"; };
-		AB100011 /* hlg_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_mislabeled.HIF; sourceTree = "<group>"; };
-		AB100012 /* slog3_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = slog3_mislabeled.HIF; sourceTree = "<group>"; };
+		AB100011 /* hlg_mislabeled_srgb.heic */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_mislabeled_srgb.heic; sourceTree = "<group>"; };
+		AB100012 /* slog3_mislabeled_srgb.heic */ = {isa = PBXFileReference; lastKnownFileType = file; path = slog3_mislabeled_srgb.heic; sourceTree = "<group>"; };
 		AB100013 /* hlg_video.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_video.mp4; sourceTree = "<group>"; };
 		AB100014 /* sdr_video.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = sdr_video.mp4; sourceTree = "<group>"; };
 		AB100015 /* sdr_photo.jpg */ = {isa = PBXFileReference; lastKnownFileType = image.jpeg; path = sdr_photo.jpg; sourceTree = "<group>"; };
@@ -448,9 +446,8 @@
 		AE100002 /* Fixtures */ = {
 			isa = PBXGroup;
 			children = (
-				AB100010 /* hlg_correctly_tagged.HIF */,
-				AB100011 /* hlg_mislabeled.HIF */,
-				AB100012 /* slog3_mislabeled.HIF */,
+				AB100011 /* hlg_mislabeled_srgb.heic */,
+				AB100012 /* slog3_mislabeled_srgb.heic */,
 				AB100013 /* hlg_video.mp4 */,
 				AB100014 /* sdr_video.mp4 */,
 				AB100015 /* sdr_photo.jpg */,
@@ -610,9 +607,8 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
-				AA100010 /* hlg_correctly_tagged.HIF in Resources */,
-				AA100011 /* hlg_mislabeled.HIF in Resources */,
-				AA100012 /* slog3_mislabeled.HIF in Resources */,
+				AA100011 /* hlg_mislabeled_srgb.heic in Resources */,
+				AA100012 /* slog3_mislabeled_srgb.heic in Resources */,
 				AA100013 /* hlg_video.mp4 in Resources */,
 				AA100014 /* sdr_video.mp4 in Resources */,
 				AA100015 /* sdr_photo.jpg in Resources */,

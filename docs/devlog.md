@@ -1314,3 +1314,19 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 3. 原實驗改為本機 `~/Desktop` 缺少私人樣本時 `XCTSkip`，路徑改用 `NSHomeDirectory()`，不再寫死使用者名稱。
 
 **修改的檔案：** SpectrumTests/HLGExportTests.swift、SpectrumTests/Fixtures/hlg_synthetic_patches.heic、tools/fixtures/make_hlg_synthetic_fixture.swift、Spectrum.xcodeproj/project.pbxproj
+
+## 2026-09-15 — HDR 偵測測試改用合成 fixture，移除個人照片
+
+**類型：** Refactor（Test）
+
+**問題：** `ImageHDRDetectionTests` 使用的 3 張 fixture（`hlg_correctly_tagged.HIF`、`hlg_mislabeled.HIF`、`slog3_mislabeled.HIF`，各約 2MB）是個人拍攝的 ZV-E1 照片，不應放在公開 repo。
+
+**根因／做法：** 這 3 個測試只驗證 `detectHDR` 的結果，而 `detectHDR` 只讀色彩標記（ProfileName／colorspace），不讀 Sony MakerNote 或像素內容，因此合成檔可完整重現被測特性：
+
+- 正確標記：沿用 `hlg_synthetic_patches.heic`
+- 誤標：產生腳本新增 `hlg-mislabeled-srgb`（HLG 訊號值、標記 sRGB）與 `slog3-mislabeled-srgb`（S-Log3 編碼值、標記 sRGB）兩種模式，皆為 10-bit、ProfileName `sRGB IEC61966-2.1`，與原相機檔讀到的特性一致
+- 以新腳本重新產生既有 fixture，逐 byte 比對一致，確認可重現
+
+另補上「fixture 可解碼（且為 10-bit）」的前置斷言——原本「應為 nil」的測試在檔案無法解碼時也會通過。注意：舊檔仍存在於 git 歷史中；若日後 `detectHDR` 加入讀取 Sony MakerNote 的判斷，合成檔不含這些欄位，需另備樣本。
+
+**修改的檔案：** SpectrumTests/ImageHDRDetectionTests.swift、SpectrumTests/Fixtures/（新增 hlg_mislabeled_srgb.heic、slog3_mislabeled_srgb.heic，刪除 3 張 HIF）、tools/fixtures/make_hlg_synthetic_fixture.swift、Spectrum.xcodeproj/project.pbxproj
