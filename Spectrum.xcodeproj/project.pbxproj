@@ -78,6 +78,7 @@
 		AA100006 /* EditOpTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100006 /* EditOpTests.swift */; };
 		AA100007 /* PhotoEditOpsTests.swift in Sources */ = {isa = PBXBuildFile; fileRef = AB100007 /* PhotoEditOpsTests.swift */; };
 		AA100010 /* hlg_correctly_tagged.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100010 /* hlg_correctly_tagged.HIF */; };
+		AA100016 /* hlg_synthetic_patches.heic in Resources */ = {isa = PBXBuildFile; fileRef = AB100016 /* hlg_synthetic_patches.heic */; };
 		AA100011 /* hlg_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100011 /* hlg_mislabeled.HIF */; };
 		AA100012 /* slog3_mislabeled.HIF in Resources */ = {isa = PBXBuildFile; fileRef = AB100012 /* slog3_mislabeled.HIF */; };
 		AA100013 /* hlg_video.mp4 in Resources */ = {isa = PBXBuildFile; fileRef = AB100013 /* hlg_video.mp4 */; };
@@ -193,6 +194,7 @@
 		AB100006 /* EditOpTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = EditOpTests.swift; sourceTree = "<group>"; };
 		AB100007 /* PhotoEditOpsTests.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PhotoEditOpsTests.swift; sourceTree = "<group>"; };
 		AB100010 /* hlg_correctly_tagged.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_correctly_tagged.HIF; sourceTree = "<group>"; };
+		AB100016 /* hlg_synthetic_patches.heic */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_synthetic_patches.heic; sourceTree = "<group>"; };
 		AB100011 /* hlg_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_mislabeled.HIF; sourceTree = "<group>"; };
 		AB100012 /* slog3_mislabeled.HIF */ = {isa = PBXFileReference; lastKnownFileType = file; path = slog3_mislabeled.HIF; sourceTree = "<group>"; };
 		AB100013 /* hlg_video.mp4 */ = {isa = PBXFileReference; lastKnownFileType = file; path = hlg_video.mp4; sourceTree = "<group>"; };
@@ -452,6 +454,7 @@
 				AB100013 /* hlg_video.mp4 */,
 				AB100014 /* sdr_video.mp4 */,
 				AB100015 /* sdr_photo.jpg */,
+				AB100016 /* hlg_synthetic_patches.heic */,
 			);
 			path = Fixtures;
 			sourceTree = "<group>";
@@ -613,6 +616,7 @@
 				AA100013 /* hlg_video.mp4 in Resources */,
 				AA100014 /* sdr_video.mp4 in Resources */,
 				AA100015 /* sdr_photo.jpg in Resources */,
+				AA100016 /* hlg_synthetic_patches.heic in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

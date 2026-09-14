@@ -1300,3 +1300,17 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 **根因／做法：** `PhotoThumbnailView` 只在 `item.duration` 有值時顯示時長徽章，但 grid 的 `PhotoItem` 由 `FolderReader.makeItem` 建立、從不填入 duration（只有進 detail view 才另外讀取，且只寫回 detail 的 binding），因此 grid 影片永遠沒有時長。`ThumbnailService.generateVideoThumbnail` 本來就建立了 `AVURLAsset`，順便 `load(.duration)`（純 metadata、不解碼影格）存入 `OSAllocatedUnfairLock` 保護的 path→秒 表，透過 `duration(for:)` 查詢；`PhotoThumbnailView` 取得縮圖後查詢，顯示於既有的時長徽章。
 
 **修改的檔案：** Spectrum/Services/ThumbnailService.swift、Spectrum/Views/Grid/PhotoThumbnailView.swift、SpectrumTests/ThumbnailServiceUnitTests.swift
+
+## 2026-09-15 — HLGExportTests 改用合成 fixture，移除私人樣本依賴
+
+**類型：** Refactor（Test）
+
+**問題：** `HLGExportTests` 的兩個測試寫死讀取 `~/Desktop` 上的私人 Sony 照片，檔案不在時直接失敗；私人照片也不應放進公開 repo。
+
+**根因／做法：** 這兩個測試其實是「與 Sony Imaging Edge 參考 JPEG 比對 MAE／PSNR」的實驗，只輸出結果、沒有回歸斷言。查過 raw.pixls.us（CC0 但只收 RAW）、pixls.us 論壇、imazen/codec-corpus、libheif 與各論壇分享，都找不到可合法再散布的 Sony HLG HIF；且 Sony 相機無法同時錄 HEIF＋JPEG，參考 JPEG 本來就要自行轉出。改為：
+
+1. 以 `tools/fixtures/make_hlg_synthetic_fixture.swift` 產生合成 10-bit HLG HEIF `hlg_synthetic_patches.heic`（灰階 HLG 0／0.25／0.5／0.75／1.0 與 75% 紅綠藍黃洋紅色塊，1.2KB），登記進 test bundle Resources。必須直接寫入 16-bit 像素緩衝區——`setFillColor(red:green:blue:)` 使用 device RGB，會被色彩管理換算成別的 HLG 訊號值（實測誤差 0.397，改寫後 0.0017）。
+2. 新增 `HLGExportServiceRegressionTests` 測正式的 `HLGExportService.renderSDR`／`exportAsJPEG`：輸出格式、灰階單調／中性／黑白位／參考白範圍、原色色相保持、JPEG 匯出可解碼且與渲染結果一致、fixture 被偵測為 HLG。斷言採原理性範圍而非精確值，容忍 ColorSync 版本差異。
+3. 原實驗改為本機 `~/Desktop` 缺少私人樣本時 `XCTSkip`，路徑改用 `NSHomeDirectory()`，不再寫死使用者名稱。
+
+**修改的檔案：** SpectrumTests/HLGExportTests.swift、SpectrumTests/Fixtures/hlg_synthetic_patches.heic、tools/fixtures/make_hlg_synthetic_fixture.swift、Spectrum.xcodeproj/project.pbxproj

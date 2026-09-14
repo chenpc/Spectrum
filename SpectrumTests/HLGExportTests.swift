@@ -4,14 +4,15 @@ import ImageIO
 import AppKit
 import UniformTypeIdentifiers
 import Accelerate
+@testable import Spectrum
 
 /// Experiment: compare different HLG→SDR tone mapping approaches against Sony Image Edge output.
-/// Reference: /Users/chenpc/Desktop/DSC00513.JPG (Sony Image Edge export)
-/// Source:    /Users/chenpc/Desktop/DSC00513.HIF (Sony HLG)
+/// 實驗需要私人 Sony HLG 樣本與 Imaging Edge 參考 JPEG（不放進 repo），
+/// 本機 ~/Desktop 沒有這些檔案時自動跳過。回歸測試見檔尾，使用合成 fixture。
 final class HLGExportTests: XCTestCase {
 
-    let sourcePath = "/Users/chenpc/Desktop/DSC00513.HIF"
-    let referencePath = "/Users/chenpc/Desktop/DSC00513.JPG"
+    let sourcePath = NSHomeDirectory() + "/Desktop/DSC00513.HIF"
+    let referencePath = NSHomeDirectory() + "/Desktop/DSC00513.JPG"
     let outputDir = "/tmp/hlg_export_experiments"
 
     // MARK: - Approaches
@@ -24,6 +25,7 @@ final class HLGExportTests: XCTestCase {
     }
 
     func testCompareAllApproaches() throws {
+        try skipUnlessLocalSamples(sourcePath, referencePath)
         guard let hlgImage = loadHLGImage(path: sourcePath) else {
             XCTFail("Cannot load HLG source at \(sourcePath)"); return
         }
@@ -369,8 +371,9 @@ final class HLGExportTests: XCTestCase {
     private let lutB: [UInt8] = [0,0,1,1,1,2,2,3,3,4,5,6,7,8,9,11,12,14,16,18,20,21,23,24,25,27,28,30,32,33,35,37,39,41,43,45,46,48,50,52,53,55,57,58,60,62,64,65,67,69,71,72,74,75,77,79,80,82,83,85,87,88,90,92,93,95,96,98,100,101,103,104,106,107,109,110,112,114,115,117,118,120,121,123,125,126,128,129,131,133,134,136,137,138,140,141,143,144,146,147,149,150,151,152,154,155,156,157,158,159,160,162,163,164,165,166,168,169,170,171,172,173,174,175,176,177,178,180,181,182,183,184,184,185,186,187,188,189,190,191,192,192,193,194,195,196,197,198,198,199,200,200,201,202,203,203,204,205,205,206,206,207,208,209,209,210,211,211,212,213,213,214,214,215,215,216,216,217,217,218,218,219,219,220,220,221,221,222,223,223,224,224,225,226,226,226,227,228,228,229,229,230,230,231,231,232,232,233,233,234,234,235,235,236,236,237,238,238,239,239,240,240,241,241,242,242,243,244,245,245,246,246,247,247,248,249,250,250,250,251,251,251,252,252,252,252,252,252,251,252,252,252,253,254,254,255]
 
     func testLutGeneralization() throws {
-        let testHLG = "/Users/chenpc/Desktop/DSC02917.HIF"
-        let testRef = "/Users/chenpc/Desktop/DSC02917.JPG"
+        let testHLG = NSHomeDirectory() + "/Desktop/DSC02917.HIF"
+        let testRef = NSHomeDirectory() + "/Desktop/DSC02917.JPG"
+        try skipUnlessLocalSamples(testHLG, testRef)
         let outDir = "/tmp/hlg_export_experiments"
         try? FileManager.default.createDirectory(at: URL(fileURLWithPath: outDir),
                                                   withIntermediateDirectories: true)
@@ -423,6 +426,12 @@ final class HLGExportTests: XCTestCase {
         print("DSC02917: without LUT=\(String(format: "%.4f", baseMAE))  with LUT=\(String(format: "%.4f", lutMAE))")
     }
 
+    private func skipUnlessLocalSamples(_ paths: String...) throws {
+        let missing = paths.filter { !FileManager.default.fileExists(atPath: $0) }
+        try XCTSkipUnless(missing.isEmpty,
+                          "本機實驗：缺少私人樣本 \(missing.map { URL(fileURLWithPath: $0).lastPathComponent })")
+    }
+
     private func computeMAENoRef(_ img: [UInt8], ref: [UInt8], count: Int) -> Double {
         var total: Double = 0
         var n = 0
@@ -443,5 +452,127 @@ final class HLGExportTests: XCTestCase {
         }
         CGImageDestinationAddImage(dest, image, nil)
         CGImageDestinationFinalize(dest)
+    }
+}
+
+// MARK: - Regression tests（合成 fixture，不依賴私人樣本）
+
+/// `HLGExportService` 的回歸測試。fixture 由 tools/fixtures/make_hlg_synthetic_fixture.swift
+/// 產生：上排灰階 HLG 0 / 0.25 / 0.5 / 0.75 / 1.0，下排 75% 紅 / 綠 / 藍 / 黃 / 洋紅，
+/// 每塊 64×64。斷言採原理性範圍（單調、中性、色相），不寫死精確值，
+/// 以容忍不同 macOS 版本 ColorSync 的細微差異。
+final class HLGExportServiceRegressionTests: XCTestCase {
+
+    private static let fixtureName = "hlg_synthetic_patches.heic"
+    private static let patch = 64
+
+    private struct RGB {
+        let r: Double, g: Double, b: Double
+        var mean: Double { (r + g + b) / 3 }
+        var spread: Double { max(r, g, b) - min(r, g, b) }
+    }
+
+    private func fixtureSource() throws -> CGImageSource {
+        let url = try XCTUnwrap(Bundle(for: type(of: self)).url(forResource: Self.fixtureName, withExtension: nil),
+                                "Missing fixture: \(Self.fixtureName)")
+        return try XCTUnwrap(CGImageSourceCreateWithURL(url as CFURL, nil))
+    }
+
+    private func loadFixture() throws -> CGImage {
+        try XCTUnwrap(CGImageSourceCreateImageAtIndex(fixtureSource(), 0, nil))
+    }
+
+    /// 每個色塊中心 16×16 區域的平均 sRGB 值，[列][欄]，第 0 列為上排。
+    private func patchColors(_ image: CGImage) throws -> [[RGB]] {
+        let w = image.width, h = image.height
+        let srgb = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let ctx = try XCTUnwrap(CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                          bytesPerRow: w * 4, space: srgb,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        let px = try XCTUnwrap(ctx.data).bindMemory(to: UInt8.self, capacity: w * h * 4)
+        let p = Self.patch
+        return (0..<2).map { row in
+            (0..<5).map { col in
+                var sum = (r: 0.0, g: 0.0, b: 0.0)
+                for y in (row * p + p / 2 - 8)..<(row * p + p / 2 + 8) {
+                    for x in (col * p + p / 2 - 8)..<(col * p + p / 2 + 8) {
+                        let i = (y * w + x) * 4
+                        sum.r += Double(px[i]); sum.g += Double(px[i + 1]); sum.b += Double(px[i + 2])
+                    }
+                }
+                return RGB(r: sum.r / 256, g: sum.g / 256, b: sum.b / 256)
+            }
+        }
+    }
+
+    func testFixture_isDetectedAsHLG() throws {
+        XCTAssertEqual(ImagePreloadCache.detectHDR(source: try fixtureSource()), .hlg)
+    }
+
+    func testRenderSDR_producesSameSize8BitSRGB() throws {
+        let hlg = try loadFixture()
+        let sdr = try XCTUnwrap(HLGExportService.renderSDR(hlgCGImage: hlg))
+        XCTAssertEqual(sdr.width, hlg.width)
+        XCTAssertEqual(sdr.height, hlg.height)
+        XCTAssertEqual(sdr.bitsPerComponent, 8)
+        XCTAssertEqual(sdr.colorSpace?.name as String?, CGColorSpace.sRGB as String)
+    }
+
+    func testRenderSDR_grayRampIsMonotonicNeutralAndWellExposed() throws {
+        let grays = try patchColors(XCTUnwrap(HLGExportService.renderSDR(hlgCGImage: loadFixture())))[0]
+
+        // 單調遞增，且每一級都有明顯差距（不能被壓成一片）
+        for (i, pair) in zip(grays, grays.dropFirst()).enumerated() {
+            XCTAssertGreaterThan(pair.1.mean - pair.0.mean, 20, "gray step \(i)→\(i + 1)")
+        }
+        // 灰階保持中性（容忍 LUT 各通道的細微差異，黑位紅通道實測為 6）
+        for (i, gray) in grays.enumerated() {
+            XCTAssertLessThanOrEqual(gray.spread, 10, "gray patch \(i) 不應偏色")
+        }
+        XCTAssertLessThanOrEqual(max(grays[0].r, grays[0].g, grays[0].b), 12, "HLG 0 應接近黑")
+        XCTAssertGreaterThanOrEqual(min(grays[4].r, grays[4].g, grays[4].b), 245, "HLG 1.0 應接近白")
+        // HLG 75%（參考白 203 nits）應明亮但未削頂；HLG 50% 落在中段
+        XCTAssertTrue((200.0...240.0).contains(grays[3].mean), "reference white mean=\(grays[3].mean)")
+        XCTAssertTrue((130.0...175.0).contains(grays[2].mean), "HLG 0.5 mean=\(grays[2].mean)")
+    }
+
+    func testRenderSDR_primariesKeepHue() throws {
+        let c = try patchColors(XCTUnwrap(HLGExportService.renderSDR(hlgCGImage: loadFixture())))[1]
+        let strong = 180.0, weak = 15.0
+        let (red, green, blue, yellow, magenta) = (c[0], c[1], c[2], c[3], c[4])
+
+        XCTAssertGreaterThan(red.r, strong);                 XCTAssertLessThan(max(red.g, red.b), weak)
+        XCTAssertGreaterThan(green.g, strong);               XCTAssertLessThan(max(green.r, green.b), weak)
+        XCTAssertGreaterThan(blue.b, strong);                XCTAssertLessThan(max(blue.r, blue.g), weak)
+        XCTAssertGreaterThan(min(yellow.r, yellow.g), strong); XCTAssertLessThan(yellow.b, weak)
+        XCTAssertGreaterThan(min(magenta.r, magenta.b), strong); XCTAssertLessThan(magenta.g, weak)
+    }
+
+    func testExportAsJPEG_writesDecodableJPEGMatchingRender() throws {
+        let hlg = try loadFixture()
+        let out = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hlg-export-\(UUID().uuidString).jpg")
+        defer { try? FileManager.default.removeItem(at: out) }
+
+        XCTAssertTrue(HLGExportService.exportAsJPEG(hlgCGImage: hlg, to: out))
+
+        let source = try XCTUnwrap(CGImageSourceCreateWithURL(out as CFURL, nil))
+        XCTAssertEqual(CGImageSourceGetType(source) as String?, UTType.jpeg.identifier)
+        let jpeg = try XCTUnwrap(CGImageSourceCreateImageAtIndex(source, 0, nil))
+        XCTAssertEqual(jpeg.width, hlg.width)
+        XCTAssertEqual(jpeg.height, hlg.height)
+
+        // JPEG 壓縮後各色塊仍與 renderSDR 結果一致
+        let rendered = try patchColors(XCTUnwrap(HLGExportService.renderSDR(hlgCGImage: hlg)))
+        let decoded = try patchColors(jpeg)
+        for row in 0..<2 {
+            for col in 0..<5 {
+                let a = rendered[row][col], b = decoded[row][col]
+                XCTAssertEqual(a.r, b.r, accuracy: 4, "patch [\(row)][\(col)] R")
+                XCTAssertEqual(a.g, b.g, accuracy: 4, "patch [\(row)][\(col)] G")
+                XCTAssertEqual(a.b, b.b, accuracy: 4, "patch [\(row)][\(col)] B")
+            }
+        }
     }
 }
