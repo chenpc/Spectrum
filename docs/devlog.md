@@ -1278,3 +1278,25 @@ Sony 相機有多種 Picture Profile（PP），每種對應不同的 gamma curve
 - gyro-wrapper/src/lib.rs（移除實驗性 rayon 執行緒池上限程式碼）
 - （外部）github.com/chenpc/gyroflow `master` 分支：`src/core/stabilization/frame_transform.rs` 的 `pseudo_inverse` → `try_inverse`
 
+
+## 2026-09-14 — HDR 影片預覽縮圖被壓暗：tone mapping 依播放渲染器分流
+
+**類型：** Bug Fix
+
+**問題：** Sony HLG 影片在 grid 與 detail view 預覽時，縮圖看起來不是 HDR（比播放暗、高光不亮）。
+
+**根因／做法：** 縮圖生成端是正確的（`.matchSource` 實測輸出 `ITUR_2100_HLG`、contentHeadroom 4.93；NSImage 包裝也保留同一個 CGImage），問題在顯示端。2026-07-15 為修 iPhone Dolby Vision 預覽過亮，把「所有影片影格」改成 `toneMapMode = .automatic`，理由是「播放的 CAMetalLayer 走系統預設 tone mapping」——但實際上只有 Dolby Vision 會切到 AVPlayerLayer（`AVFMetalView` 的 `if info.isDolbyVision { enableAVFLayer() }`，由系統套用 RPU tone mapping）；HLG／HDR10 走 CAMetalLayer 直出且未設 `edrMetadata`，系統不做 tone mapping。帶 contentHeadroom 的 HLG CGImage 在 `.automatic` 下被壓暗，預覽因此比播放暗。
+
+修法：抽出純函式 `ThumbnailToneMapping.mode(colorSpaceName:isVideo:isDolbyVision:)`——DV 影片 `.automatic`、其他 HDR 影片 `.never`、HLG 照片 `.never`、PQ 照片 `.automatic`。iPhone DV 的 base layer 也是 HLG、影格 colorspace 無法區分，因此 `ThumbnailService` 以格式描述（`detectVideoHDRType`）辨識 DV 並回傳 `DolbyVisionFrameImage`（NSImage 子類別標記），顯示端據此分流，六個呼叫點不需改動。另確認 C0265.MP4 的 Sony XML 為 `rec709`，是真正的 SDR 素材而非容器誤標。
+
+**修改的檔案：** Spectrum/Views/Grid/PhotoThumbnailView.swift、Spectrum/Services/ThumbnailService.swift、SpectrumTests/ThumbnailServiceUnitTests.swift
+
+## 2026-09-14 — Grid 影片縮圖補上時長
+
+**類型：** Feature
+
+**問題：** grid 上的影片縮圖沒有顯示時長。
+
+**根因／做法：** `PhotoThumbnailView` 只在 `item.duration` 有值時顯示時長徽章，但 grid 的 `PhotoItem` 由 `FolderReader.makeItem` 建立、從不填入 duration（只有進 detail view 才另外讀取，且只寫回 detail 的 binding），因此 grid 影片永遠沒有時長。`ThumbnailService.generateVideoThumbnail` 本來就建立了 `AVURLAsset`，順便 `load(.duration)`（純 metadata、不解碼影格）存入 `OSAllocatedUnfairLock` 保護的 path→秒 表，透過 `duration(for:)` 查詢；`PhotoThumbnailView` 取得縮圖後查詢，顯示於既有的時長徽章。
+
+**修改的檔案：** Spectrum/Services/ThumbnailService.swift、Spectrum/Views/Grid/PhotoThumbnailView.swift、SpectrumTests/ThumbnailServiceUnitTests.swift

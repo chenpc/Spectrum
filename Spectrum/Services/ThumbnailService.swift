@@ -48,6 +48,15 @@ actor ThumbnailService {
         hdrFlags.withLock { $0[url.path] = isHDR }
     }
 
+    /// 影片縮圖生成時順便讀取的時長（path → 秒），供 grid 顯示時長徽章。
+    /// grid 的 PhotoItem 由 FolderReader 建立、不含 duration；不隨縮圖 cache 清除。
+    private nonisolated let durations = OSAllocatedUnfairLock<[String: Double]>(initialState: [:])
+
+    /// 影片時長（秒）。只有生成過縮圖的影片才有值。
+    nonisolated func duration(for filePath: String) -> Double? {
+        durations.withLock { $0[filePath] }
+    }
+
     // 影片縮圖：AVURLAsset + CoreMedia，限制 2 個並行
     private let videoSemaphore = ThumbnailSemaphore(count: 2)
 
@@ -227,6 +236,10 @@ actor ThumbnailService {
 
         let t0 = ContinuousClock.now
         let asset = AVURLAsset(url: url)
+        // 時長只需 metadata（不解碼影格），順便記錄供 grid 顯示
+        if let d = try? await asset.load(.duration), d.seconds.isFinite, d.seconds > 0 {
+            durations.withLock { $0[url.path] = d.seconds }
+        }
         let generator = AVAssetImageGenerator(asset: asset)
         generator.maximumSize = CGSize(width: thumbnailSize, height: thumbnailSize)
         generator.appliesPreferredTrackTransform = true
@@ -241,9 +254,17 @@ actor ThumbnailService {
             let cgImage = result.image
             // .matchSource 保留來源 colorspace：ITU-R 2100 傳輸函數（HLG/PQ，
             // 含 Dolby Vision）即為 HDR 影片
-            setHDRFlag(cgImage.colorSpace.map(CGColorSpaceUsesITUR_2100TF) ?? false, for: url)
+            let isHDRFrame = cgImage.colorSpace.map(CGColorSpaceUsesITUR_2100TF) ?? false
+            setHDRFlag(isHDRFrame, for: url)
             Log.debug(Log.thumbnail, "[thumb] video \(url.lastPathComponent): \(fmtDur(ContinuousClock.now - t0))")
-            return NSImage(cgImage: cgImage, size: NSSize(width: cgImage.width, height: cgImage.height))
+            let size = NSSize(width: cgImage.width, height: cgImage.height)
+            // iPhone DV（P8.4）的 base layer 也是 HLG，影格 colorspace 無法區分；
+            // 讀格式描述辨識 DV，顯示端據此改用 .automatic 以匹配 AVPlayerLayer 播放
+            if isHDRFrame,
+               await ImagePreloadCache.detectVideoHDRType(path: url.path, bookmarkData: nil) == .dolbyVision {
+                return DolbyVisionFrameImage(cgImage: cgImage, size: size)
+            }
+            return NSImage(cgImage: cgImage, size: size)
         } catch {
             Log.thumbnail.warning("[thumb] video failed for \(url.lastPathComponent, privacy: .public): \(error.localizedDescription, privacy: .public)")
             return nil

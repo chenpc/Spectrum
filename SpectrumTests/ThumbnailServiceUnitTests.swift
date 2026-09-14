@@ -1,6 +1,7 @@
 import XCTest
 import SwiftData
 import AppKit
+import AVFoundation
 @testable import Spectrum
 
 /// Covers ThumbnailService (actor cache + generation), ThumbnailScheduler /
@@ -304,5 +305,71 @@ final class ThumbnailServiceUnitTests: XCTestCase {
             ThumbnailProgress.shared.cancelAll()
             XCTAssertFalse(ThumbnailProgress.shared.isActive)
         }
+    }
+
+    // MARK: - HDR 縮圖 tone mapping 決策（預覽須匹配實際渲染路徑）
+
+    func testToneMapping_dolbyVisionVideoUsesAutomatic() {
+        // DV 播放走 AVPlayerLayer，系統套用 RPU tone mapping
+        XCTAssertEqual(ThumbnailToneMapping.mode(colorSpaceName: "kCGColorSpaceITUR_2100_HLG",
+                                                 isVideo: true, isDolbyVision: true), .automatic)
+    }
+
+    func testToneMapping_hlgVideoUsesNever() {
+        // Sony HLG 播放走 CAMetalLayer 直出（無 edrMetadata）；.automatic 會讓預覽比播放暗
+        XCTAssertEqual(ThumbnailToneMapping.mode(colorSpaceName: "kCGColorSpaceITUR_2100_HLG",
+                                                 isVideo: true, isDolbyVision: false), .never)
+    }
+
+    func testToneMapping_pqVideoUsesNever() {
+        XCTAssertEqual(ThumbnailToneMapping.mode(colorSpaceName: "kCGColorSpaceITUR_2100_PQ",
+                                                 isVideo: true, isDolbyVision: false), .never)
+    }
+
+    func testToneMapping_hlgPhotoUsesNever() {
+        XCTAssertEqual(ThumbnailToneMapping.mode(colorSpaceName: "kCGColorSpaceITUR_2100_HLG",
+                                                 isVideo: false, isDolbyVision: false), .never)
+    }
+
+    func testToneMapping_pqPhotoUsesAutomatic() {
+        XCTAssertEqual(ThumbnailToneMapping.mode(colorSpaceName: "kCGColorSpaceITUR_2100_PQ",
+                                                 isVideo: false, isDolbyVision: false), .automatic)
+    }
+
+    func testDolbyVisionFrameImage_preservesHDRColorSpace() throws {
+        // 子類別標記不能改變影格本身：顯示端靠 colorspace 決定走 EDR 路徑
+        let srgb = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        let ctx = try XCTUnwrap(CGContext(data: nil, width: 4, height: 4, bitsPerComponent: 8,
+                                          bytesPerRow: 0, space: srgb,
+                                          bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue))
+        let hlg = try XCTUnwrap(CGColorSpace(name: CGColorSpace.itur_2100_HLG))
+        let cg = try XCTUnwrap(ctx.makeImage()?.copy(colorSpace: hlg))
+
+        let image: NSImage = DolbyVisionFrameImage(cgImage: cg, size: NSSize(width: 4, height: 4))
+        XCTAssertTrue(image is DolbyVisionFrameImage)
+        let out = try XCTUnwrap(image.cgImage(forProposedRect: nil, context: nil, hints: nil))
+        XCTAssertTrue(out.colorSpace.map(CGColorSpaceUsesITUR_2100TF) ?? false)
+    }
+
+    // MARK: - 影片時長（grid 時長徽章）
+
+    func testVideoThumbnail_recordsDuration() async throws {
+        let path = try copiedFixture("video_01.mp4")
+        let service = ThumbnailService()
+        XCTAssertNil(service.duration(for: path), "生成縮圖前不應有時長")
+
+        _ = await service.thumbnail(for: path, bookmarkData: nil)
+
+        let expected = try await AVURLAsset(url: URL(fileURLWithPath: path)).load(.duration).seconds
+        let recorded = try XCTUnwrap(service.duration(for: path), "生成影片縮圖後應記錄時長")
+        XCTAssertGreaterThan(recorded, 0)
+        XCTAssertEqual(recorded, expected, accuracy: 0.01)
+    }
+
+    func testPhotoThumbnail_hasNoDuration() async throws {
+        let path = try copiedFixture("photo_03.jpg")
+        let service = ThumbnailService()
+        _ = await service.thumbnail(for: path, bookmarkData: nil)
+        XCTAssertNil(service.duration(for: path), "照片不應有時長")
     }
 }

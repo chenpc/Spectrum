@@ -1,5 +1,27 @@
 import SwiftUI
 
+/// Dolby Vision 影片的預覽影格。DV 播放時切到 AVPlayerLayer（系統套用 RPU
+/// tone mapping），但 iPhone DV（P8.4）的 base layer 也是 HLG，影格 colorspace
+/// 無法與 Sony HLG 區分——由 ThumbnailService 讀格式描述後以此子類別標記。
+final class DolbyVisionFrameImage: NSImage {}
+
+/// HDR 縮圖的 tone mapping 決策：預覽亮度必須與該內容實際的渲染路徑一致。
+enum ThumbnailToneMapping {
+    enum Mode: Equatable { case automatic, never }
+
+    static func mode(colorSpaceName: String?, isVideo: Bool, isDolbyVision: Bool) -> Mode {
+        if isVideo {
+            // DV → AVPlayerLayer，系統依 RPU tone map；其他 HDR 影片（HLG / HDR10）
+            // → AVFMetalView 的 CAMetalLayer 直出，未設 edrMetadata，系統不做 tone mapping
+            return isDolbyVision ? .automatic : .never
+        }
+        // 照片：HLG 是 scene-referred，.automatic 會壓暗；PQ（display-referred）
+        // 依 contentHeadroom 對映
+        let isHLG = colorSpaceName?.contains("HLG") ?? false
+        return isHLG ? .never : .automatic
+    }
+}
+
 class AspectFillImageView: NSView {
     let imageView: NSImageView = {
         let iv = NSImageView()
@@ -24,9 +46,9 @@ class AspectFillImageView: NSView {
     private var imageSize: NSSize = .zero
     /// false = aspect-fill（裁切填滿，grid 用）；true = aspect-fit（完整顯示，detail 預覽用）
     var fit = false
-    /// 影片的 HDR 影格（Dolby Vision / HLG）：播放路徑（CAMetalLayer）走系統
-    /// 預設 .automatic tone mapping，預覽縮圖必須一致，否則會比播放亮。
-    /// .never 只適用於 scene-referred 的 HLG 照片。
+    /// 影片影格：tone mapping 依播放渲染器決定（見 ThumbnailToneMapping）——
+    /// Dolby Vision 走 AVPlayerLayer（.automatic），其他 HDR 影片走 CAMetalLayer
+    /// 直出（.never）。
     var isVideoContent = false
 
     override init(frame: NSRect) {
@@ -45,12 +67,13 @@ class AspectFillImageView: NSView {
             usingHLG = true
             hlgView.layer?.contents = cg
             if #available(macOS 15.0, *) {
-                // 三分法：影片影格與播放路徑一致用 .automatic；HLG 照片是
-                // scene-referred 用 .never（.automatic 會壓暗）；gain map 照片
-                // 經 DecodeToHDR 輸出 PQ（display-referred，colorspace 無 HLG
-                // 名稱），需要 .automatic 依 contentHeadroom 對映
-                let isHLGSpace = (cs.name as String?)?.contains("HLG") ?? false
-                hlgView.layer?.toneMapMode = (isVideoContent || !isHLGSpace) ? .automatic : .never
+                // 預覽匹配實際渲染路徑（規則見 ThumbnailToneMapping）
+                let mode = ThumbnailToneMapping.mode(
+                    colorSpaceName: cs.name as String?,
+                    isVideo: isVideoContent,
+                    isDolbyVision: image is DolbyVisionFrameImage
+                )
+                hlgView.layer?.toneMapMode = mode == .automatic ? .automatic : .never
             }
             imageView.image = nil
             enableEDR()
@@ -110,8 +133,9 @@ class AspectFillImageView: NSView {
     }
 }
 
-/// HDR-aware 縮圖顯示（aspect-fill）：HLG 縮圖走 CALayer+EDR+toneMapMode=.never，
-/// 其餘走 NSImageView。SwiftUI `Image(nsImage:)` 沒有 EDR 路徑，HLG 會被壓暗。
+/// HDR-aware 縮圖顯示（aspect-fill）：HDR 縮圖走 CALayer+EDR（toneMapMode 見
+/// ThumbnailToneMapping），其餘走 NSImageView。SwiftUI `Image(nsImage:)` 沒有
+/// EDR 路徑，HLG 會被壓暗。
 struct HDRThumbnailImageView: NSViewRepresentable {
     let image: NSImage
     var fit = false
@@ -137,6 +161,8 @@ struct PhotoThumbnailView: View {
 
     @State private var thumbnail: NSImage?
     @State private var isHDR = false
+    /// grid 的 PhotoItem 不含 duration，改由 ThumbnailService 生成影片縮圖時記錄
+    @State private var videoDuration: Double?
     @Environment(\.thumbnailCacheState) private var cacheState
 
     private var displayThumbnail: NSImage? {
@@ -181,7 +207,7 @@ struct PhotoThumbnailView: View {
                     .shadow(radius: 3)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-                if let duration = item.duration {
+                if let duration = item.duration ?? videoDuration {
                     Text(formatDuration(duration))
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.white)
@@ -245,6 +271,9 @@ struct PhotoThumbnailView: View {
                 thumbnail = await ThumbnailService.shared.thumbnail(for: item.filePath, bookmarkData: folderBookmarkData)
             }
             isHDR = ThumbnailService.shared.isHDR(for: item.filePath)
+            if item.isVideo {
+                videoDuration = ThumbnailService.shared.duration(for: item.filePath)
+            }
         }
     }
 }
